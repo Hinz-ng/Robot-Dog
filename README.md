@@ -9,7 +9,33 @@ Hardware, firmware contract, measured plant characteristics, and the failure mod
 
 ---
 
-## 0. Changelog — 2026-07-29 characterisation session
+## 0. Changelog — 2026-08-01 bus-sense / M1-d session
+
+Full file replacement. Every change declared.
+
+| § | Change | Why |
+|---|---|---|
+| 1 | New row: **bus voltage sense on PA0**, calibrated | Divisor is now a measurement, not a hardcode |
+| 1 | MOSFET row: **HG5511D = 60 V / 40 A / 120 A pulse / 11 mΩ** | Datasheet obtained. Clears the FET gate for 6S |
+| 1 | Power row: 6S evidence recorded | Board demonstrably ran at 22.5 V |
+| 3 | **Deleted** the `PB10 / VBUS_PARTITIONING_FACTOR` note | That constant is ST MCSDK; it does not exist in this firmware. Divider already spans 34.2 V |
+| 3 | PA0 / PA1 / PB12 / PB14 identified by measurement | Four-channel probe sweep |
+| **8.1** | **R_eff: fifth independent confirmation, 0.2183 ± 0.0034 Ω** | 14-point locked-rotor fit, incidental to M1-d |
+| 8.1 | Bus-sense entries; disarmed loop rate 126 kHz | New measurements |
+| 8.3 | **Angle lag: preliminary T ≈ 143 µs** (was "0–240 µs") | Extracted from an incidental capture. Promotion condition met |
+| 8.3 | New deferred: live Vbus sampling; U₀ feedforward with a bus-voltage trigger | |
+| **11** | Telemetry line rewritten; **new session-header protocol** | `Vb`, `Vb_src` added; multimeter reading now recorded per session |
+| 11 | **Deleted** "`Ud` is NOT currently printed" | Stale — it is printed in three places |
+| **12** | Five new failure modes, **one retraction** | All cost time this session |
+| 15 | **M1-d closed.** M1-c and the angle-lag sweep are next | |
+| 17 | Peak bus current corrected to **230 A, independent of pack voltage**; sag table added; battery spec | Arithmetic error found in the earlier estimate |
+| **19** | **New section: battery specification** | Sag, not energy, is the binding constraint |
+
+**Superseded and deleted:** the claim that `Vb` rose 1.1% under load (it never updated at all — see §12); the `U₀ = 0.0194 V` intercept from this session's sweep (ill-conditioned — §8.1); `dead_zone` as permanently closed (it re-opens above ~15 V bus — §8.3).
+
+---
+
+## 0b. Changelog — 2026-07-29 characterisation session
 
 Substantial rewrite. Every change declared, so nothing regresses silently.
 
@@ -37,14 +63,16 @@ Superseded and deleted: the `L ≈ 26 µH` inference (circular — it was `Kp·R
 | Component | Part | Notes |
 |---|---|---|
 | Motor | TYI 4006, KV360, 12N14P (7 pole pairs) | **Kt = 0.0266 Nm/A per Iq; Ke = 0.0177 V/(rad/s) = Kt/1.5.** Measured — see §8. Nameplate 18 A/60 s assumes **propeller airflow** — see §16. |
-| Driver | B-G431B-ESC1 **clone** ("火柴"/Matches FOC V2.0) ×2 | Not a 1:1 copy — see §2. ~89 RMB. |
+| Driver | B-G431B-ESC1 **clone** ("火柴"/Matches FOC V2.0) ×2 | Not a 1:1 copy — see §2. ~89 RMB. Seller lists 48 V capability. |
+| MOSFETs | **HG5511D** ×6 | **60 V V(BR)DSS, 40 A cont (25 °C) / 25 A (100 °C), 120 A pulsed, R_DS(on) 11 mΩ @ V_GS = 10 V, R_θJA 35 °C/W.** Datasheet 2026-08-01. **Clears the FET gate for 6S** — 25.2 V bus with 1.5× switching overshoot = 38 V = 63% of breakdown. |
+| **Bus voltage sense** | **PA0**, resistive divider | **0.008358 V/count** (12-bit). Measured 2-point, not from a datasheet: 11.30 V → 1351, 22.50 V → 2694. Voltage ratio 1.991 vs count ratio 1.994. Full scale **34.23 V**, 8.36 mV/count. **6S at 25.2 V = 74% of range → no divider change needed.** Seed-only — see §12. |
 | Reference driver | Genuine B-G431B-ESC1 | Acceptance test still not run. Has genuine onboard ST-Link. |
 | Encoder | **MT6816** (AMR) on XJX-135 breakout | *Not* MT6701 — chip marking is ground truth. **ABZ mode**, 1024 PPR ×4 = **4096 CPR** (0.088°). Possible angle latency — §8 deferred list. |
 | Encoder interface | **TIM4 hardware quadrature**, register-level (§5) | Zero interrupts, zero CPU, cannot lose counts. |
 | Magnet | N35 **D6 × 3 mm** diametric, jig-centred, CA-bonded | **CLOSED.** Permanent mount; pen mark intact across many sessions. **No ferromagnetic material in/behind the field path.** History in §12. |
 | Reduction | 9:1 GT2 belt, 12T alu pinion → 108T printed pulley | **6 mm belt is the force ceiling — moving to 10 mm.** See §17. |
 | Programmer | Clone ST-Link V2.1 | PlatformIO/OpenOCD ✓. **Never attempt ST FW upgrade — brick risk.** |
-| Power | 3S LiPo (~11.4 V) on the bench; **5S decided for the robot** | Board defaults to 24 V mode; 5S peak 21.0 V fits. >24 V needs PB10 / `VBUS_PARTITIONING_FACTOR`. |
+| Power | 3S LiPo (~11.3 V) on the bench; **6S re-opened for the robot** | Divider spans 34.2 V, so 5S *and* 6S both fit with no board change. **Board demonstrably powered and ran at 22.5 V** (2026-08-01, unloaded). Remaining untested gate: switching at 25.2 V under load — see §19. |
 
 **Open hardware issue — bearing whine, now quantified.** Audible when backdriving by hand, motor unpowered, and it survived a shaft-bearing swap. A position-resolved capture (§9) shows a **once-per-motor-revolution drag disturbance of 0.185 A amplitude (0.79 N at the foot), repeatable at r = 0.98.** Whether that and the whine share a cause is unproven. Candidates: motor internal bearing, pinion bore runout, rotor/magnet eccentricity.
 
@@ -75,6 +103,16 @@ Superseded and deleted: the `L ≈ 26 µH` inference (circular — it was `Kp·R
 - **Arduino-API hardware SPI on PB3/PB4/PB5 does not work on this variant.** `SPI.begin()` returns but the first `transfer16()` never does. Bit-banged MODE3 SPI on the same pins *does* work, proving chip + wiring were fine. Cause: the vendor-pruned `PeripheralPins_B_G431B_ESC1.c` pin map; a lookup miss lands in `Error_Handler()`, which is an infinite loop. **Do not re-fight this.**
 - Same pruning killed `STM32HWEncoder` — it hangs inside `init()`. Solved by configuring TIM4 directly (§5).
 - Silkscreen pad labels are *mode presets* (ABZ / SPI / I²C), not simultaneous functions.
+- **Analogue pins identified by measurement** (four-channel probe, 3S then 6S):
+
+| Pin | 11.30 V | 22.50 V | Identity |
+|---|---|---|---|
+| **PA0** | 1351 | 2694 | **VBUS divider.** Tracks the bus 1:1 |
+| PA1 | 155 | 155 | Current-sense op-amp input. Flat |
+| PB14 | 1431 | **1267** | **Board thermistor (probable).** Moved *down* between sessions as the board warmed — wrong direction and wrong proportion for a voltage channel. See §16 |
+| PB12 | 2126 | 2127 | Unpopulated speed-pot input, parked at mid-rail. No use |
+
+- **`PB10` = `48V_EN` switches the bus divider RANGE. Do not touch it.** It is a *measurement* setting, not a power setting — it gates nothing and does not limit what the board can run on. The divider as shipped spans 34.2 V, which covers 6S with headroom; switching to the 48 V range would only cost resolution and invalidate the §1 calibration. `VBUS_PARTITIONING_FACTOR` is an **ST MCSDK** symbol and does not exist in this Arduino/SimpleFOC firmware — `VBUS_SCALE` does its job and is measured rather than derived.
 - **`driver.pwm_frequency` reads back `-12345`** = SimpleFOC's `NOT_SET` sentinel. The platform default (25 kHz on STM32) is in force; the member is simply never written back. **Do not "fix" it by assigning a value** — you would be changing a variable to one you only believe is already active.
 
 ---
@@ -129,7 +167,7 @@ Implementation: custom `TIM4Encoder : public Sensor` configuring GPIO AF2 + TIM4
 - **Velocity estimation needs a minimum sampling window.** The base `Sensor` class differences position on every call; at 15 kHz and 2 rad/s that is 0.089 counts per sample, so each estimate is either 0 or 22.6 rad/s — quantisation garbage that swung ±4 rad/s after filtering. Overriding `getVelocity()` with a **2 ms minimum window** fixed it: ±0.15 rad/s.
 - **No-field behaviour:** without a saturating field (~300 G, AMR), the angle engine outputs garbage → ABZ emits random edges → the counter drifts confidently. A detached magnet at runtime looks like plausible motion, not zeros.
 - Magnet mount spec: diametric, centred ≤0.1–0.2 mm, gap ~1–1.5 mm, tilt <3°, non-ferromagnetic mount, bonded with a shaft-piloted jig.
-- **Possible angle latency (deferred, §8).** The Id-vs-speed slope in voltage mode implies 0–240 µs of lag somewhere between the rotor and the dq transform, over and above winding inductance. The MT6816 datasheet's propagation-delay spec would settle whether the encoder is the source — a 5-minute read, no bench time.
+- **Angle latency — the ENCODER IS EXCLUDED.** MT6816 datasheet Rev 2.1 gives propagation delay **1 µs typ / 3 µs max**; the TIM4 input filter at `0xF` adds ≈1.5 µs. Together ~3% of the observed budget. The lag is in the control path, not the sensor. Preliminary **T ≈ 143 µs** against a measured 80–100 µs loop transport delay — see §8.3 for the settling test. *(The old note here said "read the MT6816 datasheet to settle whether the encoder is the source." That is now spent.)*
 - Retired: software `Encoder` class — it lost counts above ~100 k edges/s (193 rad/s), collapsing `lps` 16 k → 5 k and silently corrupting ZEA. Structurally impossible now.
 
 ---
@@ -202,16 +240,18 @@ Everything here is bench-measured unless marked. **This table outranks any other
 | **Kt** (per Iq) | **0.0266 Nm/A** | = 1.5 × Ke | Matches `60/(2π·KV)` = 0.02653 to 0.2% |
 | **Ke** | **0.0177 V/(rad/s)** | 5-point `Uq = R·Iq + U₀ + Ke·ω` fit, free pulley | 0.9% scatter; 2-var fit gives 0.01768 |
 | **Ke/Kt relation** | **Ke = Kt / 1.5** | Forced by dq power balance in SimpleFOC's amplitude-invariant convention | `Ke = Kt` excluded at 15σ |
-| **R_eff** (whole drive path) | **0.218 Ω** | Locked-rotor `Uq`-vs-`Iq` slope, 3 points, residuals <0.5% | 0.219 from the free-spin fit; 0.226 from July; consistent with the open-loop SVPWM check |
-| **U₀** (dead-time offset) | **0.028 V** at `dead_zone = 0.005` | Locked-rotor intercept | Predicted 0.033 by interpolating the July dead-zone table |
+| **R_eff** (whole drive path) | **0.218 Ω** | Locked-rotor `Uq`-vs-`Iq` slope | **Five independent determinations.** 3-point locked rotor 0.218; free-spin 2-var fit 0.219; July 0.226; open-loop SVPWM check; **2026-08-01 14-point locked-rotor fit 0.2183 ± 0.0034 (R² = 0.997, 0.10σ from the table value)** |
+| **U₀** (dead-time offset) | **0.028 V** at `dead_zone = 0.005`, `V_bus = 11.4 V` | Locked-rotor intercept, dedicated 3-point sweep | Predicted 0.033 from the July dead-zone table. **The 2026-08-01 14-point sweep returns 0.0194 ± 0.0042 V — only 4.6σ from zero, with 0.028 just 2.06σ away and not excluded. That dataset is ill-conditioned for the intercept (`R` and `U₀` trade off; per-point apparent U₀ scatters 0.007–0.034 with no trend) and does NOT supersede this entry.** Scales with bus voltage — §8.3 |
 | Deadband in current | **0.129 A** = U₀/R_eff | derived | **Below the 0.16 A sense noise floor — closed** |
 | **L** | **65 µH** (range 59–74) | Locked-rotor Uq step, 3 fit methods (302 / 270 / 340 µs) | Step amplitude matches `ΔUq/R` to 4% |
 | **τ_e** = L/R | **300 µs** | as above | |
 | Loop transport delay | **~80–100 µs** | Identified from two step responses at different `CUR_TF` | ≈ ½ PWM + ½ loop period |
 | PWM frequency | **25 kHz** (library default) | `pwm_frequency` reads `NOT_SET`; STM32 default | Not scope-verified |
 | Modulation | **SVPWM** | Boot banner + ammeter A/B | Ceiling `V_bus/√3` = 6.58 V at 3S |
-| Loop rate | **12.5 kHz** TORQUE(I), **15 kHz** TORQUE(V), **21 kHz** OPENLOOP-armed | `dt_us` per sample, cross-checked against `lps` to 9% | Anomaly closed |
-| Telemetry print cost | **~800 µs** at 921600 (was 5700 µs) | `pr_us` | 7× improvement |
+| Loop rate | **13.5 kHz** TORQUE(I) armed, **15 kHz** TORQUE(V), **21 kHz** OPENLOOP-armed, **126 kHz** OPENLOOP disarmed | `dt_us` per sample, cross-checked against `lps` to 9% | Anomaly closed. The disarmed figure completes the set and confirms it was always armed-vs-disarmed loop content |
+| Telemetry print cost | **~950 µs** at 921600 (was 5700 µs; ~800 before `Vb`/`Vb_src` were added) | `pr_us` | 6× improvement. Float formatting dominates |
+| **Bus-sense scale** | **0.008358 V/count** | 2-point vs multimeter, back-predicts both to 0.07% | Full scale 34.23 V |
+| Bus-sense seed accuracy | **±1.3% boot-to-boot** | 11.28–11.43 V across 7 boots vs 11.26–11.30 true | Per-boot scale factor; record the multimeter reading per session (§11) |
 
 ### 8.2 Mechanical / drivetrain
 
@@ -243,13 +283,60 @@ Everything here is bench-measured unless marked. **This table outranks any other
 
 | Item | Size | Promotes when |
 |---|---|---|
-| **Angle lag / d-axis decoupling** | 0–240 µs → 0% now, 3–9% torque loss above 150 rad/s motor | **Before the first run above 150 rad/s** (≈1.7 m/s foot). Read the MT6816 datasheet first (free) |
+| **Angle lag / d-axis decoupling** | **T ≈ 143 µs (PRELIMINARY)** → 3.6% torque loss at 270 rad/s | **PROMOTED — sweep scheduled.** See the box below |
 | **J_total** | — | With the 10 mm-belt actuator |
 | **Force per amp** | Predicted 4.13 / 4.32 / 4.98 N/A at α = 70/55/40° | When the 80/100 leg exists. Also validates the five-bar Jacobian model |
 | Sense gain mismatch (~9%) | 0.93 N pp | If impedance force ripple above ~1 N proves to matter |
 | 1/rev source | 0.79 N | Belt-off capture during the rebuild |
 | Higher current-loop bandwidth | ~100 Hz available at best | Effectively closed — at 80% of the transport-delay ceiling |
 | Genuine-board acceptance run | — | Completes the EG2124A evidence table |
+| **Live Vbus sampling** | Bench: none. Robot: 3–7 V of sag | **When the first multi-actuator bus is assembled.** Needs a register-level REGULAR-group conversion on PA0 — §12 |
+| **U₀ feedforward** | 0.57 N at 11.3 V → **1.26 N (12.9%) at 25.2 V** | **When the bench bus exceeds ~15 V.** Deadband = U₀/R_eff scales with bus: 0.133 A at 3S (below the 0.16 A noise floor, hence closed) but 0.297 A at 6S (above it). **Fix is U₀ feedforward, NOT a smaller `dead_zone`** — the EG2124A hardware dead time sets the floor. Re-measure U₀ with a locked-rotor sweep at the new bus before implementing |
+
+### Angle lag — preliminary result and the test that settles it
+
+**Preliminary `T ≈ 143 µs`**, extracted from an *incidental* 750-sample capture at 97 rad/s (`Ud = −0.2032`, `Iq = 0.8141`, `Id ≈ 0`):
+
+```
+ω_e            = 7 × 97.154 = 680 rad/s
+cross-coupling = −ω_e·L·Iq = −680 × 65e-6 × 0.8141 = −0.0360 V
+angle part     = −0.2032 + 0.0360 = −0.1672 V
+T              = 0.1672 / (Ke·ω·ω_e) = 0.1672 / 1169 = 143 µs
+```
+
+Insensitive to `L`: sweeping 59–74 µH moves `T` only 146 → 139 µs.
+
+**Treat as preliminary — four reasons.** (1) One capture spanning ~1 revolution, so the 1/rev disturbance is *in* the answer. (2) `Uq` was pinned at `VOLT_LIMIT` — saturated plant. (3) One speed, so no consistency check. (4) Single telemetry lines scatter 100–352 µs; only the 750-sample mean means anything.
+
+**Why it matters:** measured loop transport delay is 80–100 µs. If T really is 143 µs, **40–60 µs is unaccounted for** — and finding that source is worth more than blindly compensating.
+
+**The settling test** (velocity mode, `VOLT_LIMIT = 3.5`, `L` captures at 20/40/60/80/100/130 rad/s). Two terms sit on `Ud` and were the same size at 42 rad/s, which is why the original estimate could only bracket 0–240 µs:
+
+```
+Ud = −ω_e·L·Iq  −  Ke·ω·ω_e·T
+      ↑ scales with Iq        ↑ independent of Iq, grows as ω²
+```
+
+Hold `Iq` roughly constant (velocity mode does this — friction sets it near 1.05 A, flat above 19 rad/s) and sweep speed. Then per point:
+
+```
+T = (−Ud − ω_e·L·Iq) / (Ke·ω·ω_e)
+```
+
+**`T` must come out identical at every speed.** Consistency is the falsification test; drift means the fixed-delay model is wrong, which would be a new finding.
+
+| Outcome | Loss at 270 rad/s | Action |
+|---|---|---|
+| T consistent, <120 µs | <2.6% | **Close.** Don't write compensation |
+| T consistent, 130–160 µs | ~3.6% | Locate the extra 40–60 µs before compensating |
+| T consistent, >180 µs | >5.7% | Fix, and find the source |
+| **T drifts with speed** | — | Model wrong. Stop and reconcile |
+
+**If compensation is eventually written:** `angle += 7·ω·T`. Three traps — use raw `cnt`-derived velocity (`shaft_velocity` is filtered at 20 ms, and a jump accelerates in ~35 ms); verify the sign at 20 rad/s first, because backwards it *doubles* the error; watch `|I| = 1.2247·√(Id²+Iq²)` throughout.
+
+**Encoder is excluded as a source.** MT6816 datasheet Rev 2.1: propagation delay **1 µs typ / 3 µs max**. Plus the TIM4 input filter at `0xF` (≈1.5 µs) that is ~3% of the budget. No encoder upgrade helps — MT6826S is *worse* (10 µs propagation, 100 µs step response). Datasheet also gives INL ±0.75° typ (±5.25° electrical, 0.4% torque loss) and ABFreq 1.024 MHz = 6283 rad/s, so the old software-encoder failure at ~193 rad/s was always the MCU, never the sensor.
+
+**Known blind spot:** `No_Mag_Warning` (0x04[1]) and `Over_Speed` (0x05[3]) are SPI-only. `No_Mag_Warning` would have caught the detached-magnet failure in §5 directly. Not actionable — SPI is closed on this variant.
 
 ### 8.4 How to interpret `|I|`
 
@@ -353,6 +440,7 @@ Every power-up:
 
 1. Power on. Motor boots **DISABLED**, mode = OPENLOOP, `foc_ready = false`.
 2. **Read the `CFG` banner** — `modulation / dead_zone / pwm_Hz / Vbus`. A measurement is only comparable to others taken under the same four values.
+2a. **Put the multimeter on the pack terminals and write the reading in the session header, next to the banner `Vbus`.** The seed is a per-boot scale factor on every voltage the firmware reports, and it drifts 1.3% boot to boot (11.28–11.43 V observed vs 11.26–11.30 V true). Recording it costs 30 s and lets any session be rescaled in post-processing. Observed worst case 0.53%, which propagates to 0.5% on `R_eff` — inside the existing scatter, so this is bookkeeping, not a blocker.
 3. Press **`f`** → confirm a *real* alignment (twitch visible, no `Skip offset calib`).
 4. `v` / `t` / `c` → `g`.
 5. **Check `m=` before interpreting anything.**
@@ -363,10 +451,12 @@ Guards: boots disabled, 20 s auto-stop, 150 rad/s overspeed, torque modes arm at
 
 ### Telemetry line
 ```
-m=<mode> run=<0/1> tgt= cnt= enc_a= vel= Iq= Id= |I|= Uq= lps= pr_us=
+m=<mode> run=<0/1> tgt= cnt= vel= Iq= Id= |I|= Uq= Ud= Vb= Vb_src= lps= pr_us=
 ```
-- **`Ud` is documented in older notes but is NOT currently printed.** See §18 — it is the single most useful addition available.
-- **`Uq` is the saturation check.** Tuning while `Uq` is pinned is tuning a clamp.
+- **`Ud` IS printed** — in the telemetry line, in `logStats()`, and in the burst CSV. (The old note claiming otherwise was stale and has been deleted.) It is the angle-lag channel — §8.3.
+- **`Vb` is the boot-time seed, NOT live.** `Vb_src=seed` says so on every line. It does not track sag. See §12.
+- **`Uq` is the saturation check.** Tuning while `Uq` is pinned is tuning a clamp. At 3S, `VOLT_LIMIT = 2.0` saturates above ~90 rad/s: `Uq = R·Iq + U₀ + Ke·ω` = 2.08 V at 1.5 A and 98 rad/s. **Any free-spin run above ~90 rad/s at 2.0 V is saturated and its `Iq` is meaningless.**
+- **`ratio=` is only a valid calibration gate when `Uq` is unsaturated AND speed is low.** `|I|` is a square root of squares, so averaging an always-positive rippling quantity biases the mean *upward*. Measured: 1.255 at 97 rad/s (`Iq_pp` = 0.533 A) vs **1.224 at locked rotor** (`Iq_pp` = 0.062 A), same calibration. Gate it at locked rotor.
 - **`motor.shaft_velocity` is written only inside `motor.move()`**, skipped while stopped → freezes. Compute fresh when stopped.
 
 ### Burst logger
@@ -421,8 +511,17 @@ Each of these cost at least one session.
 - A ramp test hides marginal stability; a **step** test exposes it.
 - A guard on a noisy signal needs debouncing.
 
+**ADC sharing / silent stale values (2026-08-01)**
+- **Arduino `analogRead()` returns 0 on ANY pin of the ADC that `LowsideCurrentSense` owns, from the moment `currentSense.init()` runs.** Not a contention-between-two-calls problem — a *single isolated* call fails. Proven by `vraw=0` printed from the telemetry block while the pre-init seed read in `setup()` works every boot. Cause: the current sense arms the ADC for TIM1-triggered **injected** conversions and leaves it there, so `HAL_ADC_Start` returns BUSY and yields 0. **The PWM timer runs whether or not the motor is enabled**, so this fails even in disabled OPENLOOP. Same family as the pruned pin map: the Arduino layer fails silently instead of erroring.
+- **RETRACTED — the "+1.1% `Vbus` rise under load" was never real.** Because the loop sampler never updated once, every `Vb` ever displayed was that boot's `setup()` seed. Two *different boots* (11.30 and 11.42) were compared as if they were one run, and a sample-and-hold residue mechanism was invented to explain the difference. **"Zero drift over 20 s" was the tell and was read as a pass — a frozen value looks exactly like a perfectly stable measurement.** Ask who *writes* a value and when, not what it reads.
+- **A dummy `analogRead()` added to flush that imaginary residue broke nothing further, because nothing was working.** Lesson: a fix for a 1.1% artefact was shipped against a 100% failure that was already present and invisible.
+- **The remedy is a flag only one branch writes.** `vbus_valid` starts `true` in `setup()` and is only ever cleared by the sampler, so a single telemetry field answers "is the sampler running?" — it resolved in one glance what three turns of hypothesising could not. Design guards this way deliberately.
+- **A diagnostic that mutates the state it reports makes its own "before" reading unreliable.** The temporary `z` probe set `vbus_valid = false` as its test action, so a second press showed a misleading `before:` line. Prefer a passive telemetry field over a state-disturbing probe.
+- **Correct sharing mechanism, for when this is implemented properly:** STM32 ADCs run **regular** and **injected** groups concurrently on one peripheral. Injected preempts, regular resumes. VBUS belongs on a register-level regular conversion — **no pausing of the current sense, no blind interval in the current loop.** Pausing would be an instrument that disturbs what it measures (§6 of the working-context doc), and at 30 A a blind interval is not cosmetic.
+
 **Interpretation**
 - 300 ms telemetry aliases everything above ~1.7 Hz.
+- **A fit can measure one parameter superbly and another not at all.** The 2026-08-01 14-point locked-rotor sweep pins `R_eff` to ±1.55% (0.10σ from the table) while its intercept `U₀` lands 4.6σ from zero with a 21.8% standard error; subsetting the points swings `U₀` from 0.019 to 0.042 while `R` moves the other way. **Report the well-conditioned parameter and say plainly that the other is not resolved** — do not overwrite a dedicated measurement with a byproduct.
 - **Aliased telemetry can still be right for the wrong reason.** The 1/rev disturbance was correctly guessed from 2.11-samples-per-revolution telemetry — right at Nyquist. The guess only became a finding after a proper position fold. Don't promote a marginal reading to a conclusion.
 - Free-shaft runs hit the **voltage ceiling** and look like runaway. At 96 rad/s: `E = 0.0177 × 96 = 1.70 V`, `+R·I +U₀ = 1.95 V ≈ VOLT_LIMIT`. Compute back-EMF first.
 - **A frequency-domain FFT smears when the speed varies.** Fold against integrated position instead; ±10% speed variation destroyed the spectral peaks that the position fold resolved cleanly.
@@ -464,15 +563,18 @@ Meta-lessons: instrument-first beats hypothesis iteration; verify resolved versi
 - **M1-a — actuator electrical model** — Kt, Ke, R_eff, L, τ_e, U₀ all measured. §8.
 - **M1-b — `dead_zone`** — final at 0.005; deadband below the sense noise floor.
 - **M1-e — current loop** — 412 Hz, 9.3% overshoot, zero steady-state error, at 80% of the transport-delay ceiling.
+- **M1-d — stall clamp (2026-08-01)** — locked rotor, `tgt = 2.00 A` → `Iq` = 1.98–2.03 (mean 2.000), `|I|` mean 2.446 vs 2.449 predicted (0.1%), `Uq` = 0.4604 vs 0.464 predicted (0.8%), `Id` ≈ 0. **`current_limit` binds.** Locked-rotor `ratio` = **1.224**, `Iq_pp` = 0.062 A. `VOLT_LIMIT = 3.5` is authorised for the angle-lag sweep on this evidence.
+- **Bus-voltage sense** — PA0 identified and calibrated to 0.07%; divisor is a measurement. Seed-only; live sampling deferred (§8.3).
 - **Modulation** — SVPWM verified two independent ways.
 - **Instrumentation** — burst logger v2 (per-sample `dt`, `a` stats, capture-condition recording), 921600 telemetry.
 
 **Immediate next**
-1. **M1-d — stall-clamp verification** (10 min). Hand-stall in TORQUE(I) at low speed; `Iq` must clamp at `current_limit` = 2.0 A, not 7–9 A. Safety gate before extended current-mode running.
-2. **M1-c — velocity harness** (30 min). Rescale to amps, sweep `VEL_P` with I = 0 to P_crit, take 0.45× P_crit, restore I. Steps not ramps. Stop at "usable instrument".
-3. **M1 proper — impedance controller** + **constant friction feedforward** (~1.05 A, ±0.5 rad/s linear ramp through zero).
-4. Belt-off 1/rev capture — opportunistic during the 10 mm rebuild.
-5. J_total on the new actuator; force-per-amp when the 80/100 leg exists.
+1. **M1-c — velocity harness** (30 min). `VEL_P` from 0.1, double to `P_crit` with I = 0, take 0.45×, then `VEL_I = VEL_P/0.15`. **Steps, not ramps.** Stop at "usable instrument" — the shipping architecture has no cascaded velocity PID. Sweep at 20–80 rad/s (above ~90 the 2.0 V limit saturates).
+2. **Angle-lag sweep** (30 min). `VOLT_LIMIT = 3.5` → `L` + `a` captures at 20/40/60/80/100/130 rad/s → compute `T` per point and check consistency → revert `VOLT_LIMIT`. See §8.3. Prediction on record: **T = 130–160 µs, consistent to ±15%.**
+3. **6S staged commissioning** (30 min, separate session — one variable per test, so keep 3S for the tasks above). §19.
+4. **M1 proper — impedance controller** + **constant friction feedforward** (~1.05 A, ±0.5 rad/s linear ramp through zero) + **U₀ feedforward if the bus goes above ~15 V**.
+5. Belt-off 1/rev capture — opportunistic during the 10 mm rebuild.
+6. J_total and J_rotor on the new actuator; force-per-amp when the 80/100 leg exists.
 
 **Deferred with reasons** — see §8.3 for the full table with promotion conditions.
 
@@ -486,12 +588,15 @@ Meta-lessons: instrument-first beats hypothesis iteration; verify resolved versi
 - Switching ripple contributes real RMS heating even at zero average current.
 - Bus current ≠ phase current: the inverter is a buck converter.
 - **Hot-vs-cold R_eff has not been measured.** Copper is +0.39%/K. If `R_hot/R_cold > 1.15`, peak force sags during a jump sequence. 10-minute test whenever convenient.
+- **PB14 is a board thermistor channel (probable)** and is already wired — 1431 → 1267 counts as the board warmed between two sessions. It makes the hot-vs-cold test nearly free. **Caveat: it measures the BOARD, not the winding.** The binding constraint is motor copper, so treat PB14 as an indicator, not a substitute for measuring `R_eff` warm. Confirm the identification first: run at 1.5 A for two minutes and watch it fall further. **Reading it requires the register-level ADC work in §8.3** — `analogRead()` cannot reach it once the current sense is initialised (§12).
 
 ---
 
-## 17. Robot-Level Design Decisions (frozen 2026-07-29)
+## 17. Robot-Level Design Decisions (frozen 2026-07-29, battery re-opened 2026-08-01)
 
 Frozen on measured constants, not estimates. Re-open only with new bench data.
+
+**Re-opened, with the data that did it:** the battery row. HG5511D datasheet (60 V), a bench run at 22.5 V, and the measured 34.2 V divider span together removed both objections to 6S. Everything else in this table stands.
 
 | Parameter | Value | Reasoning |
 |---|---|---|
@@ -499,7 +604,7 @@ Frozen on measured constants, not estimates. Re-open only with new bench data.
 | **Proximal link** | **80 mm** | L₁ sets stroke |
 | **Distal link** | **100 mm** | **Longer distal links *reduce* stroke** (h → L₁cos α + L₂ asymptotically). Keep L₂/L₁ ≈ 1.25 |
 | **Reduction** | **9:1 — unchanged** | Jump optimum is ~10:1; 9:1 within 2%. Optimal under both modulation assumptions |
-| **Battery** | **5S** (18.5 V nom / 21.0 V peak) | +24% apex over 4S; fits the 24 V divider mode. 6S buys 3% and needs a PB10 change |
+| **Battery** | **5S or 6S — RE-OPENED 2026-08-01** | The old "6S buys 3% and needs a PB10 change" line was wrong on both counts. **No PB10 change is needed** (divider spans 34.2 V, §3) and the gain is not 3% — it is large, because the `R·I` toll is subtracted *before* anything buys speed. See §19 |
 | **Belt** | **10 mm GT2** | Tooth load `Kt·I/r_pinion` = 208 N at 30 A on 6 mm — over the limit. Independent of gear ratio |
 | Workspace | α ∈ [40°, 70°] | 40° of snap-through margin; reflected inertia worsens toward full extension |
 
@@ -509,7 +614,22 @@ Frozen on measured constants, not estimates. Re-open only with new bench data.
 
 **Accepted weakness:** swing clearance ≈ 34 mm, landing absorption over 54 mm. **This is a flat-ground sprinter and jumper, not a terrain robot.** An explicit choice.
 
-**Not measured yet, and the design rests on it:** `J_rotor` is estimated at 2.1×10⁻⁵ kg·m². Every reflected-inertia figure scales on it.
+**Not measured yet, and the design rests on it:** `J_rotor` is estimated at 2.1×10⁻⁵ kg·m². Every reflected-inertia figure scales on it — and reflected inertia is 24% of effective mass, hence a major driver of the 30 A peak. **Measure it on the 10 mm-belt actuator before buying a battery.**
+
+### Peak bus current — corrected 2026-08-01
+
+The earlier 150 A estimate was arithmetic error. At full modulation the bus voltage **cancels out**:
+
+```
+I_bus/motor = 1.5·Uq·Iq/(V_bus·η)   with Uq = V_bus/√3
+            = 1.5·Iq/(√3·0.95) = 0.911·Iq
+```
+
+At `Iq` = 30 A: **27.3 A per motor, ×8 sagittal actuators = 219 A, +11 A servos/electronics = 230 A**, independent of pack voltage. Peak electrical power ≈ 3.9 kW, of which 2.35 kW is copper loss — **actuator efficiency at peak is ~40%.**
+
+**The 478 mm apex figure above contains NO sag term.** A no-sag reconstruction gives 653 mm at 21.0 V and 358 mm at 18.5 V; 478 sits between them and assumes a terminal voltage that no realistic pack holds at 230 A. Treat 478 mm as an upper bound and use §19 for what a real pack delivers.
+
+**Mass exchange rate, qualifying the "mass is nearly free" note above:** once force-limited at 30 A by belt tooth load, `h ≈ F_max·s/(m·g) − s`, so apex goes as **1/m**. 300 g of extra battery costs ~40 mm of apex; going from 45 mΩ to 25 mΩ of pack resistance buys ~190 mm. **The heavier, stiffer pack wins ~5:1. Spend the mass.**
 
 ---
 
@@ -518,3 +638,76 @@ Frozen on measured constants, not estimates. Re-open only with new bench data.
 Reviewed 2026-07-29. No functional bugs found. Outstanding items:
 
 - `logStats()` skips the first 25% of the buffer — correct for steady-state sweeps, misleading after a `k` step.
+- `VBUS_LIVE = false`. `Vb` is a boot seed and does not track. §12 has the reason; §8.3 has the promotion condition.
+- Bus voltage is not in the burst log. Add `uint16_t vbus_x100` (drop `LOG_N` 1000 → 900 to hold 18.0 kB, and **read the free-RAM figure in the build output first** — a static buffer that collides with the stack gives a HardFault, not a compile error). Only worth doing once sampling is live.
+
+---
+
+## 19. Battery Specification (opened 2026-08-01)
+
+**The binding constraint is sag, not energy.** One jump costs ~85 J = 0.024 Wh against a ~33–40 Wh pack — three orders of magnitude of margin. Heating is also a non-issue: 394 W dissipated inside the pack for 35 ms raises it 0.05 °C. **The pack is sized entirely by the voltage it retains at 230 A.**
+
+### Why voltage leverages jump height so hard
+
+```
+Voltage needed = R_eff·Iq (a fixed toll, buys zero speed) + Ke·ω (buys speed)
+               = 0.218 × 30 = 6.57 V                      + 0.0177·ω
+Available      = V_bus/√3   (SVPWM ceiling)
+```
+
+The toll comes off the top, so sag eats the *remainder*, not the total — and apex goes as speed squared. **A 29% voltage loss becomes a 62% speed loss and an 86% apex loss.**
+
+| Pack | Pulse R inc. wiring | Bus at 230 A | Ceiling | Foot speed at 30 A | **Apex** |
+|---|---|---|---|---|---|
+| 5S 2200 mAh 35C | ~53 mΩ | 8.8 V | 5.09 V | **cannot reach 30 A** | — |
+| 5S 1800 mAh 110C ×1 | ~28.5 mΩ | 14.5 V | 8.34 V | 1.14 m/s | 66 mm |
+| **5S 1800 110C ×2 parallel** | ~16.2 mΩ | 17.3 V | 9.97 V | 2.19 m/s | **244 mm** |
+| **6S 1800 110C ×1** | ~33.4 mΩ | 17.5 V | 10.11 V | 2.28 m/s | **266 mm** |
+| **6S 1800 110C ×2 parallel** | ~18.7 mΩ | 20.9 V | 12.07 V | 3.54 m/s | **639 mm** |
+
+Note row 1: that pack's ceiling falls **below the 6.57 V toll**, so it cannot make 30 A flow at any speed. Fine for standing, walking, trotting; cannot jump at design force. **Every resistance figure above is an estimate — the RC3563 replaces them with measurements.**
+
+### Target spec
+
+| Parameter | Target | Rationale |
+|---|---|---|
+| Cells | **6S if commissioning passes, else 5S** | §3 shows no board change is needed either way |
+| **Internal resistance** | **≤20 mΩ total pack** | *The* spec. Sets apex directly. Ask the seller (*内阻多少毫欧?*); if they cannot answer, it is not a high-C pack |
+| Capacity | 1800–3000 mAh | <1800 → runtime impractical; >3000 → mass penalty beats the sag benefit |
+| Advertised C | ≥100C @1800 mAh | Assume ~50% derate on advertised claims |
+| Connector | **XT90 or direct 10 AWG solder** | XT60 is ~60 A cont / ~120 A burst — inadequate at 230 A |
+| Trunk wire | 10 AWG minimum | Per-ESC branches at 30 A are fine on 16 AWG |
+| Mass | ≤700 g (17.5% of 4 kg) | Exchange rate favours mass — §17 |
+
+**Parallel pairs are the best value.** Doubling electrode area halves cell resistance, doubles capacity, and costs two cheap packs instead of one exotic one. Match voltage within ~0.1 V/cell before connecting (use a parallel board) and keep the packs the same model and age.
+
+**Do not try to fix sag with capacitors.** 200 A for 35 ms at 1 V droop needs `C = I·Δt/ΔV` = **7 F**. Bulk caps handle switching ripple only.
+
+### Measurement protocol (RC3563, four-wire, 1 kHz)
+
+1. Charge to ~3.8 V/cell, rest 30 min, room temperature. Resistance depends on charge state and temperature — roughly doubles at 0 °C.
+2. **Measure each cell individually through the balance lead, then sum.** A pack with one bad cell reads only slightly high overall, but that cell is what limits you and what fails first.
+3. Add ~4 mΩ for wiring and connector.
+4. **Multiply by ~1.4** to get the resistance that matters for a 35 ms pulse. The 1 kHz AC method sees only the fast ohmic part; charge-transfer and diffusion add more on the jump timescale. Factor is approximate and chemistry-dependent.
+5. Re-measure every few months. Rising internal resistance is how a LiPo announces its death, long before capacity drops.
+
+| Total pulse resistance | Verdict |
+|---|---|
+| ≤20 mΩ | Excellent — supports the full design jump |
+| 20–30 mΩ | Good — roughly half design apex |
+| 30–45 mΩ | Marginal — fine for trotting, weak on jumps |
+| >45 mΩ | Cannot support the design operating point |
+
+### 6S staged commissioning
+
+Gates cleared: **FETs 60 V** (datasheet); **regulator, 3.3 V rail, bulk capacitance** (board demonstrably ran at 22.5 V); **ADC range** (34.2 V full scale). Not cleared: **electrolytic capacitor markings unreadable**, and **switching at 25.2 V under load untested**.
+
+Abort at the first sign of anything warm that should not be:
+
+1. Power only, no motor, 22.5 V, 10 min. Feel the electrolytics — they should be at ambient.
+2. Power only, full 25.2 V, 10 min. **This is the capacitor test.**
+3. Motor connected, open-loop, `VOLT_LIMIT = 1.0`, 30 s. First switching at 6S.
+4. TORQUE(I) at 1.0 A, 60 s. **`|I|/Iq` must stay at 1.22–1.23.**
+5. Only then run anything longer. **Re-measure U₀ at the new bus (§8.3).**
+
+Expect switching overshoot around 1.3–1.5× the bus: 38 V worst case against 60 V breakdown = 63%. Acceptable margin, not a measurement.

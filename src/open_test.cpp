@@ -112,12 +112,15 @@ TIM4Encoder encoder = TIM4Encoder(1024);   // 1024 PPR -> 4096 CPR
 // ---- safety / tuning constants ----
 // Uq rails -> real current = VOLT_LIMIT / R_eff(0.218). At 2.0 V that is ~9.2 A / 18 W
 // for the ~1 s it takes to react: thermally trivial. Debounced sense guard is the backstop.
-const float VOLT_LIMIT      = 2.0f;
+const float VOLT_LIMIT      = 3.5f;
 const float VEL_MAX         = 20.0f;
 const float OVERSPEED_RADS  = 150.0f;   // torque mode has NO built-in speed limit
 const float VEL_STEP        = 1.0f;
-const float TORQUE_STEP     = 0.02f;
-const float TORQUE_MAX      = 1.0f;
+const float TORQUE_STEP     = 0.01f;
+// Raised for the angle-lag sweep: TORQUE(V) at 130 rad/s needs Uq = 2.56 V.
+// Ceiling is 2.6 V, NOT 3.5 -- Uq = 3.5 settles at 183 rad/s, past the
+// 150 rad/s overspeed guard. current_limit does not bind in voltage mode (§12).
+const float TORQUE_MAX      = 2.6f;
 const unsigned long AUTO_STOP_MS = 20000;
 const unsigned long OVERSPEED_GRACE_MS = 300;   // ignore overspeed right after arming
 
@@ -148,10 +151,66 @@ const float CURD_P = 0.1f,  CURD_I = 335.0f;
 // a loop measured at 412 Hz. Filter corner must sit 5-10x ABOVE loop bandwidth.
 const float CUR_TF = 0.00025f;    // validated value; the filter-corner bisection is closed.
 
-const float VEL_P  = 0.5f;   // A/(rad/s) -- velocity closes on current; sweep fresh
-const float VEL_I  = 0.0f;   // 0 for the P_crit sweep; restore after
+const float VEL_P  = 0.2f;   // A/(rad/s) -- velocity closes on current; sweep fresh
+const float VEL_I  = 1.5f;   // 0 for the P_crit sweep; restore after
 const float VEL_D  = 0.0f;
 const float VEL_TF = 0.02f;
+
+// ---------------------------------------------------------------------------
+// BUS VOLTAGE SENSING
+// ---------------------------------------------------------------------------
+// WHY: driver.voltage_power_supply is the DIVISOR SimpleFOC uses to convert a
+// requested voltage into a PWM duty cycle. It was a hardcoded 11.4 f -- a belief,
+// not a measurement. Bench pack measured 11.30 V (2026-__-__): 0.9% error, inside
+// the R_eff scatter, so the master table stands. On the robot at ~230 A the pack
+// sags 3-7 V and a hardcoded divisor causes:
+//   (a) delivered voltage != commanded voltage,
+//   (b) PID_current limits sitting ABOVE the achievable modulation ceiling, so
+//       the integrator winds up against a ceiling that does not physically exist,
+//   (c) every logged Uq becoming a REQUEST rather than a DELIVERY, which silently
+//       breaks the Uq = R*Iq + U0 + Ke*w cross-check. Same failure family as the
+//       stale motor.current in the voltage branch: a value nobody updates that
+//       reads exactly like data.
+//
+// PIN: PA0. CONFIRMED on the bench, not inferred -- 11.30 V -> 1351 counts,
+// 22.50 V -> 2694 counts. Voltage ratio 1.991, count ratio 1.994 (0.15% apart).
+// PA1 / PB12 were flat; PB14 moved the wrong way (it is the board thermistor).
+//
+// SCALE: measured, not from a datasheet -- the divider ratio is undocumented on
+// this clone. Pure proportional fit; the 33 mV offset from a 2-point line fit is
+// smaller than the +-0.05 V rounding in the 22.5 V meter reading, so it is not
+// resolvable and is discarded. Back-predicts both points to within 0.07%.
+//   full scale  = 4095 * 0.008358 = 34.23 V bus
+//   resolution  = 8.36 mV / count
+//   6S at 25.2 V = 3015 counts = 74% of range -> NO PB10 / 48V_EN change needed.
+// Re-calibrate if PB10 (48V_EN) is ever driven: it switches the divider range.
+//
+// VBUS_SCALE = 0 disables this entire feature. Behaviour then is byte-identical
+// to the old hardcode, which makes rollback a one-character edit.
+const uint32_t PIN_VBUS   = PA0;
+const float VBUS_SCALE    = 0.008358f;  // V per ADC count -- MEASURED 2026-__-__
+// SEED-ONLY. Arduino analogRead() returns 0 on any pin of this ADC once
+// currentSense.init() has armed the injected-conversion group -- confirmed
+// 2026-__-__ by vraw=0 from an isolated call in the print block, while the
+// pre-init setup read works every time. Not a contention-between-two-calls
+// issue: ONE call fails. HAL_ADC_Start returns BUSY because the peripheral is
+// never in the READY state again.
+// Live tracking requires a register-level REGULAR-group conversion on PA0.
+// Regular and injected groups coexist by design: injected preempts, regular
+// resumes. No pausing, no blind interval in the current loop.
+// Deferred -- the bench has no sag to track. See README 8.3.
+const bool  VBUS_LIVE     = false;
+const float VBUS_TF       = 0.020f;     // 20 ms. Noise here becomes motor current.
+const float VBUS_MIN      = 8.0f;       // PLAUSIBILITY window only -- NOT a
+const float VBUS_MAX      = 30.0f;      //   low-voltage cutoff. See note below.
+const float VBUS_FALLBACK = 11.30f;     // measured bench pack, used if read fails
+float vbus_filt           = VBUS_FALLBACK;
+bool  vbus_valid          = false;
+// NOTE ON VBUS_MAX: the ADC saturates at 34.2 V, so a genuine overvoltage above
+// that would read as exactly 34.2 and be REJECTED by this window -- the filter
+// would then hold its last good value rather than reporting the fault. That is
+// the correct behaviour for a divisor, but it means this window is not, and must
+// not be mistaken for, overvoltage protection.
 
 enum Mode { MODE_OPENLOOP, MODE_TORQUE, MODE_TORQUE_CURRENT, MODE_VELOCITY };
 Mode mode = MODE_OPENLOOP;
@@ -474,7 +533,25 @@ void setup() {
   SimpleFOCDebug::enable(&SerialUART);
   SerialUART.println(F("=== actuator + current mode + TIM4 HW encoder ==="));
 
-  driver.voltage_power_supply = 11.4f;
+  // ---- BUS VOLTAGE: seed BEFORE driver.init() and BEFORE currentSense.init().
+  // Ordering is deliberate: currentSense.init() reconfigures the ADC, so any
+  // Arduino-API analogRead() must either happen before it or be verified against
+  // it afterwards (see the |I|/Iq gate in the verification procedure).
+  analogReadResolution(12);                  // default is 10-bit; 2 bits for free
+  pinMode(PIN_VBUS, INPUT_ANALOG);           // detach digital buffer, unload divider
+  {
+    uint32_t acc = 0;
+    (void)analogRead(PIN_VBUS);   // discard: first conversion carries residue
+    for (int k = 0; k < 64; k++) acc += analogRead(PIN_VBUS);   // average 64
+    float v = (acc / 64.0f) * VBUS_SCALE;
+    if (VBUS_SCALE > 0.0f && v > VBUS_MIN && v < VBUS_MAX) {
+      vbus_filt = v;  vbus_valid = true;
+    } else {
+      vbus_filt = VBUS_FALLBACK;  vbus_valid = false;
+      SerialUART.println(F("!! VBUS read implausible -- using fallback"));
+    }
+  }
+  driver.voltage_power_supply = vbus_filt;
   driver.voltage_limit = 6.0f;
   driver.dead_zone = DEAD_ZONE;
   driver_ok = driver.init();
@@ -537,7 +614,8 @@ void setup() {
   SerialUART.print(motor.foc_modulation == FOCModulationType::SpaceVectorPWM ? F("SVPWM") : F("SinePWM"));
   SerialUART.print(F(" dead_zone=")); SerialUART.print(driver.dead_zone, 4);
   SerialUART.print(F(" pwm_Hz="));    SerialUART.print(driver.pwm_frequency);
-  SerialUART.print(F(" Vbus="));      SerialUART.println(driver.voltage_power_supply, 2);
+  SerialUART.print(F(" Vbus="));      SerialUART.print(driver.voltage_power_supply, 2);
+  SerialUART.print(F(" vok="));       SerialUART.println(vbus_valid ? 1 : 0);
 
   // TIM4 counting convention confirmed CCW (matches the previous software
   // encoder). Preset it so 'f' skips direction detection -> short twitch.
@@ -550,6 +628,42 @@ void setup() {
 
 void loop() {
   handleSerial();
+
+  // ---- BUS VOLTAGE: 1 kHz sample -> filter -> republish derived limits ----
+  if (VBUS_SCALE > 0.0f && VBUS_LIVE) {
+    static uint32_t vbus_last_us = 0;
+    uint32_t now_us = micros();
+    // Cast handles micros() wraparound at ~71 min. Rate-limited to 1 kHz because
+    // analogRead() blocks for a few us; once per 12.5 loops is 0.5% overhead,
+    // once per loop would be ~6%. The cost lands in dt_us, which is logged.
+    if ((uint32_t)(now_us - vbus_last_us) >= 1000) {
+      vbus_last_us = now_us;
+      (void)analogRead(PIN_VBUS);
+      float v = (float)analogRead(PIN_VBUS) * VBUS_SCALE;
+      if (v > VBUS_MIN && v < VBUS_MAX) {
+        // One-pole low-pass, 1 ms sample period, 20 ms time constant -> each new
+        // reading contributes 4.8%. HEAVILY filtered on purpose: this value is the
+        // divisor in every duty-cycle calculation, so ADC noise here is injected
+        // straight into the motor current and from there into the current loop.
+        const float a = 0.001f / (VBUS_TF + 0.001f);
+        vbus_filt += a * (v - vbus_filt);
+        vbus_valid = true;
+        driver.voltage_power_supply = vbus_filt;
+        // SVPWM can only synthesise V_bus/sqrt(3) = 0.57735*V_bus. A PI output
+        // limit ABOVE that is not a limit: the integrator winds up against a
+        // ceiling that does not exist, then dumps the windup when the bus
+        // recovers. Inert on the 3S bench (6.52 V ceiling vs VOLT_LIMIT 2.0);
+        // this exists for the robot.
+        float ceiling = vbus_filt * 0.57735f;
+        float lim = (VOLT_LIMIT < ceiling) ? VOLT_LIMIT : ceiling;
+        motor.voltage_limit       = lim;
+        motor.PID_current_q.limit = lim;
+        motor.PID_current_d.limit = lim;
+      } else {
+        vbus_valid = false;              // implausible: hold last good value
+      }
+    }
+  }
 
   unsigned long period = (driver_ok && cs_ok) ? 500 : 80;
   if (millis() - last_blink > period) { led_state=!led_state; digitalWrite(LED_BUILTIN, led_state); last_blink=millis(); }
@@ -654,7 +768,6 @@ void loop() {
     SerialUART.print(F(" run=")); SerialUART.print(running?1:0);
     SerialUART.print(F(" tgt=")); SerialUART.print(target, 2);
     SerialUART.print(F(" cnt=")); SerialUART.print(encoder.rawCount());
-    SerialUART.print(F(" enc_a=")); SerialUART.print(encoder.getAngle(), 2);
     SerialUART.print(F(" vel=")); SerialUART.print(motor.shaft_velocity, 2);
 
     // Print dq in every mode: Id is the desync detector, not a current-mode luxury.
@@ -666,6 +779,10 @@ void loop() {
 
     SerialUART.print(F(" Uq=")); SerialUART.print(motor.voltage.q, 3);
     SerialUART.print(F(" Ud=")); SerialUART.print(motor.voltage.d, 3);
+    SerialUART.print(F(" Vb=")); SerialUART.print(vbus_filt, 2);
+    // 'seed' not 'vok': with VBUS_LIVE=false, Vb is the boot measurement and is
+    // NOT tracking. Printed so no capture can be read as if it were live.
+    SerialUART.print(F(" Vb_src=")); SerialUART.print(VBUS_LIVE ? F("live") : F("seed"));
     SerialUART.print(F(" lps=")); SerialUART.print(lps);
     SerialUART.print(F(" pr_us=")); SerialUART.println(pr_us);   // cost of the PREVIOUS print block
     if (log_ready && !log_announced) {
