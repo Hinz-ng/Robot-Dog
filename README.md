@@ -9,7 +9,45 @@ Hardware, firmware contract, measured plant characteristics, and the failure mod
 
 ---
 
-## 0. Changelog — 2026-08-01 bus-sense / M1-d session
+## 0. Changelog — 2026-08-06 SPI migration + angle-lag CLOSED
+
+Full file replacement. Every change declared.
+
+| § | Change |
+|---|---|
+| **NEW 2** | **Two assemblies now exist.** ORIGINAL (ABZ, open fault, preserved) and SPARE (MT6816 SPI, accepted, **now the reference actuator**). Read this section before using any number in this file |
+| 1 | MT6816 SPI rows: pins, bit-bang timing, parity rate, stored ZEA |
+| 3 | Board silkscreen pin table; **bit-bang-vs-peripheral decision CLOSED with numbers**; third instance of the pruned-pin-map trap (UART on PB6/PB7) |
+| 5 | **Near-zero magnet air gap identified** as the likely ABZ root cause; "whine = bearing" **retracted** |
+| 6 | ZEA is now a **stored constant**, reproducible across power cycles to 0.03° elec |
+| 7 | **INL measured: 0.93° mech pk-pk, 1/rev dominant** |
+| **8.1** | **MASTER TABLE SPLIT into per-assembly and shared columns.** R_eff/U0/Ke/Kt/L are per-assembly and do NOT transfer |
+| **8.3** | **ANGLE LAG CLOSED.** T = 57 µs by parity separation, matches theory to 7%, 0.58% torque loss at 270 rad/s. **No compensation to be written** |
+| 10 | **Per-unit calibration policy for 12 joints** — automate it, don't repeat it by hand |
+| 12 | Six new entries |
+| 15 | Roadmap rewritten: task 5 closed, task 4 downgraded, C1 promoted |
+
+**Superseded and deleted:** the ABZ angle-lag numbers (T = 85.7 µs, δ₀ = 2.17°) — contaminated by count loss and by combining two alignments; `δ₀` as a fitted parameter (it is the ZEA residual, now +0.12° elec); the claim that `Ud`/`Id` sweeps need low-speed repeats (one 1000-sample capture spans 9.5 revolutions).
+
+---
+
+## 1a. TWO ASSEMBLIES — read this before using any number below
+
+| | **ORIGINAL** | **SPARE — the reference actuator** |
+|---|---|---|
+| Encoder | ABZ → TIM4 quadrature, 4096 cnt/rev | **MT6816 4-wire SPI, 16384 cnt/rev** |
+| Status | **Open count-loss fault.** Preserved un-modified | **Accepted 2026-08-06.** All new work happens here |
+| `R_eff` | 0.218 Ω (5 determinations) | **0.1977 Ω** (2 points only — needs C1) |
+| `U0` | 0.028 V | **0.0493 V** (2 points only — needs C1) |
+| ZEA | session-relative, sd 5.68° elec | **stored 6.0485 rad**, sd 2.93°, reproducible |
+| Direction | CCW | **CW** |
+| Armed loop | 13.5 kHz | **12.5 kHz** |
+
+**The two assemblies differ by −9.3% in `R_eff`.** Different motor, different board, different shunts. **Do not use an ORIGINAL constant on the SPARE or vice versa.** Every table below is labelled.
+
+---
+
+## 0c. Changelog — 2026-08-01 bus-sense / M1-d session
 
 Full file replacement. Every change declared.
 
@@ -22,7 +60,7 @@ Full file replacement. Every change declared.
 | 3 | PA0 / PA1 / PB12 / PB14 identified by measurement | Four-channel probe sweep |
 | **8.1** | **R_eff: fifth independent confirmation, 0.2183 ± 0.0034 Ω** | 14-point locked-rotor fit, incidental to M1-d |
 | 8.1 | Bus-sense entries; disarmed loop rate 126 kHz | New measurements |
-| 8.3 | **Angle lag: preliminary T ≈ 143 µs** (was "0–240 µs") | Extracted from an incidental capture. Promotion condition met |
+| 8.3 | ~~Angle lag: preliminary T ≈ 143 µs~~ — **SUPERSEDED 2026-08-06, see §0 / §8.3. Final value 57.0 µs** |
 | 8.3 | New deferred: live Vbus sampling; U₀ feedforward with a bus-voltage trigger | |
 | **11** | Telemetry line rewritten; **new session-header protocol** | `Vb`, `Vb_src` added; multimeter reading now recorded per session |
 | 11 | **Deleted** "`Ud` is NOT currently printed" | Stale — it is printed in three places |
@@ -157,7 +195,7 @@ OpenOCD's "target voltage may be too low" is a clone ST-Link VREF quirk. Harmles
 
 ---
 
-## 5. Encoder — TIM4 hardware quadrature
+## 5. Encoder — TIM4 quadrature (ORIGINAL) / MT6816 SPI (SPARE)
 
 Wiring: XJX-135 **JP1**: A → HA/A (**PB6** = TIM4_CH1), B → HB/B (**PB7** = TIM4_CH2), VDD → 3V, GND → GND. **Z unconnected** (BOOT0 trap). **HVPP → GND** (required for ABZ per seller doc).
 
@@ -165,14 +203,18 @@ Implementation: custom `TIM4Encoder : public Sensor` configuring GPIO AF2 + TIM4
 
 - **CPR = 4096 verified**: 1 count of error accumulated over 23.65 revolutions. The seller's "AB: 1025 pulses/rev" is a typo; 1024 PPR is correct.
 - **Velocity estimation needs a minimum sampling window.** The base `Sensor` class differences position on every call; at 15 kHz and 2 rad/s that is 0.089 counts per sample, so each estimate is either 0 or 22.6 rad/s — quantisation garbage that swung ±4 rad/s after filtering. Overriding `getVelocity()` with a **2 ms minimum window** fixed it: ±0.15 rad/s.
-- **No-field behaviour:** without a saturating field (~300 G, AMR), the angle engine outputs garbage → ABZ emits random edges → the counter drifts confidently. A detached magnet at runtime looks like plausible motion, not zeros.
+- **Magnet air gap — likely root cause of the ABZ count loss (2026-08-06, ORIGINAL assembly).** The magnet was mounted with essentially **zero air gap to the MT6816 package** and was rubbing or intermittently contacting it. Lifting it ~1 mm made a −2.07 V run that had stalled twice complete a clean 20 s. Mechanism is **mechanical coupling, not field strength** — the AMR element responds to field direction, contact is still inside the 30–1000 mT window, and the die sits 0.5–0.8 mm inside the package. Vibration and micro-deflection at the sensing element make the computed angle jitter; the ABZ interpolator emits spurious edges; the external counter accumulates them. Speed-dependent (deflection grows with speed), progressive within a run (motor heats → axial expansion → worse contact → more current → more heat), and recoverable only by re-running `f`. **Not yet closed — one un-replicated test that also changed the power cycle. Confirm with the ZEA-delta test (§15).**
+
+**RETRACTED:** *"the high-pitched whine is MECHANICAL (audible when backdriving by hand) — suspect motor or pulley bearing."* A magnet rubbing a chip package is exactly a whine audible on backdrive. The bearing attribution had no evidence behind it and this hypothesis explains the observation it was not invented for.
+
+**No-field behaviour:** without a saturating field (~300 G, AMR), the angle engine outputs garbage → ABZ emits random edges → the counter drifts confidently. A detached magnet at runtime looks like plausible motion, not zeros.
 - Magnet mount spec: diametric, centred ≤0.1–0.2 mm, gap ~1–1.5 mm, tilt <3°, non-ferromagnetic mount, bonded with a shaft-piloted jig.
 - **Angle latency — the ENCODER IS EXCLUDED.** MT6816 datasheet Rev 2.1 gives propagation delay **1 µs typ / 3 µs max**; the TIM4 input filter at `0xF` adds ≈1.5 µs. Together ~3% of the observed budget. The lag is in the control path, not the sensor. Preliminary **T ≈ 143 µs** against a measured 80–100 µs loop transport delay — see §8.3 for the settling test. *(The old note here said "read the MT6816 datasheet to settle whether the encoder is the source." That is now spent.)*
 - Retired: software `Encoder` class — it lost counts above ~100 k edges/s (193 rad/s), collapsing `lps` 16 k → 5 k and silently corrupting ZEA. Structurally impossible now.
 
 ---
 
-## 6. Alignment (ZEA) — session-relative, never hardcode
+## 6. Alignment (ZEA) — session-relative on ABZ, a STORED CONSTANT on SPI
 
 `zero_electric_angle` is measured relative to wherever the shaft sat at power-up. With an incremental encoder and no index that origin is arbitrary, and a shift of δ mechanical shifts ZEA by **7δ**. Hardcoding it across boots produced a locked rotor at full current.
 
@@ -226,6 +268,25 @@ A position-resolved fold of Iq while spinning shows two textbook signatures:
 | 14/rev (2× electrical) | 0.070 A | **Gain** mismatch between channels (~9%) |
 
 In voltage mode these are measurement errors only. **In current mode the loop chases them and converts them into real torque ripple** (0.93 N pp at the foot, ~9.5% of a standing leg load). Below friction, so deferred — see §8.
+
+### Sensor INL — measured on the SPARE (SPI), 2026-08-06
+
+Parity-separated EVEN part of the angle error, two 1000-sample captures at ±109.5 rad/s, 32 position bins:
+
+| Harmonic | Amplitude (elec) | Amplitude (MECH) | Phase |
+|---|---|---|---|
+| **1/rev** | **2.298°** | **0.328°** | +120.3° |
+| 2/rev | 1.297° | 0.185° | +8.5° |
+| 3/rev | 0.092° | 0.013° | −110.3° |
+| **Total pk-pk** | **6.51°** | **0.93°** | — |
+
+Phases agree between the two directions to within 9°, confirming the error is **fixed in rotor position** — a genuine sensor/mechanical property, not a control artefact.
+
+**1/rev dominates, not 2/rev.** 1/rev is magnet eccentricity, shaft runout, or off-axis mounting (DISP) — **mechanical, therefore reducible by better centring.** 2/rev would be AMR bridge mismatch, which is not reducible. Total is inside the datasheet's ±1.5° max (quoted for a Ø10 magnet; this rig runs Ø6).
+
+**Consequence:** INL is 7.7× the ZEA calibration residual and slightly exceeds the whole transport-delay error at takeoff, so **it is now the dominant angle-error term.** It is repeatable and position-dependent, so it does not accumulate and needs no compensation at this amplitude — but it sets the floor for any future angle measurement, and **it must be re-measured after the belt is fitted**, because belt tension changes DISP.
+
+*Superseded: a 2.95° mechanical figure measured on the ORIGINAL assembly, whose near-zero air gap was probably distorting it.*
 
 ---
 
@@ -283,7 +344,7 @@ Everything here is bench-measured unless marked. **This table outranks any other
 
 | Item | Size | Promotes when |
 |---|---|---|
-| **Angle lag / d-axis decoupling** | **T ≈ 143 µs (PRELIMINARY)** → 3.6% torque loss at 270 rad/s | **PROMOTED — sweep scheduled.** See the box below |
+| ~~Angle lag / d-axis decoupling~~ | ~~T ≈ 143 µs~~ | ✅ **CLOSED 2026-08-06 — see the box below** |
 | **J_total** | — | With the 10 mm-belt actuator |
 | **Force per amp** | Predicted 4.13 / 4.32 / 4.98 N/A at α = 70/55/40° | When the 80/100 leg exists. Also validates the five-bar Jacobian model |
 | Sense gain mismatch (~9%) | 0.93 N pp | If impedance force ripple above ~1 N proves to matter |
@@ -293,50 +354,41 @@ Everything here is bench-measured unless marked. **This table outranks any other
 | **Live Vbus sampling** | Bench: none. Robot: 3–7 V of sag | **When the first multi-actuator bus is assembled.** Needs a register-level REGULAR-group conversion on PA0 — §12 |
 | **U₀ feedforward** | 0.57 N at 11.3 V → **1.26 N (12.9%) at 25.2 V** | **When the bench bus exceeds ~15 V.** Deadband = U₀/R_eff scales with bus: 0.133 A at 3S (below the 0.16 A noise floor, hence closed) but 0.297 A at 6S (above it). **Fix is U₀ feedforward, NOT a smaller `dead_zone`** — the EG2124A hardware dead time sets the floor. Re-measure U₀ with a locked-rotor sweep at the new bus before implementing |
 
-### Angle lag — preliminary result and the test that settles it
+### ✅ ANGLE LAG — CLOSED 2026-08-06 (SPARE assembly, SPI)
 
-**Preliminary `T ≈ 143 µs`**, extracted from an *incidental* 750-sample capture at 97 rad/s (`Ud = −0.2032`, `Iq = 0.8141`, `Id ≈ 0`):
+**`T = 57.0 ± 6.5 µs`.** Theory `0.5/f_pwm + 0.5/f_loop` at 25 kHz / 14,970 Hz gives 53.4 µs — **agreement 7%. No unaccounted delay exists.**
 
-```
-ω_e            = 7 × 97.154 = 680 rad/s
-cross-coupling = −ω_e·L·Iq = −680 × 65e-6 × 0.8141 = −0.0360 V
-angle part     = −0.2032 + 0.0360 = −0.1672 V
-T              = 0.1672 / (Ke·ω·ω_e) = 0.1672 / 1169 = 143 µs
-```
+**Method — parity separation, which is what finally worked.** In voltage mode with `Ud` forced to 0, the measured angle error is `sin δ = A/Ke + B·ω/Ke`. Then:
 
-Insensitive to `L`: sweeping 59–74 µH moves `T` only 146 → 139 µs.
-
-**Treat as preliminary — four reasons.** (1) One capture spanning ~1 revolution, so the 1/rev disturbance is *in* the answer. (2) `Uq` was pinned at `VOLT_LIMIT` — saturated plant. (3) One speed, so no consistency check. (4) Single telemetry lines scatter 100–352 µs; only the 750-sample mean means anything.
-
-**Why it matters:** measured loop transport delay is 80–100 µs. If T really is 143 µs, **40–60 µs is unaccounted for** — and finding that source is worth more than blindly compensating.
-
-**The settling test** (velocity mode, `VOLT_LIMIT = 3.5`, `L` captures at 20/40/60/80/100/130 rad/s). Two terms sit on `Ud` and were the same size at 42 rad/s, which is why the original estimate could only bracket 0–240 µs:
-
-```
-Ud = −ω_e·L·Iq  −  Ke·ω·ω_e·T
-      ↑ scales with Iq        ↑ independent of Iq, grows as ω²
-```
-
-Hold `Iq` roughly constant (velocity mode does this — friction sets it near 1.05 A, flat above 19 rad/s) and sweep speed. Then per point:
-
-```
-T = (−Ud − ω_e·L·Iq) / (Ke·ω·ω_e)
-```
-
-**`T` must come out identical at every speed.** Consistency is the falsification test; drift means the fixed-delay model is wrong, which would be a new finding.
-
-| Outcome | Loss at 270 rad/s | Action |
+| Term | Under ω → −ω | Parity |
 |---|---|---|
-| T consistent, <120 µs | <2.6% | **Close.** Don't write compensation |
-| T consistent, 130–160 µs | ~3.6% | Locate the extra 40–60 µs before compensating |
-| T consistent, >180 µs | >5.7% | Fix, and find the source |
-| **T drifts with speed** | — | Model wrong. Stop and reconcile |
+| ZEA residual (constant offset) | unchanged | **EVEN** |
+| INL(θ) (fixed error at a rotor position) | unchanged | **EVEN** |
+| Transport delay (`δ = ω_e·T`) | **flips sign** | **ODD** |
 
-**If compensation is eventually written:** `angle += 7·ω·T`. Three traps — use raw `cnt`-derived velocity (`shaft_velocity` is filtered at 20 ms, and a jump accelerates in ~35 ms); verify the sign at 20 rad/s first, because backwards it *doubles* the error; watch `|I| = 1.2247·√(Id²+Iq²)` throughout.
+Two 1000-sample captures at ±109.5 rad/s (each spanning **9.5 revolutions**), binned into 32 positions:
 
-**Encoder is excluded as a source.** MT6816 datasheet Rev 2.1: propagation delay **1 µs typ / 3 µs max**. Plus the TIM4 input filter at `0xF` (≈1.5 µs) that is ~3% of the budget. No encoder upgrade helps — MT6826S is *worse* (10 µs propagation, 100 µs step response). Datasheet also gives INL ±0.75° typ (±5.25° electrical, 0.4% torque loss) and ABFreq 1.024 MHz = 6283 rad/s, so the old software-encoder failure at ~193 rad/s was always the MCU, never the sensor.
+```
+ODD  part = +2.506 +- 0.287 deg elec  ->  T = 57.0 us, position-independent (sd/mean 11%)
+EVEN part = +0.121 deg elec mean      ->  ZEA residual: ZEA_STORED is right to 0.12 deg
+            6.51 deg elec pk-pk       ->  INL = 0.93 deg MECHANICAL (see section 7)
+```
 
-**Known blind spot:** `No_Mag_Warning` (0x04[1]) and `Over_Speed` (0x05[3]) are SPI-only. `No_Mag_Warning` would have caught the detached-magnet failure in §5 directly. Not actionable — SPI is closed on this variant.
+**Torque cost — this is why no compensation gets written:**
+
+| ω | δ | Loss |
+|---|---|---|
+| 109 rad/s | 2.49° elec | 0.095% |
+| **270 (takeoff)** | **6.18°** | **0.581%** |
+| 314 | 7.18° | 0.785% |
+
+**Do NOT implement angle compensation.** 0.58% at the design operating point, against Coulomb friction at 46%. Promotion condition retired.
+
+**Why the ABZ campaign never converged.** It reported T = 85.7 µs and δ₀ = 2.17° — a 28.7 µs excess over theory that motivated three sessions of searching. Three reasons it was wrong: forward-only data cannot separate even from odd terms; ZEA was redrawn between the forward and reverse sweeps so they could not share a `δ₀`; and the counter was probably leaking during the runs. **The SPI measurement's excess is 3.6 µs. The 28.7 µs was an artefact of the method, not a physical delay.**
+
+**Encoder excluded as a source** — MT6816 propagation delay 1 µs typ / 3 µs max, plus a TIM4 input filter of ≈1.5 µs on the old path. No encoder upgrade helps; MT6826S is worse (10 µs propagation, 100 µs step response).
+
+**Known blind spot, now half-closed:** `No_Mag_Warning` (0x04[1]) and `Over_Speed` (0x05[3]) are SPI-only. **Available on the SPARE**; still absent on the ORIGINAL, which is why its magnet failure mode was invisible.
 
 ### 8.4 How to interpret `|I|`
 
@@ -429,6 +481,27 @@ Legged robots run 5–30 N/mm. **You have 2–8× margin.**
 
 - P_crit ≈ 1.0. Tracks 2–5 rad/s to ±0.02; steps settle <300 ms with 8–12% overshoot.
 - Disturbance rejection verified 2–10 rad/s.
+- **2026-08-01 note:** on the ORIGINAL assembly with the belt on, a P sweep at 2.0–2.8 was entirely inside `current_limit` saturation — friction (1.05 A) eats half the 2.0 A budget and the 1/rev disturbance times P exceeds the rest. Size velocity P against the disturbance, not against P_crit: `P ≤ headroom / (ripple × filter attenuation)` → **P ≈ 0.2, I ≈ 1.5**, with I doing the work of supplying the friction current at zero error.
+
+### Per-unit calibration policy for 12 joints (set 2026-08-06)
+
+The two bench assemblies differ by **9.3% in `R_eff`**, so what must be measured per joint is now answered with data rather than assumed.
+
+| Constant | Scope | Per-unit? | Cost of sharing |
+|---|---|---|---|
+| **ZEA** | assembly | **MANDATORY** | up to 180° elec — motor will not run |
+| **sensor_direction** | assembly | **MANDATORY** | inverts torque |
+| `R_eff` | motor + board | **yes** | ±10% → current-loop gain error only |
+| `U0` | board | **yes** | ±50% → sub-1 N of transparency |
+| `Ke`, `Kt` | motor | recommended | ±5% → ±5% stiffness error in impedance control |
+| `L` | motor | no | ±10% → current-loop gain only |
+| `J_rotor` | geometry | **no** | ±1% |
+| INL | assembly | measure once | sets the angle-error floor |
+| Drag map / friction | assembly | **yes** | dominates transparency — a 46% term |
+
+**Policy: automate it, do not repeat it by hand.** One on-board `AUTO` routine per joint: encoder self-test → N alignments → median ZEA + direction detect → locked-rotor `R_eff`/`U0` sweep → free-spin `Ke` → print a paste-ready constants block. Target ~5 min per joint, ~1 hour for twelve.
+
+**This is standard practice, not a workaround.** Every industrial servo drive ships a motor-identification routine (measures R, L, aligns the encoder at commissioning); robots with absolute encoders store a per-joint offset in drive flash at the factory; quasi-direct-drive research controllers do exactly this per unit. The routine must run **before final assembly**, while each joint can still move freely.
 - **These gains are in VOLTS. On the current loop the PID output is AMPS.** Rescale by 1/R for the same DC gain — but that does *not* preserve stability margin, so sweep P_crit fresh.
 - **Scope this deliberately.** The Tier-0 contract is `τ = kp(q_d−q) + kd(v_d−v) + τ_ff` → current loop. **There is no cascaded velocity PID in the shipping architecture.** Velocity mode is a test harness; tune it to "usable instrument" and stop. Test with **steps, not ramps**.
 
@@ -519,8 +592,20 @@ Each of these cost at least one session.
 - **A diagnostic that mutates the state it reports makes its own "before" reading unreliable.** The temporary `z` probe set `vbus_valid = false` as its test action, so a second press showed a misleading `before:` line. Prefer a passive telemetry field over a state-disturbing probe.
 - **Correct sharing mechanism, for when this is implemented properly:** STM32 ADCs run **regular** and **injected** groups concurrently on one peripheral. Injected preempts, regular resumes. VBUS belongs on a register-level regular conversion — **no pausing of the current sense, no blind interval in the current loop.** Pausing would be an instrument that disturbs what it measures (§6 of the working-context doc), and at 30 A a blind interval is not cosmetic.
 
+**Sensor architecture (2026-08-06)**
+- **An incremental counter cannot detect its own error.** ABZ lost ~60 counts (1.5% of a revolution) under 8–11 A; the sketch comment claimed "cannot lose counts", which was true of the TIM4 decoder and false of the whole chain — TIM4 faithfully counts noise. **The comment encoded a belief that made the failure mode invisible for months.**
+- **Absolute + parity changes the failure class, not the noise.** SPI still sees the same EMC environment, but a corrupted frame fails parity, is rejected, and the angle recovers in one cycle instead of drifting permanently. Measured: 2 events in 600 k reads.
+- **`analogRead()` returns 0 on any pin of the ADC that `LowsideCurrentSense` owns**, from the moment `currentSense.init()` runs. A single isolated call fails — not a two-call contention issue. Same silent-failure family as the pruned pin map.
+- **Third instance of the pruned-pin-map trap:** UART on PB6/PB7 fails for the same reason `STM32HWEncoder` and Arduino hardware SPI did. **Rule: on this board, any peripheral on a non-default pin needs register-level setup or bit-banging.**
+- **Freed CPU with no other work to run is worth nothing.** DMA does not shorten a transfer — SCK frequency does. On a single blocking control loop the distinction between "CPU busy" and "CPU idle waiting" is not a distinction.
+- **A timing comment written from a model is a prediction, not data.** The bit-bang NOP table was 6× optimistic because GCC unrolls small loops and not large ones. `us_per_read` in the self-test settled it in one run. **Build the measurement into the feature.**
+
 **Interpretation**
 - 300 ms telemetry aliases everything above ~1.7 Hz.
+- **Forward-only data cannot separate an even term from an odd one.** Three sessions of angle-lag work produced T = 85.7 µs with a 28.7 µs unexplained excess. Running the same measurement in **both directions** and splitting into even and odd parts gave T = 57.0 µs with a 3.6 µs excess, plus the INL profile and the ZEA residual, from two captures. **When two mechanisms have the same shape in one dataset, change the experiment, not the model.**
+- **A test's noise floor must be measured before its result is interpreted.** Six null-condition ZEA repeats took two minutes and turned "the test is undoable" into "average four".
+- **A fit can measure one parameter superbly and another not at all.** A 14-point locked-rotor sweep pinned `R_eff` to ±1.55% while its intercept `U0` sat 4.6σ from zero with a 21.8% standard error. Report the well-conditioned parameter; say plainly that the other is unresolved.
+- **Check phase coverage before specifying repeats.** A `L` capture at 109 rad/s spans **9.5 revolutions** and 106 samples/rev — repeats add no phase diversity. At 21 rad/s the same capture spans 1.2 revolutions and the 1/rev disturbance lands *in* the answer. **Compute revolutions-per-capture, don't assume it.**
 - **A fit can measure one parameter superbly and another not at all.** The 2026-08-01 14-point locked-rotor sweep pins `R_eff` to ±1.55% (0.10σ from the table) while its intercept `U₀` lands 4.6σ from zero with a 21.8% standard error; subsetting the points swings `U₀` from 0.019 to 0.042 while `R` moves the other way. **Report the well-conditioned parameter and say plainly that the other is not resolved** — do not overwrite a dedicated measurement with a byproduct.
 - **Aliased telemetry can still be right for the wrong reason.** The 1/rev disturbance was correctly guessed from 2.11-samples-per-revolution telemetry — right at Nyquist. The guess only became a finding after a proper position fold. Don't promote a marginal reading to a conclusion.
 - Free-shaft runs hit the **voltage ceiling** and look like runaway. At 96 rad/s: `E = 0.0177 × 96 = 1.70 V`, `+R·I +U₀ = 1.95 V ≈ VOLT_LIMIT`. Compute back-EMF first.
@@ -568,13 +653,24 @@ Meta-lessons: instrument-first beats hypothesis iteration; verify resolved versi
 - **Modulation** — SVPWM verified two independent ways.
 - **Instrumentation** — burst logger v2 (per-sample `dt`, `a` stats, capture-condition recording), 921600 telemetry.
 
+- **MT6816 SPI migration (SPARE, 2026-08-06)** — bit-banged 4-wire mode 3, PB5=CSN / PB6=MOSI / PB7=MISO / PB8=SCK, HVPP→3V3, UART unmoved. 2000/2000 reads clean; 2 parity errors in ~600 k reads (0.0003%), each costing one stale cycle. Locked-rotor `ratio` = 1.224 at both 1 A and 2 A. Armed loop 12,490 Hz vs 12,384 predicted. **20 s at ±2.0 V / ±110 rad/s with no drift and no stall — the exact condition that stalled the ABZ rig twice.**
+- **✅ M1 angle lag — CLOSED.** `T = 57.0 µs`, matches theory to 7%, **0.58% torque loss at 270 rad/s. No compensation to be written.** §8.3.
+- **Sensor INL characterised** — 0.93° mech pk-pk, 1/rev dominant. §7.
+
 **Immediate next**
-1. **M1-c — velocity harness** (30 min). `VEL_P` from 0.1, double to `P_crit` with I = 0, take 0.45×, then `VEL_I = VEL_P/0.15`. **Steps, not ramps.** Stop at "usable instrument" — the shipping architecture has no cascaded velocity PID. Sweep at 20–80 rad/s (above ~90 the 2.0 V limit saturates).
-2. **Angle-lag sweep** (30 min). `VOLT_LIMIT = 3.5` → `L` + `a` captures at 20/40/60/80/100/130 rad/s → compute `T` per point and check consistency → revert `VOLT_LIMIT`. See §8.3. Prediction on record: **T = 130–160 µs, consistent to ±15%.**
-3. **6S staged commissioning** (30 min, separate session — one variable per test, so keep 3S for the tasks above). §19.
-4. **M1 proper — impedance controller** + **constant friction feedforward** (~1.05 A, ±0.5 rad/s linear ramp through zero) + **U₀ feedforward if the bus goes above ~15 V**.
-5. Belt-off 1/rev capture — opportunistic during the 10 mm rebuild.
-6. J_total and J_rotor on the new actuator; force-per-amp when the 80/100 leg exists.
+1. **C1 — electrical re-characterisation of the SPARE** (30 min, belt off). Locked-rotor `Uq`-vs-`Iq` sweep at 8–10 currents 0.1→2.0 A for `R_eff` and `U0`; free-spin `Ke` at 4–5 voltages; `Kt` cross-check against `60/(2π·KV)`; current-step `L`. **The two-point values (0.1977 Ω / 0.0493 V) cannot separate R from U0** — same ill-conditioning as before.
+2. **C2a — belt-off drag baseline** (10 min). Motor-only friction. Subtracting it from the belt-on map later **isolates belt drag**, which no single measurement can do.
+3. **Build the 10 mm belt / 9:1 actuator on the SPARE.** Belt and pinion in hand; no longer blocked.
+4. **C2b — belt-on drag map**, then **J_rotor** and **J_total**, then **force-per-amp** once the 80/100 leg exists.
+5. **M1 proper — impedance controller**, with the friction feedforward (and U₀ feedforward if the bus exceeds ~15 V) designed in from the start rather than bolted on.
+6. **6S staged commissioning** (30 min, separate session). §19.
+7. Re-measure INL after the belt is fitted — belt tension changes DISP.
+
+**Downgraded**
+- ~~M1-c velocity harness~~ → **optional.** It existed as an instrument for the angle-lag sweep, which is now closed. Voltage-torque mode self-regulates to steady speeds and is sufficient for drag mapping. Build it only if a later task needs commanded speed. If built: `P ≈ 0.2, I ≈ 1.5` (§10).
+
+**Deferred, un-blocking**
+- **ABZ fault diagnosis on the ORIGINAL assembly** (15 min whenever). ZEA-delta test, n=4 alignments per side, at −2.07 V for 20 s. `< 13 counts` closes the near-zero-air-gap hypothesis; `> 20 counts` reopens it. The assembly is preserved un-modified for exactly this.
 
 **Deferred with reasons** — see §8.3 for the full table with promotion conditions.
 
@@ -582,7 +678,7 @@ Meta-lessons: instrument-first beats hypothesis iteration; verify resolved versi
 
 ## 16. Thermal Ground Rules
 
-- The binding constraint is **motor copper**: `P_cu ≈ 1.5·R_ph·I²` with R_ph ≈ 0.218 Ω. 1.5 A ≈ 0.7 W; 4.5 A ≈ 6.6 W; 8.7 A ≈ 25 W; 19 A ≈ 118 W.
+- The binding constraint is **motor copper**: `P_cu ≈ 1.5·R_ph·I²` with R_ph ≈ 0.218 Ω **on the ORIGINAL assembly** (≈0.198 Ω on the SPARE — see §2). 1.5 A ≈ 0.7 W; 4.5 A ≈ 6.6 W; 8.7 A ≈ 25 W; 19 A ≈ 118 W.
 - Vendor 18 A/60 s assumes propeller airflow. At stall there is no airflow → derate hard; >5 A sustained stall is instrumented-only.
 - **Open-loop mode applies `voltage_limit` directly with no current limit.** At `VOLT_LIMIT = 2.0` that is 8.6 A / 25 W with no throttle. Keep open-loop runs short or drop the limit to 1.0 for them.
 - Switching ripple contributes real RMS heating even at zero average current.

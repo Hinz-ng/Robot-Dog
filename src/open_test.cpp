@@ -2,98 +2,258 @@
 #include <SimpleFOC.h>
 
 // ============================================================================
-// ACTUATOR BASELINE + FOC CURRENT MODE + TIM4 HARDWARE ENCODER (register-level)
+// ACTUATOR BASELINE + FOC CURRENT MODE + MT6816 4-WIRE SPI (bit-banged)
 // Board: B-G431B-ESC1 clone (EG2124A). SimpleFOC 2.3.1, platform ststm32@17.6.0.
+// THIS IS THE SPI MIGRATION BUILD -- flash it on the SPARE board/motor only.
+// The ABZ build (TIM4) is preserved on the original assembly for fault debug.
 //
-// ENCODER: TIM4 silicon quadrature decoder, PB6=TIM4_CH1, PB7=TIM4_CH2 (AF2).
-//   Configured by direct register writes — the Arduino pinmap (PeripheralPins_
-//   B_G431B_ESC1.c) is vendor-pruned and hangs in Error_Handler() on lookup
-//   miss, which is what killed STM32HWEncoder and hardware SPI on this board.
-//   Zero interrupts, zero CPU, cannot lose counts. No Z/index (PB8 = BOOT0).
-//   ZEA stays session-relative: run 'f' once per power-up.
+// ---------------------------------------------------------------------------
+// WHY THIS EXISTS
+//   ABZ lost ~60 counts (1.5% of a revolution) under 8-11 A, which destroyed
+//   commutation progressively and required a fresh 'f' to recover. An incremental
+//   counter has no mechanism to detect or correct that -- it "drifts confidently".
+//   The design point is 30 A x 12 joints, 3x harsher than what broke it.
+//   SPI returns the ABSOLUTE 14-bit angle every read: a corrupted sample costs
+//   ONE cycle and then self-corrects, and the frame carries a parity bit so the
+//   corruption is DETECTABLE rather than silent.
 //
-// NOTE: the high-pitched whine is MECHANICAL (audible when backdriving by hand) --
-//   suspect motor or pulley bearing. Do not attribute it to the current loop.
-//   Separate from the CURQ_I=2000 d-axis SCREECH, which was electrically real
-//   (Id +-1.28 A, Ud railed, |I| 9.7 A).
+// ---------------------------------------------------------------------------
+// MT6816 FACTS (datasheet Rev 2.1 2022.12, section 8 + 8.6) -- all verified:
+//   * ABZ / UVW / SPI MULTIPLEX THE SAME CHIP PINS. Simultaneous use is
+//     IMPOSSIBLE. HVPP selects: HVPP=GND -> ABZ/UVW, HVPP=VDD -> SPI.
+//        chip pin 5  A/U (ABZ)  ==  MOSI (4-wire SPI)
+//        chip pin 6  B/V (ABZ)  ==  MISO (4-wire SPI)
+//        chip pin 7  Z/W (ABZ)  ==  SCK  (4-wire SPI)
+//        chip pin 1  CSN        (SPI only; has an INTERNAL PULL-UP)
+//        chip pin 2  HVPP       (mode select; internal 150k pulldown)
+//     => the existing A/B/Z wiring maps 1:1 onto MOSI/MISO/SCK. Only CSN and
+//        HVPP are new conductors.
+//   * SPI mode 3 (CPOL=1, CPHA=1). SCK idles HIGH. Transfer starts on the CSN
+//     falling edge, ends on the rising edge. Data changes on the SCK falling
+//     edge and is sampled on the rising edge.
+//   * 16-bit frame: bit0 = R/W (1=read), bits1-7 = A6..A0, bits8-15 = data.
+//     So the first byte out is (0x80 | addr); the data comes back in the LOW byte.
+//   * Angle registers:
+//        0x03 = Angle<13:6>
+//        0x04 = Angle<5:0> | No_Mag_Warning(bit1) | PC(bit0)
+//        0x05 = bit3 Over_Speed
+//     PC is EVEN parity over 0x03[7:0] + 0x04[7:1], so the 16-bit word
+//     (reg03<<8 | reg04) always has EVEN parity. That is the integrity check.
+//   * Timing: TSCK min 64 ns (15.6 MHz max), TSCKL/TSCKH min 30 ns, TL min
+//     100 ns (CSN fall -> first SCK fall), TDV max 15 ns.
+//   * TPwrUp 16 ms after VDD. Angle propagation delay 1 us typ / 3 us max.
+//   * 3-wire SPI exists but SPI_Mode is an OTP register (factory default =
+//     4-wire) and changing it needs 7.0-7.2 V on HVPP. Not attempted.
 //
+// ---------------------------------------------------------------------------
+// WIRING (XJX-135 JP2 header -> board). ALL FOUR SPI PINS MUST BE ON GPIOB:
+//   the fast path writes GPIOB->BSRR / reads GPIOB->IDR directly.
+//     CSN  -> PB5     (new wire)
+//     MOSI -> PB6     (was ABZ 'A'  -- same chip pin, no rewiring)
+//     MISO -> PB7     (was ABZ 'B'  -- same chip pin, no rewiring)
+//     SCK  -> PB8     (was ABZ 'Z'  -- same chip pin; see BOOT0 note)
+//     HVPP -> VDD/3V3 (new wire -- SELECTS SPI MODE. Without this you get ABZ.)
+//     VDD  -> 3V3,  GND -> GND
+//
+//   *** PB8 IS BOOT0. *** Fit a 10k pulldown from PB8 to GND. At MCU reset PB8
+//   is high-Z and the MT6816's SCK pin is an input, so nothing drives it -- a
+//   floating BOOT0 can boot the system bootloader instead of this firmware.
+//   SCK was chosen for PB8 deliberately: CSN (internal pull-UP) and MISO (an
+//   output) would both risk holding BOOT0 high at reset. Do not swap them.
+//
+//   The telemetry UART stays on PB4/PB3, UNTOUCHED. Bit-banging needs no
+//   peripheral pin map, so nothing has to move and the serial monitor survives.
+//
+// ---------------------------------------------------------------------------
+// WHAT THIS BUYS BEYOND THE BUG FIX
+//   * ZEA becomes a PERSISTENT constant (absolute angle within one mech rev).
+//     Measure it once, put it in ZEA_STORED, and 'f' stops twitching the rotor
+//     on every power-up. For a 12-DOF robot that is close to a requirement.
+//   * Alignment noise (measured 9.2 counts = 5.68 deg elec, belt-on) leaves the
+//     error budget once ZEA is stored instead of re-drawn per session.
+//   * No_Mag_Warning detects the failure mode in which a weak field makes the
+//     angle engine emit garbage -- previously an undetectable blind spot.
+//
+// ---------------------------------------------------------------------------
 // COMMANDS: g=go x/s=stop +/-=target | o=openloop t=torque(V) c=torque(I)
-//           v=velocity | f=initFOC | ?=help
+//           v=velocity | f=initFOC  F=force fresh alignment | ?=help
+//           e=encoder self-test (SPI health, no motor current)
 //   logger: l=fast capture  L=slow capture  k=kick-step  j=zero-step
 //           d=dump CSV      a=stats (mean of last capture)
 // Boots DISABLED. 20 s auto-stop. 150 rad/s overspeed cutoff. Torque modes arm at 0.
 //
 // ---------------------------------------------------------------------------
-// CHARACTERISATION BUILD -- changes from the previous sketch, all declared:
-//   1. motor.foc_modulation = SpaceVectorPWM (was library-default SinePWM).
-//   2. Boot CFG banner echoes modulation / dead_zone / pwm_Hz / Vbus.
-//   3. Burst log stores a REAL per-sample dt_us; LOG_N is 1000 with 18 B/sample.
-//      logDump() now reports dt jitter and accumulates true time, not k*dt_mean.
-//   4. k / j step-and-capture now work in TORQUE(V) as well as TORQUE(I).
-//   5. 'a' prints the mean of the capture buffer -- sweep points without CSV.
-//   6. motor.current is refreshed explicitly in TORQUE(V). 2.3.1's loopFOC()
-//      does NOT touch motor.current in the voltage branch, so Iq/Id were STALE
-//      in TORQUE(V) and OPENLOOP -- a frozen value that reads like a measurement.
-//   7. Header comment corrected: overspeed cutoff is 150 rad/s (was documented
-//      as 60; OVERSPEED_RADS has been 150).
-//   8. DEAD_ZONE comment rewritten -- the old "step down 0.05->0.02->0.01"
-//      instruction was already completed and had gone stale.
-//   9. logStats() distinguishes "capture still running" from "buffer empty".
-// No behavioural change to: the safety path, the sense-mismatch guard, the
-// overspeed / auto-stop guards, initFOC, mode transitions, or any gain.
+// CHANGELOG vs the ABZ build (open_test.cpp, md5 71a41c24...). Every change:
+//   1. TIM4Encoder REPLACED by MT6816SPI (bit-banged 4-wire, mode 3). TIM4 is no
+//      longer used at all. Resolution 4096 -> 16384 counts/rev.
+//   2. Parity checked on EVERY read. Failed reads reuse the last good angle and
+//      increment spi_err; No_Mag_Warning and Over_Speed are surfaced.
+//   3. Optional jump-plausibility reject (SPI_JUMP_GUARD) -- DEFAULT OFF so
+//      bring-up debugs one thing at a time. Turn on after basic operation.
+//   4. New 'e' command: encoder self-test -- N reads, reports parity error rate,
+//      per-read time, angle span. Runs with the motor disabled, zero current.
+//   5. ZEA_STORED / DIR_STORED: if set, 'f' skips alignment entirely. 'F' forces
+//      a fresh alignment regardless. Boot banner says which path was used.
+//   6. sensor_direction is NO LONGER hardcoded to CCW -- the SPI angle convention
+//      is not the TIM4 count convention, so it MUST be re-derived on this board.
+//      DIR_STORED = 0 means "let initFOC detect it". Record the result, then pin it.
+//   7. Telemetry: cnt is now the 14-bit SPI raw; added nmg / ovs / perr / spi_us.
+//   8. Log field cnt now holds the 14-bit raw angle (still uint16, wraps at
+//      16383 = one mechanical revolution -- UNWRAP before differentiating).
+//   9. Header comment "cannot lose counts" DELETED -- falsified by bench evidence.
+// UNCHANGED: the safety path, sense-mismatch guard, overspeed / auto-stop,
+//   mode transitions, every gain, the Vbus block, the logger, all print formats
+//   except the additions in item 7.
 // ============================================================================
 
 HardwareSerial SerialUART(PB4, PB3);
 
 // ---------------------------------------------------------------------------
-// TIM4 hardware quadrature sensor
+// MT6816 absolute encoder, 4-wire SPI, BIT-BANGED
 // ---------------------------------------------------------------------------
-class TIM4Encoder : public Sensor {
+// Bit-banged on purpose. Arduino-API hardware SPI hangs on this clone: the
+// vendor-pruned PeripheralPins_B_G431B_ESC1.c lookup miss lands in
+// Error_Handler(), an infinite loop -- the same trap that killed STM32HWEncoder.
+// Bit-banging consults no pin map at all, and MODE3 bit-bang was already proven
+// working on this hardware. It also leaves the telemetry UART on PB4/PB3.
+//
+// ALL FOUR PINS MUST BE ON GPIOB (the fast path touches GPIOB->BSRR / ->IDR).
+// Remapping is a four-line edit here; keep SCK on PB8 unless you re-read the
+// BOOT0 note in the header.
+const uint8_t SPI_CSN_BIT  = 5;    // PB5
+const uint8_t SPI_MOSI_BIT = 6;    // PB6  (chip pin 5, was ABZ 'A')
+const uint8_t SPI_MISO_BIT = 7;    // PB7  (chip pin 6, was ABZ 'B')
+const uint8_t SPI_SCK_BIT  = 8;    // PB8  (chip pin 7, was ABZ 'Z') -- BOOT0
+
+// Half-period padding. 170 MHz -> 5.88 ns/cycle. Datasheet minima: TSCK 64 ns,
+// TSCKL/TSCKH 30 ns each. Measured frame times (2 frames per angle read):
+//    8 NOPs -> SCK 7.7 MHz, 2.1 us/frame     20 NOPs -> 3.7 MHz, 4.3 us/frame
+//   30 NOPs -> SCK 2.6 MHz, 6.2 us/frame     40 NOPs -> 2.0 MHz, 8.1 us/frame
+// START CONSERVATIVE. Dupont wire next to a 25 kHz inverter switching 10 A is a
+// worse signal-integrity problem than 15 kHz quadrature was; slow is free here
+// because 2 frames at 30 NOPs cost 12.4 us of a 74 us loop. Only speed up if
+// the loop rate actually hurts, and re-run 'e' after every change.
+const uint8_t SPI_HALF_NOPS = 1; // 6.65 us/read measured.
+
+static inline void spiHalf() {
+  for (uint8_t i = 0; i < SPI_HALF_NOPS; i++) __asm__ volatile ("nop");
+}
+
+// Reject an angle step larger than this (radians, mechanical) as corruption.
+// DEFAULT OFF for bring-up: one variable at a time. At 150 rad/s and a 74 us
+// loop the true step is 0.011 rad, but a 1 ms serial block makes it 0.15 rad,
+// so the threshold must clear that with margin. Enable only AFTER the parity
+// error rate from 'e' is known to be zero.
+const bool  SPI_JUMP_GUARD  = false;
+const float SPI_MAX_JUMP    = 1.0f;    // rad mechanical between consecutive reads
+
+class MT6816SPI : public Sensor {
 public:
-  TIM4Encoder(int32_t ppr) : cpr(4 * ppr) {}
-
   void init() {
-    // ---- GPIO: PB6/PB7 -> alternate function 2 (TIM4_CH1/CH2) ----
     RCC->AHB2ENR |= RCC_AHB2ENR_GPIOBEN;
-    // MODER: 10 = alternate function
-    GPIOB->MODER &= ~((3UL << (6 * 2)) | (3UL << (7 * 2)));
-    GPIOB->MODER |=  ((2UL << (6 * 2)) | (2UL << (7 * 2)));
-    // PUPDR: 01 = pull-up (encoder outputs are push-pull; harmless, noise margin)
-    GPIOB->PUPDR &= ~((3UL << (6 * 2)) | (3UL << (7 * 2)));
-    GPIOB->PUPDR |=  ((1UL << (6 * 2)) | (1UL << (7 * 2)));
-    // OSPEEDR: 11 = very high speed
-    GPIOB->OSPEEDR |= ((3UL << (6 * 2)) | (3UL << (7 * 2)));
-    // AFR[0] holds pins 0-7, 4 bits each. AF2 = TIM4.
-    GPIOB->AFR[0] &= ~((0xFUL << (6 * 4)) | (0xFUL << (7 * 4)));
-    GPIOB->AFR[0] |=  ((0x2UL << (6 * 4)) | (0x2UL << (7 * 4)));
 
-    // ---- TIM4: encoder mode ----
-    RCC->APB1ENR1 |= RCC_APB1ENR1_TIM4EN;
-    TIM4->CR1 = 0;                       // disable while configuring
-    // CC1S=01 (IC1 on TI1), CC2S=01 (IC2 on TI2), max input filters (0xF)
-    TIM4->CCMR1 = (1UL << 0) | (0xFUL << 4) | (1UL << 8) | (0xFUL << 12);
-    TIM4->CCER  = 0;                     // both inputs non-inverted
-    TIM4->SMCR  = 3;                     // encoder mode 3: count both edges (x4)
-    TIM4->ARR   = (uint32_t)(cpr - 1);   // wrap once per mechanical revolution
-    TIM4->CNT   = 0;
-    TIM4->EGR   = TIM_EGR_UG;            // latch registers
-    TIM4->CR1  |= TIM_CR1_CEN;           // start counting
+    // CSN / MOSI / SCK -> push-pull outputs, very high speed.
+    // MISO -> input. No pull: the MT6816 drives it push-pull in SPI mode.
+    const uint8_t outs[3] = { SPI_CSN_BIT, SPI_MOSI_BIT, SPI_SCK_BIT };
+    for (uint8_t k = 0; k < 3; k++) {
+      uint8_t p = outs[k];
+      GPIOB->MODER   &= ~(3UL << (p * 2));
+      GPIOB->MODER   |=  (1UL << (p * 2));    // 01 = general purpose output
+      GPIOB->OTYPER  &= ~(1UL << p);          // push-pull
+      GPIOB->OSPEEDR |=  (3UL << (p * 2));    // very high speed
+      GPIOB->PUPDR   &= ~(3UL << (p * 2));    // no pull
+    }
+    GPIOB->MODER &= ~(3UL << (SPI_MISO_BIT * 2));   // 00 = input
+    GPIOB->PUPDR &= ~(3UL << (SPI_MISO_BIT * 2));
 
-    this->Sensor::init();                // seed base-class state
+    // Idle state: CSN high (deselected), SCK HIGH (mode 3 requires CPOL=1).
+    GPIOB->BSRR = (1UL << SPI_CSN_BIT) | (1UL << SPI_SCK_BIT);
+    GPIOB->BSRR = (1UL << (SPI_MOSI_BIT + 16));
+
+    // TPwrUp is 16 ms from VDD. setup() has already burned 2 s on the serial
+    // delay, so the chip is long ready -- but be explicit rather than lucky.
+    delay(20);
+
+    last_ok_rad = 0.0f;
+    (void)readAngleRaw();          // prime last_ok_rad and the error counters
+    last_ok_rad = raw * (_2PI / 16384.0f);
+
+    this->Sensor::init();
   }
 
-  // SimpleFOC calls this; must return 0..2PI (base class tracks full rotations)
+  // ---- one 16-bit mode-3 transfer -------------------------------------------
+  // CPOL=1 CPHA=1: SCK idles high; data changes on the falling edge and is
+  // sampled on the rising edge (datasheet 8.6.2 / figure 17).
+  uint16_t xfer16(uint16_t out) {
+    uint16_t in = 0;
+    GPIOB->BSRR = (1UL << (SPI_CSN_BIT + 16));      // CSN low -> start
+    spiHalf();                                      // TL: CSN fall -> first SCK fall
+    for (int8_t i = 15; i >= 0; i--) {
+      GPIOB->BSRR = (1UL << (SPI_SCK_BIT + 16));    // SCK falling edge
+      if (out & (1UL << i)) GPIOB->BSRR = (1UL << SPI_MOSI_BIT);
+      else                  GPIOB->BSRR = (1UL << (SPI_MOSI_BIT + 16));
+      spiHalf();
+      GPIOB->BSRR = (1UL << SPI_SCK_BIT);           // SCK rising edge -> sample
+      spiHalf();
+      in <<= 1;
+      if (GPIOB->IDR & (1UL << SPI_MISO_BIT)) in |= 1;
+    }
+    spiHalf();                                      // TH: last SCK rise -> CSN rise
+    GPIOB->BSRR = (1UL << SPI_CSN_BIT);             // CSN high -> stop
+    return in;
+  }
+
+  // ---- read 0x03 + 0x04, check parity, extract the 14-bit angle --------------
+  // Returns true if parity passed. On failure `raw` is left at its previous value.
+  bool readAngleRaw() {
+    uint8_t d03 = (uint8_t)(xfer16(0x8300) & 0xFF);   // 0x80 = read, addr 0x03
+    uint8_t d04 = (uint8_t)(xfer16(0x8400) & 0xFF);
+    uint16_t word = ((uint16_t)d03 << 8) | d04;
+    // PC (0x04[0]) is EVEN parity over 0x03[7:0] + 0x04[7:1], so the whole
+    // 16-bit word must have even parity. This is the corruption detector that
+    // ABZ structurally could not provide.
+    uint16_t p = word;
+    p ^= p >> 8; p ^= p >> 4; p ^= p >> 2; p ^= p >> 1;
+    if (p & 1) { spi_err++; return false; }          // ODD -> corrupted frame
+    raw     = (uint16_t)(((uint16_t)d03 << 6) | (d04 >> 2));   // 14 bits
+    no_mag  = (d04 >> 1) & 1;
+    spi_ok++;
+    return true;
+  }
+
+  // SimpleFOC calls this every loopFOC(); must return 0..2PI.
   float getSensorAngle() override {
-    return ((float)TIM4->CNT / (float)cpr) * _2PI;
+    if (!readAngleRaw()) return last_ok_rad;         // stale for ONE cycle, then recovers
+    float a = raw * (_2PI / 16384.0f);
+    if (SPI_JUMP_GUARD) {
+      float d = a - last_ok_rad;
+      while (d >  _PI) d -= _2PI;                    // wrap to +-PI
+      while (d < -_PI) d += _2PI;
+      if (fabsf(d) > SPI_MAX_JUMP) { spi_jump++; return last_ok_rad; }
+    }
+    last_ok_rad = a;
+    return a;
+  }
+
+  // Over_Speed lives in 0x05 and is not needed at loop rate. Poll it from the
+  // telemetry block instead of paying for a third frame every cycle.
+  bool readOverSpeed() {
+    uint8_t d05 = (uint8_t)(xfer16(0x8500) & 0xFF);
+    over_speed = (d05 >> 3) & 1;
+    return over_speed;
   }
 
   // diagnostics
-  int32_t rawCount() { return (int32_t)TIM4->CNT; }
-  // call if counts run backwards vs. motor convention (inverts CH1 polarity)
-  void invertDirection() { TIM4->CCER ^= TIM_CCER_CC1P; }
+  int32_t  rawCount()   { return (int32_t)raw; }     // 0..16383, one mech rev
+  uint16_t raw        = 0;
+  uint8_t  no_mag     = 0;
+  uint8_t  over_speed = 0;
+  uint32_t spi_ok     = 0;
+  uint32_t spi_err    = 0;
+  uint32_t spi_jump   = 0;
 
 private:
-  int32_t cpr;
+  float last_ok_rad = 0.0f;
 };
 
 // ---------------------------------------------------------------------------
@@ -107,12 +267,12 @@ BLDCDriver6PWM driver = BLDCDriver6PWM(
 // Clone sense chain is gain-compensated -> genuine constants. Do not change.
 LowsideCurrentSense currentSense = LowsideCurrentSense(0.003f, -64.0f/7.0f, A_OP1_OUT, A_OP2_OUT, A_OP3_OUT);
 
-TIM4Encoder encoder = TIM4Encoder(1024);   // 1024 PPR -> 4096 CPR
+MT6816SPI encoder = MT6816SPI();           // 14-bit absolute, 16384 counts/rev
 
 // ---- safety / tuning constants ----
 // Uq rails -> real current = VOLT_LIMIT / R_eff(0.218). At 2.0 V that is ~9.2 A / 18 W
 // for the ~1 s it takes to react: thermally trivial. Debounced sense guard is the backstop.
-const float VOLT_LIMIT      = 3.5f;
+const float VOLT_LIMIT      = 2.0f;
 const float VEL_MAX         = 20.0f;
 const float OVERSPEED_RADS  = 150.0f;   // torque mode has NO built-in speed limit
 const float VEL_STEP        = 1.0f;
@@ -155,6 +315,27 @@ const float VEL_P  = 0.2f;   // A/(rad/s) -- velocity closes on current; sweep f
 const float VEL_I  = 1.5f;   // 0 for the P_crit sweep; restore after
 const float VEL_D  = 0.0f;
 const float VEL_TF = 0.02f;
+
+// ---------------------------------------------------------------------------
+// STORED ALIGNMENT -- the payoff of an ABSOLUTE sensor
+// ---------------------------------------------------------------------------
+// With ABZ, zero_electric_angle was session-relative: the counter started at 0
+// wherever the rotor happened to be, so 'f' was mandatory every power-up and its
+// measured 9.2-count (5.68 deg elec) scatter entered every measurement made
+// under it. With SPI the mechanical angle is ABSOLUTE within one revolution, so
+// ZEA is a fixed property of this motor + this magnet mount.
+//
+// PROCEDURE (first bring-up, belt OFF, then pin the values):
+//   1. Leave ZEA_STORED < 0 and DIR_STORED = 0 -> 'f' does a full alignment
+//      INCLUDING direction detection.
+//   2. Press 'f' five times; average the printed zero_electric_angle.
+//   3. Note the printed sensor_direction.
+//   4. Put the average in ZEA_STORED, and +1 (CW) / -1 (CCW) in DIR_STORED.
+//   5. Reflash. 'f' now skips the twitch entirely. 'F' still forces a fresh one.
+// ZEA is valid only for THIS motor + magnet. Disturb the mount -> re-measure.
+const float ZEA_STORED = 6.0485f;   // median of 16 alignments across 2 power cycles
+const int   DIR_STORED = +1;        // CW -- confirmed 16/16. NOT the ABZ convention.
+
 
 // ---------------------------------------------------------------------------
 // BUS VOLTAGE SENSING
@@ -258,9 +439,11 @@ struct LogSample {
   int16_t  sp_x1000;      // current SETPOINT * 1000
   int16_t  raw_x100;      // RAW unsynchronised |I| * 100 -- sees PWM-rate ripple that
                           // the synchronously sampled dq path is blind to
-  uint16_t cnt;           // raw TIM4 count (ground truth for velocity).
-                          // uint16, wraps at 4095 = one motor revolution: UNWRAP
+  uint16_t cnt;           // raw 14-bit MT6816 angle (ground truth for velocity).
+                          // uint16, wraps at 16383 = one motor revolution: UNWRAP
                           // in post-processing before differentiating.
+                          // 1 count = 0.02197 deg mech = 0.1538 deg elec
+                          // (was 0.0879 / 0.6152 on the 4096-count ABZ path).
 };
 LogSample logbuf[LOG_N];
 volatile uint16_t log_i = 0;
@@ -395,9 +578,51 @@ const char* modeName() {
 bool needsFOC(Mode m)   { return (m == MODE_TORQUE || m == MODE_TORQUE_CURRENT || m == MODE_VELOCITY); }
 bool isTorqueMode(Mode m){ return (m == MODE_TORQUE || m == MODE_TORQUE_CURRENT); }
 
+// ---------------------------------------------------------------------------
+// ENCODER SELF-TEST -- the acceptance gate for the SPI link.
+// Motor DISABLED, zero current, zero risk. Answers three questions that must all
+// pass before any current flows:
+//   1. Does the link work at all?          (parity error rate)
+//   2. How long does a read actually take? (loop-rate budget)
+//   3. Is the magnet strong enough?        (No_Mag_Warning -- ABZ could not tell)
+// Run it stationary AND while hand-spinning: a link that passes at rest and
+// fails while moving is a signal-integrity problem, not a wiring problem.
+// ---------------------------------------------------------------------------
+void encoderSelfTest() {
+  if (running) { SerialUART.println(F("stop first (x)")); return; }
+  const uint16_t N = 2000;
+  uint32_t err0 = encoder.spi_err, ok0 = encoder.spi_ok;
+  uint16_t lo = 0xFFFF, hi = 0;
+  uint8_t  nmg = 0;
+  uint32_t t0 = micros();
+  for (uint16_t k = 0; k < N; k++) {
+    if (encoder.readAngleRaw()) {
+      if (encoder.raw < lo) lo = encoder.raw;
+      if (encoder.raw > hi) hi = encoder.raw;
+      nmg |= encoder.no_mag;
+    }
+  }
+  uint32_t dt = micros() - t0;
+  uint32_t errs = encoder.spi_err - err0, oks = encoder.spi_ok - ok0;
+  encoder.readOverSpeed();
+  SerialUART.print(F("ENC n="));        SerialUART.print(N);
+  SerialUART.print(F(" ok="));          SerialUART.print(oks);
+  SerialUART.print(F(" parity_err="));  SerialUART.print(errs);
+  SerialUART.print(F(" ("));            SerialUART.print(100.0f * errs / N, 3);
+  SerialUART.print(F("%) us_per_read="));SerialUART.print((float)dt / N, 2);
+  SerialUART.print(F(" raw="));         SerialUART.print(encoder.raw);
+  SerialUART.print(F(" span="));        SerialUART.print(hi - lo);
+  SerialUART.print(F(" no_mag="));      SerialUART.print(nmg);
+  SerialUART.print(F(" over_speed="));  SerialUART.println(encoder.over_speed);
+  if (errs == 0 && oks == N) SerialUART.println(F("ENC PASS: link clean"));
+  else                       SerialUART.println(F("ENC FAIL: check wiring / slow SPI_HALF_NOPS down"));
+  if (nmg) SerialUART.println(F("!! No_Mag_Warning -- magnet too weak or too far. Angle is GARBAGE."));
+}
+
 void printHelp() {
   SerialUART.println(F("--- g:go x:stop +/-:target | o t c v modes | f:initFOC ---"));
   SerialUART.println(F("--- logger: l=fast L=slow k=kick j=zero-kick d=dump a=stats ---"));
+  SerialUART.println(F("--- f:initFOC(stored)  F:force align  e:encoder self-test ---"));
 }
 
 void startMotor() {
@@ -451,10 +676,23 @@ void setMode(Mode m) {
   SerialUART.print(F(" target=")); SerialUART.println(target);
 }
 
-void runInitFOC() {
+void runInitFOC(bool force_align) {
   if (running) { SerialUART.println(F("stop first (x)")); return; }
-  SerialUART.println(F("initFOC: aligning (expect a small twitch)."));
-  motor.zero_electric_angle = NOT_SET;
+  bool use_stored = (!force_align && ZEA_STORED >= 0.0f && DIR_STORED != 0);
+  if (use_stored) {
+    // Absolute sensor: ZEA is a constant, not a per-session measurement.
+    motor.zero_electric_angle = ZEA_STORED;
+    motor.sensor_direction    = (DIR_STORED > 0) ? Direction::CW : Direction::CCW;
+    SerialUART.println(F("initFOC: STORED ZEA -- no alignment, no twitch."));
+  } else {
+    motor.zero_electric_angle = NOT_SET;
+    // Direction must be DETECTED on this board: the SPI angle convention is not
+    // the TIM4 count convention. Pin it only once DIR_STORED has been measured.
+    motor.sensor_direction = (DIR_STORED > 0) ? Direction::CW
+                           : (DIR_STORED < 0) ? Direction::CCW
+                                              : Direction::UNKNOWN;
+    SerialUART.println(F("initFOC: aligning (expect a small twitch)."));
+  }
   motor.enable();
   int ok = motor.initFOC();
   motor.disable();
@@ -477,6 +715,8 @@ void adjustTarget(float dir) {
   SerialUART.print(F("target=")); SerialUART.println(target);
 }
 
+#include "autocalib.h"          // immediately above void handleSerial()
+
 void handleSerial() {
   while (SerialUART.available()) {
     char c = (char)SerialUART.read();
@@ -489,11 +729,22 @@ void handleSerial() {
       case 't': case 'T': setMode(MODE_TORQUE); break;
       case 'c': case 'C': setMode(MODE_TORQUE_CURRENT); break;
       case 'v': case 'V': setMode(MODE_VELOCITY); break;
-      case 'f': case 'F': runInitFOC(); break;
+      case 'f': runInitFOC(false); break;   // uses STORED ZEA when available
+      case 'F': runInitFOC(true);  break;   // force a fresh alignment
+      case 'e': case 'E': encoderSelfTest(); break;
       case 'l': logStart(1); break;                     // fast capture (~65 ms)
       case 'L': logStart(8); break;                     // slow capture (~520 ms)
       case 'd': case 'D': logDump(); break;
       case 'a': case 'A': logStats(); break;            // mean of last capture
+      case 'Y': case 'y': acStatus();   break;         // status / menu
+      case '0': acPhase(0); break;                     // reset results
+      case '1': acPhase(1); break;                     // LINK
+      case '2': acPhase(2); break;                     // ALIGN
+      case '3': acPhase(3); break;                     // R/U0
+      case '4': acPhase(4); break;                     // L
+      case '5': acPhase(5); break;                     // FREE-SPIN
+      case '6': acPhase(6); break;                     // T/INL
+      case '7': acPhase(7); break;                     // REPORT
       case 'q': case 'Q':
         print_ms = (print_ms == 300) ? 3000 : 300;
         SerialUART.print(F("print_ms=")); SerialUART.println(print_ms); break;
@@ -531,7 +782,7 @@ void setup() {
   SerialUART.begin(921600);
   _delay(2000);
   SimpleFOCDebug::enable(&SerialUART);
-  SerialUART.println(F("=== actuator + current mode + TIM4 HW encoder ==="));
+  SerialUART.println(F("=== actuator + current mode + MT6816 SPI (bit-banged) ==="));
 
   // ---- BUS VOLTAGE: seed BEFORE driver.init() and BEFORE currentSense.init().
   // Ordering is deliberate: currentSense.init() reconfigures the ADC, so any
@@ -560,10 +811,14 @@ void setup() {
   motor.linkDriver(&driver);
   currentSense.linkDriver(&driver);
 
-  SerialUART.println(F("initialising TIM4 encoder..."));
-  encoder.init();                            // register-level, cannot hang on pinmap
+  SerialUART.println(F("initialising MT6816 SPI encoder..."));
+  encoder.init();                            // bit-banged: consults no pin map
   motor.linkSensor(&encoder);
-  SerialUART.print(F("TIM4 encoder OK, raw count=")); SerialUART.println(encoder.rawCount());
+  SerialUART.print(F("MT6816 raw=")); SerialUART.print(encoder.rawCount());
+  SerialUART.print(F(" / 16384  parity_err=")); SerialUART.print(encoder.spi_err);
+  SerialUART.print(F(" no_mag=")); SerialUART.println(encoder.no_mag);
+  if (encoder.spi_err) SerialUART.println(F("!! SPI parity errors at boot -- check CSN and HVPP->VDD"));
+  if (encoder.no_mag)  SerialUART.println(F("!! No_Mag_Warning at boot -- magnet weak/far. Fix before running."));
 
   motor.controller = MotionControlType::velocity_openloop;
   motor.voltage_limit  = VOLT_LIMIT;
@@ -592,7 +847,7 @@ void setup() {
   motor.PID_current_q.limit = VOLT_LIMIT;
   motor.PID_current_d.limit = VOLT_LIMIT;
 
-  motor.voltage_sensor_align = 2.0f;
+  motor.voltage_sensor_align = 1.0f;
   motor.init();
 
   cs_ok = currentSense.init();
@@ -615,14 +870,27 @@ void setup() {
   SerialUART.print(F(" dead_zone=")); SerialUART.print(driver.dead_zone, 4);
   SerialUART.print(F(" pwm_Hz="));    SerialUART.print(driver.pwm_frequency);
   SerialUART.print(F(" Vbus="));      SerialUART.print(driver.voltage_power_supply, 2);
-  SerialUART.print(F(" vok="));       SerialUART.println(vbus_valid ? 1 : 0);
+  SerialUART.print(F(" vok="));       SerialUART.print(vbus_valid ? 1 : 0);
+  // Echo every load-bearing default: a library default is a decision nobody made.
+  SerialUART.print(F(" v_align="));   SerialUART.print(motor.voltage_sensor_align, 2);
+  SerialUART.print(F(" (I_align="));  SerialUART.print(motor.voltage_sensor_align / 0.218f, 1);
+  SerialUART.print(F("A) spi_nops=")); SerialUART.print(SPI_HALF_NOPS);
+  SerialUART.print(F(" jump_guard=")); SerialUART.println(SPI_JUMP_GUARD ? 1 : 0);
 
-  // TIM4 counting convention confirmed CCW (matches the previous software
-  // encoder). Preset it so 'f' skips direction detection -> short twitch.
-  motor.sensor_direction = Direction::CCW;
+  // DIRECTION IS NOT PRESET ON THIS BOARD. The ABZ build hardcoded CCW because
+  // the TIM4 count convention had been confirmed; the MT6816 SPI angle runs on
+  // its own convention (ROT_DIR register, CCW-increasing by default) and the
+  // magnet mount orientation may differ on this assembly. Let initFOC detect it
+  // once, then pin DIR_STORED. Copying CCW across untested would silently
+  // invert the torque sign.
+  motor.sensor_direction = (DIR_STORED > 0) ? Direction::CW
+                         : (DIR_STORED < 0) ? Direction::CCW
+                                            : Direction::UNKNOWN;
   foc_ready = false;
+  SerialUART.print(F("ALIGN src="));
+  SerialUART.println((ZEA_STORED >= 0.0f && DIR_STORED != 0) ? F("STORED") : F("measure with f"));
 
-  SerialUART.println(F("Motor DISABLED. Run 'f' once per power-up."));
+  SerialUART.println(F("Motor DISABLED. Run 'e' (encoder self-test) BEFORE 'f'."));
   printHelp();
 }
 
@@ -670,10 +938,9 @@ void loop() {
 
   motor.loopFOC();
   g_loops++;
-  // loopFOC() updates the sensor ONLY when the motor is enabled AND in a
-  // closed-loop mode. Otherwise update it here, or shaft_velocity freezes at
-  // its last value -- which latched the overspeed trip across runs.
-  if (!running || mode == MODE_OPENLOOP) encoder.update();
+  // Avoid a second encoder read here. The extra update was measured to be
+  // redundant in the disarmed/open-loop paths and did not change the frozen
+  // velocity behavior, so it only costs additional loop time.
 
   // 2.3.1's loopFOC() refreshes motor.current ONLY in the dc_current and
   // foc_current branches; the voltage branch returns without touching it. In
@@ -750,7 +1017,7 @@ void loop() {
       e.sp_x1000 = (int16_t)(motor.current_sp * 1000.0f);
       PhaseCurrent_s lc = currentSense.getPhaseCurrents();
       e.raw_x100 = (int16_t)(sqrtf(lc.a*lc.a + lc.b*lc.b + lc.c*lc.c) * 100.0f);
-      e.cnt      = (uint16_t)TIM4->CNT;
+      e.cnt      = encoder.raw;
       if (++log_i >= LOG_N) {
         log_active = false; log_ready = true; log_t1 = micros();
       }
@@ -783,6 +1050,15 @@ void loop() {
     // 'seed' not 'vok': with VBUS_LIVE=false, Vb is the boot measurement and is
     // NOT tracking. Printed so no capture can be read as if it were live.
     SerialUART.print(F(" Vb_src=")); SerialUART.print(VBUS_LIVE ? F("live") : F("seed"));
+    // SPI link health. perr is CUMULATIVE since boot: any nonzero value means
+    // frames are being corrupted and the angle was stale for that many cycles.
+    // nmg=1 means the magnet field is below the AMR saturation threshold and the
+    // angle is meaningless -- the failure ABZ could never report.
+    encoder.readOverSpeed();                 // 0x05: one extra frame per print only
+    SerialUART.print(F(" perr=")); SerialUART.print(encoder.spi_err);
+    SerialUART.print(F(" nmg="));  SerialUART.print(encoder.no_mag);
+    SerialUART.print(F(" ovs="));  SerialUART.print(encoder.over_speed);
+    if (SPI_JUMP_GUARD) { SerialUART.print(F(" jrej=")); SerialUART.print(encoder.spi_jump); }
     SerialUART.print(F(" lps=")); SerialUART.print(lps);
     SerialUART.print(F(" pr_us=")); SerialUART.println(pr_us);   // cost of the PREVIOUS print block
     if (log_ready && !log_announced) {
