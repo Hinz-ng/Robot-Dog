@@ -153,7 +153,17 @@ const uint8_t  AC_L_NS        = 40;       // samples captured per repeat
 const float    AC_L_VBASE     = 0.20f;    // hold between steps (~0.8 A)
 const float    AC_L_VSTEP     = 0.70f;    // stepped-to (~3.4 A peak)
 const uint16_t AC_L_DECAY_MS  = 4;        // >= 9 tau_e at tau_e ~ 200 us
-const uint8_t  AC_L_MIN_PTS   = 8;        // raised: time-binning yields ~17, not 5
+const uint8_t  AC_L_MIN_PTS   = 6;        // was 8. 6 is the statistical floor for a
+                                          // 2-parameter fit with an rms gate; 8 was
+                                          // set from F4's WRONG ~17-point prediction.
+// F5 -- DELIBERATE PHASE DITHER. F4 assumed the step's phase relative to the loop
+// was random. It is NOT: acService() IS the loop, so samples land at step+{0,60,
+// 120..} us rigidly and only every 3rd 20 us bin is ever visited. Measured: 7 fit
+// points, not 17. FIX: after the sample that APPLIES the step, stall r*2 us so the
+// REMAINING samples of that repeat sit at a per-repeat offset. Across 32 reps the
+// offset sweeps 0..62 us = one full loop period, so sample k covers
+// [60(k-1), 60(k-1)+62] us and the union is contiguous.
+const uint8_t  AC_L_DITHER_US = 2;        // x AC_L_REPS must be >= one loop period
 const float    AC_L_RMS_FAIL  = 0.20f;
 // F4 -- TIME BINNING. Averaging by SAMPLE INDEX throws away the loop-phase jitter
 // that is actually useful. The step is triggered after a millis()-based wait, so
@@ -689,6 +699,9 @@ static void acP4() {
       } else if (dt > AC_L_TAIL_US) {
         tail_acc += ac_i_amp; tail_n++;          // steady state -> I_inf
       }
+      // F5 -- see the AC_L_DITHER_US note. Must be AFTER dt is binned, or sample
+      // 0's own timestamp gets inflated by the stall.
+      if (k == 0 && r) delayMicroseconds((unsigned int)r * AC_L_DITHER_US);
     }
     reps++;
   }
