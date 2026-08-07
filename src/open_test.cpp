@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <SimpleFOC.h>
+#include "joint_cal.h"
 
 // ============================================================================
 // ACTUATOR BASELINE + FOC CURRENT MODE + MT6816 4-WIRE SPI (bit-banged)
@@ -317,24 +318,27 @@ const float VEL_D  = 0.0f;
 const float VEL_TF = 0.02f;
 
 // ---------------------------------------------------------------------------
-// STORED ALIGNMENT -- the payoff of an ABSOLUTE sensor
+// PER-JOINT CALIBRATION -- see joint_cal.h
 // ---------------------------------------------------------------------------
-// With ABZ, zero_electric_angle was session-relative: the counter started at 0
-// wherever the rotor happened to be, so 'f' was mandatory every power-up and its
-// measured 9.2-count (5.68 deg elec) scatter entered every measurement made
-// under it. With SPI the mechanical angle is ABSOLUTE within one revolution, so
-// ZEA is a fixed property of this motor + this magnet mount.
+// These used to be literals edited by hand before each flash. They now come from
+// joint_cal.h, selected at COMPILE TIME by -D JOINT_ID=n from platformio.ini, so
+// flashing the wrong joint's constants requires typing the wrong ENVIRONMENT
+// rather than mistyping a number -- and the boot banner prints which one it is.
 //
-// PROCEDURE (first bring-up, belt OFF, then pin the values):
-//   1. Leave ZEA_STORED < 0 and DIR_STORED = 0 -> 'f' does a full alignment
-//      INCLUDING direction detection.
-//   2. Press 'f' five times; average the printed zero_electric_angle.
-//   3. Note the printed sensor_direction.
-//   4. Put the average in ZEA_STORED, and +1 (CW) / -1 (CCW) in DIR_STORED.
-//   5. Reflash. 'f' now skips the twitch entirely. 'F' still forces a fresh one.
-// ZEA is valid only for THIS motor + magnet. Disturb the mount -> re-measure.
-const float ZEA_STORED = 6.0485f;   // median of 16 alignments across 2 power cycles
-const int   DIR_STORED = +1;        // CW -- confirmed 16/16. NOT the ABZ convention.
+// With an ABSOLUTE sensor, ZEA is a fixed property of THIS motor + THIS magnet
+// mount, not a per-session measurement. That is the payoff: 'f' stops twitching
+// the rotor, and the ~3.4 deg elec of alignment scatter leaves the error budget
+// instead of being redrawn on every power-up.
+//
+// THE PRICE: nothing re-derives ZEA any more, so a slipped magnet or a
+// wrong-joint flash is SILENT. Press 'V' after every flash -- one forced
+// alignment, compared against the stored value. That check is not optional.
+//
+// An unfilled row (zea < 0, dir == 0) makes runInitFOC() fall back to a full
+// alignment, so an uncalibrated joint degrades to the old behaviour rather than
+// commutating on garbage.
+const float ZEA_STORED = CAL.zea;
+const int   DIR_STORED = CAL.dir;
 
 
 // ---------------------------------------------------------------------------
@@ -622,6 +626,7 @@ void encoderSelfTest() {
 void printHelp() {
   SerialUART.println(F("--- g:go x:stop +/-:target | o t c v modes | f:initFOC ---"));
   SerialUART.println(F("--- logger: l=fast L=slow k=kick j=zero-kick d=dump a=stats ---"));
+  SerialUART.println(F("--- V:verify ZEA | Y:autocalib menu  1..7:phases  0:reset ---"));
   SerialUART.println(F("--- f:initFOC(stored)  F:force align  e:encoder self-test ---"));
 }
 
@@ -728,7 +733,8 @@ void handleSerial() {
       case 'o': case 'O': setMode(MODE_OPENLOOP); break;
       case 't': case 'T': setMode(MODE_TORQUE); break;
       case 'c': case 'C': setMode(MODE_TORQUE_CURRENT); break;
-      case 'v': case 'V': setMode(MODE_VELOCITY); break;
+      case 'v': setMode(MODE_VELOCITY); break;   // 'V' is NO LONGER velocity:
+      case 'V': acVerifyZea();          break;   //   it verifies the stored ZEA
       case 'f': runInitFOC(false); break;   // uses STORED ZEA when available
       case 'F': runInitFOC(true);  break;   // force a fresh alignment
       case 'e': case 'E': encoderSelfTest(); break;
@@ -783,6 +789,7 @@ void setup() {
   _delay(2000);
   SimpleFOCDebug::enable(&SerialUART);
   SerialUART.println(F("=== actuator + current mode + MT6816 SPI (bit-banged) ==="));
+  printJointCal(SerialUART);
 
   // ---- BUS VOLTAGE: seed BEFORE driver.init() and BEFORE currentSense.init().
   // Ordering is deliberate: currentSense.init() reconfigures the ADC, so any
@@ -873,7 +880,7 @@ void setup() {
   SerialUART.print(F(" vok="));       SerialUART.print(vbus_valid ? 1 : 0);
   // Echo every load-bearing default: a library default is a decision nobody made.
   SerialUART.print(F(" v_align="));   SerialUART.print(motor.voltage_sensor_align, 2);
-  SerialUART.print(F(" (I_align="));  SerialUART.print(motor.voltage_sensor_align / 0.218f, 1);
+  SerialUART.print(F(" (I_align="));  SerialUART.print(motor.voltage_sensor_align / CAL.R_eff, 1);
   SerialUART.print(F("A) spi_nops=")); SerialUART.print(SPI_HALF_NOPS);
   SerialUART.print(F(" jump_guard=")); SerialUART.println(SPI_JUMP_GUARD ? 1 : 0);
 

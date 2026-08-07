@@ -1,3 +1,4 @@
+#pragma once
 // ============================================================================
 // autocalib.h  --  ONE-KEY PER-JOINT CHARACTERISATION  (belt OFF)
 // ============================================================================
@@ -15,6 +16,8 @@
 //     case '6': acPhase(6); break;   // T/INL   computation only, no motor
 //     case '7': acPhase(7); break;   // REPORT  print the pasteable block
 //     case '0': acPhase(0); break;   // RESET   discard all results
+//     case 'V': case 'v': acVerifyZea(); break;  // NOTE: 'v' was VELOCITY mode --
+//               //  pick ONE. Suggested: keep 'v' for velocity, use 'V' only here.
 //
 // ('A' is already logStats, so 'Y' is used for status.)
 //
@@ -105,7 +108,22 @@
 //   motor.PID_current_{q,d}.limit, motor.zero_electric_angle,
 //   motor.sensor_direction, foc_ready.
 //
-// RUNTIME per phase: 1 ~0.3 s | 2 ~8 s | 3 ~6 s | 4 ~1 s | 5 ~50 s | 6,7 instant.
+// REVISION 2 (2026-08-07), after the first full run on assembly A2:
+//   F1  |I| ratio gate moved to the SQUARED domain and widened to a gross-sanity
+//       band. The old 1.20-1.25 gate produced a FALSE FAIL: free-spinning belt-off
+//       Iq is only 0.10-0.18 A, and mean(sqrt) of an always-positive rippling
+//       quantity is biased up by 4-8% there.
+//   F2  VBUS_SCALE is per-board and unmeasurable without an external reference,
+//       so the report now DEMANDS a written-in multimeter reading.
+//   F3  acService() no longer reads the phase currents twice per iteration. That
+//       cost ~18 us and dropped the loop from 16.8 to 12.9 kHz -- which matters
+//       because T_delay is ONE LOOP PERIOD, so the reported T was 33% high.
+//       f_loop and T/T_loop are now printed alongside T.
+//   F4  The L step trace is binned by TIME, not sample index, turning natural
+//       loop-phase jitter into equivalent-time sampling: ~17 fit points, not 5.
+//   S2  New 'V' command verifies a stored ZEA against a fresh alignment.
+//
+// RUNTIME per phase: 1 ~0.3 s | 2 ~8 s | 3 ~6 s | 4 ~2 s | 5 ~50 s | 6,7 instant.
 //   Settle times are deliberately 2-3x the relevant time constants.
 // RAM ~1.6 kB of statics on top of the 19.5 kB log buffer. CHECK THE FREE-RAM
 //   FIGURE IN THE BUILD OUTPUT -- a static array colliding with the stack gives
@@ -130,13 +148,25 @@ const uint8_t  AC_R_MIN_PTS   = 7;
 const float    AC_R_RMS_FAIL  = 0.012f;   // V
 const float    AC_R_RSE_FAIL  = 0.03f;    // relative SE of the slope
 
-const uint8_t  AC_L_REPS      = 24;       // averaged step repeats
-const uint8_t  AC_L_NS        = 40;       // samples per repeat
+const uint8_t  AC_L_REPS      = 32;       // averaged step repeats (was 24)
+const uint8_t  AC_L_NS        = 40;       // samples captured per repeat
 const float    AC_L_VBASE     = 0.20f;    // hold between steps (~0.8 A)
 const float    AC_L_VSTEP     = 0.70f;    // stepped-to (~3.4 A peak)
-const uint16_t AC_L_DECAY_MS  = 4;        // >= 9 tau_e at tau_e ~ 330 us
-const uint8_t  AC_L_MIN_PTS   = 5;
+const uint16_t AC_L_DECAY_MS  = 4;        // >= 9 tau_e at tau_e ~ 200 us
+const uint8_t  AC_L_MIN_PTS   = 8;        // raised: time-binning yields ~17, not 5
 const float    AC_L_RMS_FAIL  = 0.20f;
+// F4 -- TIME BINNING. Averaging by SAMPLE INDEX throws away the loop-phase jitter
+// that is actually useful. The step is triggered after a millis()-based wait, so
+// its phase relative to the ~58 us control loop is effectively random across
+// repeats: the samples already land at scattered times. Binning those (t, I)
+// pairs by TIME turns that jitter into EQUIVALENT-TIME SAMPLING.
+// Measured on assembly A2: tau = 200 us against a 58.5 us sample period is only
+// 3.4 samples/tau, so index-averaging left exactly 5 points in the 0.15-0.85
+// fit band -- the bare minimum. 20 us bins over the same data give ~17.
+const uint8_t  AC_L_TBINS     = 48;       // 48 x 20 us = 960 us of rise
+const uint16_t AC_L_TBIN_US   = 20;
+const uint8_t  AC_L_BIN_MIN_N = 3;        // samples needed before a bin is used
+const uint16_t AC_L_TAIL_US   = 1500;     // t beyond this is steady state -> I_inf
 
 const uint8_t  AC_W_N         = 5;
 const float    AC_W_V[AC_W_N] = { 0.50f, 0.90f, 1.30f, 1.70f, 2.00f };
@@ -156,8 +186,20 @@ const float    AC_RAMP_V      = 0.05f;
 const uint8_t  AC_RAMP_MS     = 10;
 const float    AC_IMAX_ABORT  = 6.0f;     // A amplitude: hard abort
 const float    AC_COAST_RADS  = 5.0f;
-const float    AC_RATIO_LO    = 1.20f;
-const float    AC_RATIO_HI    = 1.25f;
+// F1 -- the |I|/Iq gate. |I| = sqrt(ia^2+ib^2+ic^2) is ALWAYS POSITIVE, so
+// mean(|I|) > |mean(I)| whenever there is ripple, and the smaller the DC current
+// the larger the relative bias. Free-spinning belt-off, Iq is only 0.10-0.18 A --
+// the WORST case. Measured on A2: 1.324 at Iq=0.100 falling monotonically to
+// 1.273 at Iq=0.179, i.e. +8.1% -> +3.9%. That is the bias, not a fault, and the
+// original 1.20-1.25 gate produced a FALSE FAIL.
+// FIX: accumulate in the SQUARED domain. Instantaneously |I|^2 = 1.5*(Iq^2+Id^2),
+// so  ratio = sqrt( mean(ia^2+ib^2+ic^2) / (1.5*mean(Iq^2+Id^2)) )  removes the
+// sqrt bias entirely. The gate is then a GROSS-SANITY band, because the two sides
+// are still sampled at different instants of a PWM-rippling current.
+// The definitive 1.22-1.23 check is a LOCKED-ROTOR one -- see README, and do it
+// by hand in 'c' mode. Phase 5 cannot assert it.
+const float    AC_RATIO_LO    = 1.15f;
+const float    AC_RATIO_HI    = 1.40f;
 const float    AC_BW_HZ       = 400.0f;   // for the SUGGESTED gains only
 
 // ---------------------------------------------------------------------------
@@ -210,11 +252,13 @@ static AcFit acFit(const float* x, const float* y, uint8_t n) {
 static bool  ac_done[8];                              // phase N has PASSED
 static float ac_rx[AC_R_N], ac_ry[AC_R_N];            // R sweep: I, U_commanded
 static uint8_t ac_rn, ac_rdrop;
-static float ac_lt[AC_L_NS], ac_li[AC_L_NS];          // L step: mean t_us, mean I
-static float ac_l_I0, ac_l_Iinf;
+static float    ac_lb_i[AC_L_TBINS];                  // L step: sum of I per time bin
+static uint16_t ac_lb_n[AC_L_TBINS];                  // samples per time bin
+static float ac_l_I0, ac_l_Iinf, ac_l_tail_n;
 static uint8_t ac_l_pts;
 static float ac_wx[2*AC_W_N], ac_wy[2*AC_W_N];        // Ke fit: vel, U - R*Iq - U0
 static float ac_w_vel[2*AC_W_N], ac_w_iq[2*AC_W_N], ac_w_u[2*AC_W_N];
+static float ac_floop[2*AC_W_N];                      // F3: measured loop rate per point
 static uint8_t ac_wn;
 // [direction][speed slot][bin] ; direction 0 = forward, 1 = reverse
 static float    ac_bin_id[2][AC_BIN_SPEEDS][AC_BINS];
@@ -227,7 +271,7 @@ static float ac_zea, ac_zea_sd, ac_zea_se;   static int8_t ac_dir;
 static float ac_R, ac_U0, ac_R_se, ac_U0_se, ac_R_rms, ac_U0_sig;
 static float ac_L, ac_tau, ac_L_rms, ac_L_td;
 static float ac_Ke, ac_Kt, ac_Ke_se, ac_Ke_rms, ac_Ke_c;
-static float ac_T[AC_BIN_SPEEDS], ac_inl_pp, ac_zea_resid;
+static float ac_T[AC_BIN_SPEEDS], ac_T_floop[AC_BIN_SPEEDS], ac_inl_pp, ac_zea_resid;
 static float ac_ratio_lo, ac_ratio_hi;
 static float ac_link_us; static uint32_t ac_link_err;
 static AcV   ac_v_link, ac_v_zea, ac_v_R, ac_v_U0, ac_v_L, ac_v_Ke, ac_v_ratio, ac_v_T;
@@ -282,12 +326,20 @@ static void acExit(bool keep_align) {
 // move() unless we do it here. This mirrors open_test.cpp's loop() control path
 // exactly, plus the guards loop() would otherwise have applied.
 // ---------------------------------------------------------------------------
-static float ac_i_amp = 0.0f;          // phase-current AMPLITUDE, live in all modes
+static float    ac_i_amp = 0.0f;      // phase-current AMPLITUDE, live in all modes
+static uint32_t ac_loops = 0;         // control-loop iterations, for the f_loop report
 
 static inline float acPhaseAmp() {
   PhaseCurrent_s c = currentSense.getPhaseCurrents();
   // sqrt(ia^2+ib^2+ic^2) = 1.2247 * amplitude in the amplitude-invariant frame
   return sqrtf(c.a*c.a + c.b*c.b + c.c*c.c) * 0.816497f;
+}
+
+// F3 -- squared magnitude, for the ratio gate. Returned SQUARED so it can be
+// accumulated without a sqrt, which is what removes the averaging bias (F1).
+static inline float acPhaseMag2() {
+  PhaseCurrent_s c = currentSense.getPhaseCurrents();
+  return c.a*c.a + c.b*c.b + c.c*c.c;
 }
 
 static void acService() {
@@ -302,8 +354,18 @@ static void acService() {
     motor.current.q = 0.0f; motor.current.d = 0.0f;
   }
   if (running) motor.move(target);
+  ac_loops++;
 
-  ac_i_amp = acPhaseAmp();
+  // F3 -- do NOT read the phase currents again here in closed-loop modes.
+  // getFOCCurrents() above already cost one ADC read; a second getPhaseCurrents()
+  // every iteration cost ~18 us and dropped the loop from 16.8 kHz to 12.9 kHz.
+  // That matters twice over: it degrades every measurement, AND since
+  // T_delay ~= ONE FULL LOOP PERIOD (see the T model note in phase 6), it made
+  // the T reported here 33% larger than the T the main sketch actually has.
+  // In closed-loop modes the dq magnitude IS the phase amplitude, so it is free.
+  if (mode == MODE_OPENLOOP) ac_i_amp = acPhaseAmp();
+  else                       ac_i_amp = sqrtf(motor.current.q*motor.current.q
+                                            + motor.current.d*motor.current.d);
   if (ac_i_amp > AC_IMAX_ABORT) {
     ac_abort = true;
     SerialUART.print(F("\n  !! ABORT overcurrent: ")); SerialUART.print(ac_i_amp, 2);
@@ -598,7 +660,8 @@ static void acP4() {
   if (!acNeed(3)) return;
   SerialUART.println(F("[4] L  (step train, rotor stays locked)"));
   acEnter();
-  for (uint8_t k = 0; k < AC_L_NS; k++) { ac_lt[k] = 0.0f; ac_li[k] = 0.0f; }
+  for (uint8_t k = 0; k < AC_L_TBINS; k++) { ac_lb_i[k] = 0.0f; ac_lb_n[k] = 0; }
+  double tail_acc = 0; uint32_t tail_n = 0;
   mode = MODE_OPENLOOP;
   motor.controller = MotionControlType::velocity_openloop;
   target = 0.0f;
@@ -617,36 +680,47 @@ static void acP4() {
     motor.voltage_limit = AC_L_VSTEP;
     for (uint8_t k = 0; k < AC_L_NS && !ac_abort; k++) {
       acService();
-      ac_lt[k] += (float)(micros() - t0);
-      ac_li[k] += ac_i_amp;
+      uint32_t dt = micros() - t0;
+      // F4: bin by TIME. The step phase relative to the loop is random across
+      // repeats, so these land scattered -- equivalent-time sampling for free.
+      if (dt < (uint32_t)AC_L_TBINS * AC_L_TBIN_US) {
+        uint8_t b = (uint8_t)(dt / AC_L_TBIN_US);
+        ac_lb_i[b] += ac_i_amp; ac_lb_n[b]++;
+      } else if (dt > AC_L_TAIL_US) {
+        tail_acc += ac_i_amp; tail_n++;          // steady state -> I_inf
+      }
     }
     reps++;
   }
   int32_t moved = acCntDelta(c0, encoder.raw);
   acExit(true);
-  if (ac_abort || reps < 4) { SerialUART.println(F("    aborted   FAIL")); ac_v_L = AC_FAIL; ac_done[4] = false; return; }
+  if (ac_abort || reps < 6) { SerialUART.println(F("    aborted   FAIL")); ac_v_L = AC_FAIL; ac_done[4] = false; return; }
 
-  float N = (float)reps;
-  for (uint8_t k = 0; k < AC_L_NS; k++) { ac_lt[k] /= N; ac_li[k] /= N; }
-  ac_l_I0 = (float)(i0acc / i0n);
-  double tail = 0; for (uint8_t k = AC_L_NS - 6; k < AC_L_NS; k++) tail += ac_li[k];
-  ac_l_Iinf = (float)(tail / 6.0);
+  ac_l_I0     = (float)(i0acc / i0n);
+  ac_l_Iinf   = tail_n ? (float)(tail_acc / tail_n) : 0.0f;
+  ac_l_tail_n = (float)tail_n;
 
-  static float lx[AC_L_NS], ly[AC_L_NS];
+  // Linearised fit: ln((Iinf - i)/(Iinf - I0)) = -(t - t_d)/tau. Only the SLOPE is
+  // used, so the fitted intercept absorbs the unknown transport lag rather than
+  // biasing tau; t_d is reported purely as a sanity number (expect ~1-2 sample
+  // periods). I0 and Iinf come from the SAME trace, so tau does not depend on
+  // phase 3 -- R only converts tau into L at the end.
+  static float lx[AC_L_TBINS], ly[AC_L_TBINS];
   uint8_t n = 0;
   float span = ac_l_Iinf - ac_l_I0;
-  if (span > 0.30f) {
-    for (uint8_t k = 0; k < AC_L_NS; k++) {
-      float frac = (ac_li[k] - ac_l_I0) / span;
+  if (span > 0.30f && tail_n > 20) {
+    for (uint8_t b = 0; b < AC_L_TBINS; b++) {
+      if (ac_lb_n[b] < AC_L_BIN_MIN_N) continue;
+      float frac = ((ac_lb_i[b] / ac_lb_n[b]) - ac_l_I0) / span;
       if (frac > 0.15f && frac < 0.85f) {
-        lx[n] = ac_lt[k] * 1e-6f;
-        ly[n] = logf(1.0f - frac);               // = -(t - t_d)/tau
+        lx[n] = (b + 0.5f) * AC_L_TBIN_US * 1e-6f;
+        ly[n] = logf(1.0f - frac);
         n++;
       }
     }
   }
   ac_l_pts = n;
-  AcFit f = acFit(lx, ly, n);
+  AcFit f  = acFit(lx, ly, n);
   ac_tau   = (f.ok && f.m < -1e-6f) ? (-1.0f / f.m) : 0.0f;
   ac_L     = ac_tau * ac_R;
   ac_L_rms = f.rms;
@@ -656,11 +730,14 @@ static void acP4() {
   if (n < AC_L_MIN_PTS || !f.ok || ac_tau <= 0.0f) ac_v_L = AC_FAIL;
   else if (ac_L < 15e-6f || ac_L > 400e-6f)        ac_v_L = AC_FAIL;
   else if (ac_L_rms > AC_L_RMS_FAIL)               ac_v_L = AC_FAIL;
-  else if (acAbs32(moved) > 40)             ac_v_L = AC_WARN;
+  else if (tail_n < 40)                            ac_v_L = AC_WARN;   // weak I_inf
+  else if (acAbs32(moved) > 40)                    ac_v_L = AC_WARN;
   else if (ac_L_td < 0.0f || ac_L_td > 400e-6f)    ac_v_L = AC_WARN;
 
   SerialUART.print(F("    reps=")); SerialUART.print(reps);
   SerialUART.print(F(" fitpts=")); SerialUART.print(ac_l_pts);
+  SerialUART.print(F("/")); SerialUART.print(AC_L_TBINS);
+  SerialUART.print(F(" tail_n=")); SerialUART.print(tail_n);
   SerialUART.print(F(" I0=")); SerialUART.print(ac_l_I0, 3);
   SerialUART.print(F(" Iinf=")); SerialUART.print(ac_l_Iinf, 3);
   SerialUART.print(F(" tau=")); SerialUART.print(ac_tau*1e6f, 1); SerialUART.print(F("us"));
@@ -669,7 +746,10 @@ static void acP4() {
   SerialUART.print(F(" td=")); SerialUART.print(ac_L_td*1e6f, 0); SerialUART.print(F("us"));
   SerialUART.print(F(" drift=")); SerialUART.print(moved);
   SerialUART.print(F("   ")); SerialUART.println(acVs(ac_v_L));
-  if (ac_v_L == AC_WARN) SerialUART.println(F("    !! rotor drifted or t_d implausible -- L is suspect, refit the trace offline."));
+  if (ac_v_L == AC_WARN) SerialUART.println(F("    !! rotor drifted, I_inf weak, or t_d implausible -- refit the bins offline."));
+  SerialUART.println(F("    NOTE: L is measured at 0.9 -> 3.2 A, so it is the INCREMENTAL"));
+  SerialUART.println(F("    inductance near the operating point. Partial saturation and eddy"));
+  SerialUART.println(F("    currents make it legitimately LOWER than a small-signal value."));
   ac_done[4] = (ac_v_L != AC_FAIL);
   if (ac_done[4]) SerialUART.println(F("    next: 5"));
 }
@@ -719,17 +799,25 @@ static void acP5() {
       if (ac_abort) break;
 
       int8_t slot = (k >= AC_W_N - AC_BIN_SPEEDS) ? (int8_t)(k - (AC_W_N - AC_BIN_SPEEDS)) : -1;
-      double aIq = 0, aId = 0, aV = 0, aR = 0; uint32_t n = 0, nr = 0;
-      uint32_t t0 = millis();
+      double aIq = 0, aId = 0, aV = 0;
+      double aP2 = 0, aD2 = 0;                  // F1: SQUARED accumulators
+      uint32_t n = 0, nr = 0, ratio_div = 0;
+      ac_loops = 0;
+      uint32_t tl0 = millis(), t0 = millis();
       while ((millis() - t0) < AC_W_MEAS_MS && !ac_abort) {
         acService();
         float iq = motor.current.q, id = motor.current.d;
         aIq += iq; aId += id; aV += motor.shaft_velocity; n++;
-        // |I|/Iq integrity gate, per sample. ac_i_amp is already the amplitude,
-        // so compare it against sqrt(Iq^2+Id^2) directly, then scale to the
-        // familiar 1.2247 figure for the report.
-        float mag = sqrtf(iq*iq + id*id);
-        if (mag > 0.15f) { aR += (ac_i_amp / mag) * 1.2247f; nr++; }
+        // F1 -- ratio gate in the SQUARED domain. |I|^2 = 1.5*(Iq^2+Id^2)
+        // instantaneously, so accumulating squares and taking ONE sqrt at the end
+        // removes the always-positive averaging bias that made the old per-sample
+        // mean(|I|)/|Iq| read 1.27-1.36 instead of 1.2247.
+        // Sampled 1-in-4: getPhaseCurrents() costs ~18 us and the loop rate is
+        // load-bearing (T_delay ~= one loop period).
+        if (++ratio_div >= 4) {
+          ratio_div = 0;
+          aP2 += acPhaseMag2(); aD2 += (double)iq*iq + (double)id*id; nr++;
+        }
         if (slot >= 0) {
           uint8_t b = (uint8_t)(((uint32_t)encoder.raw * AC_BINS) >> 14);   // /16384
           if (b < AC_BINS) {
@@ -740,8 +828,11 @@ static void acP5() {
         }
       }
       if (n < 500) continue;
+      uint32_t tl_ms = millis() - tl0;
+      if (tl_ms > 0) ac_floop[ (d*AC_W_N) + k ] = (float)ac_loops * 1000.0f / (float)tl_ms;
       float mIq = (float)(aIq/n), mId = (float)(aId/n), mV = (float)(aV/n);
-      float mR  = (nr > 100) ? (float)(aR/nr) : 0.0f;
+      // one sqrt, at the end, on the RATIO of means-of-squares
+      float mR = (nr > 50 && aD2 > 1e-9) ? sqrtf((float)(aP2 / (1.5 * aD2))) * 1.2247f : 0.0f;
       if (mR > 0.5f) { if (mR < ac_ratio_lo) ac_ratio_lo = mR; if (mR > ac_ratio_hi) ac_ratio_hi = mR; }
       if (slot >= 0) ac_bin_w[d][slot] = mV;
 
@@ -793,7 +884,9 @@ static void acP5() {
     SerialUART.println(F("    !! Ke intercept far from zero -> R or U0 from phase 3 is off. Re-run 3."));
   SerialUART.print(F("    |I| ratio ")); SerialUART.print(ac_ratio_lo, 3);
   SerialUART.print(F(" .. ")); SerialUART.print(ac_ratio_hi, 3);
-  SerialUART.print(F(" (theory 1.2247)   ")); SerialUART.println(acVs(ac_v_ratio));
+  SerialUART.print(F(" (theory 1.2247, squared-domain)   ")); SerialUART.println(acVs(ac_v_ratio));
+  SerialUART.println(F("    NOTE: this is a GROSS-SANITY band only. The tight 1.22-1.23 check"));
+  SerialUART.println(F("    is a LOCKED-ROTOR measurement -- do it by hand in 'c' mode."));
   ac_done[5] = (ac_v_Ke != AC_FAIL);
   if (ac_done[5]) SerialUART.println(F("    next: 6"));
 }
@@ -809,9 +902,21 @@ static void acP5() {
 //
 // Forward-only data CANNOT do this. Three sessions of forward-only fitting gave
 // T = 85.7 us with a 28.7 us unexplained excess; the two-direction split gave
-// 57.0 us with a 3.6 us excess, plus the INL profile for free. The two binned
-// speeds give two independent T estimates, and T must be speed-INDEPENDENT --
-// that consistency is what makes it a measurement rather than a reading.
+// 57.0 us, plus the INL profile for free. The two binned speeds give two
+// independent T estimates, and T must be speed-INDEPENDENT -- that consistency is
+// what makes it a measurement rather than a reading.
+//
+// T MODEL, CORRECTED 2026-08-07:  T ~= ONE FULL LOOP PERIOD.
+// Three points across two loop rates:
+//     f_loop 16770 -> T_loop 59.6 us, T 57.0  ->  T/T_loop 0.956
+//     f_loop 12911 -> T_loop 77.5 us, T 73.8  ->  T/T_loop 0.953
+//     f_loop 12908 -> T_loop 77.5 us, T 75.8  ->  T/T_loop 0.978
+// The old "0.5*T_pwm + 0.5*T_loop" model predicts 49.8 / 58.7 / 58.7 and is 15-29%
+// low. The PWM period (40 us) is SHORTER than the loop period, so the duty update
+// lands inside one PWM cycle and the loop period dominates outright.
+// Consequence: LOOP RATE BUYS TRANSPORT DELAY ONE-FOR-ONE, and T measured in here
+// is only the sketch's T if the loop rates match -- hence f_loop is reported with
+// it, and T/T_loop is the transferable number.
 // ===========================================================================
 static float acBinAngleDeg(uint8_t d, uint8_t s, uint8_t b) {
   if (ac_bin_n[d][s][b] == 0) return 0.0f;
@@ -855,12 +960,23 @@ static void acP6() {
     if (w < 1.0f) continue;
     ac_T[s] = radians(om) / (7.0f * w);
     any = true;
+    // f_loop for the speeds that were binned: the last AC_BIN_SPEEDS of each
+    // direction. Average forward and reverse.
+    uint8_t idx_f = (AC_W_N - AC_BIN_SPEEDS) + s;
+    uint8_t idx_r = AC_W_N + idx_f;
+    float fl = 0.5f*(ac_floop[idx_f] + ac_floop[idx_r]);
+    ac_T_floop[s] = fl;
     SerialUART.print(F("    w=+-")); SerialUART.print(w, 1);
     SerialUART.print(F(" bins=")); SerialUART.print(on);
     SerialUART.print(F(" odd=")); SerialUART.print(om, 3);
     SerialUART.print(F("+-")); SerialUART.print(osd, 3);
     SerialUART.print(F(" deg -> T=")); SerialUART.print(ac_T[s]*1e6f, 1);
-    SerialUART.println(F(" us"));
+    SerialUART.print(F(" us | f_loop=")); SerialUART.print(fl, 0);
+    if (fl > 1.0f) {
+      SerialUART.print(F(" T_loop=")); SerialUART.print(1e6f/fl, 1);
+      SerialUART.print(F(" us  T/T_loop=")); SerialUART.print(ac_T[s]*fl, 3);
+    }
+    SerialUART.println();
   }
   ac_inl_pp    = e_n ? (e_hi - e_lo) : 0.0f;
   ac_zea_resid = e_n ? (e_sum / e_n) : 0.0f;
@@ -928,8 +1044,18 @@ static void acP7() {
   SerialUART.print(F(" dead_zone=")); SerialUART.print(driver.dead_zone, 4);
   SerialUART.print(F(" v_align=")); SerialUART.print(motor.voltage_sensor_align, 2);
   SerialUART.print(F(" spi_nops=")); SerialUART.print(SPI_HALF_NOPS);
+  SerialUART.print(F(" vbus_scale=")); SerialUART.print(VBUS_SCALE, 6);
   SerialUART.print(F(" mod=")); SerialUART.println(
       motor.foc_modulation == FOCModulationType::SpaceVectorPWM ? F("SVPWM") : F("SinePWM"));
+  // F2 -- VBUS_SCALE is PER-BOARD and cannot be measured without an external
+  // reference, but every voltage-derived constant scales with it:
+  //     R_measured = R_true * (V_assumed / V_true)
+  // and the same factor lands on U0 and Ke. This is the one input the routine
+  // cannot self-check, so it is demanded explicitly rather than assumed.
+  SerialUART.print(F("!! WRITE IN: multimeter Vbus = ______ V   (firmware read "));
+  SerialUART.print(driver.voltage_power_supply, 2); SerialUART.println(F(")"));
+  SerialUART.println(F("   >1% apart -> recalibrate VBUS_SCALE for THIS BOARD before"));
+  SerialUART.println(F("   trusting R_EFF, U0 or KE. They all scale with it."));
   SerialUART.println();
 
   SerialUART.println(F("// ==== JOINT CALIBRATION ====  fill in: joint id / belt=OFF / date"));
@@ -963,9 +1089,17 @@ static void acP7() {
     SerialUART.println(F(" parity errors in 4000"));
   }
   if (ac_done[6]) {
+    float fl = ac_T_floop[AC_BIN_SPEEDS-1];
     SerialUART.print(F("T_delay        ")); SerialUART.print(ac_T[AC_BIN_SPEEDS-1]*1e6f, 1);
     SerialUART.print(F(" us   (2nd estimate ")); SerialUART.print(ac_T[0]*1e6f, 1);
-    SerialUART.println(F(" us)  -- FIRMWARE-WIDE, depends on f_loop and f_pwm"));
+    SerialUART.println(F(" us)"));
+    SerialUART.print(F("  measured at f_loop=")); SerialUART.print(fl, 0);
+    if (fl > 1.0f) {
+      SerialUART.print(F(" -> T/T_loop=")); SerialUART.print(ac_T[AC_BIN_SPEEDS-1]*fl, 3);
+      SerialUART.println(F("  (expect ~0.95-0.98: T is ONE loop period)"));
+      SerialUART.println(F("  T is NOT per-unit. It scales with 1/f_loop, so the sketch's own"));
+      SerialUART.println(F("  T = T/T_loop divided by the sketch's f_loop, not this number."));
+    } else SerialUART.println();
     SerialUART.print(F("  torque loss at 270 rad/s = "));
     SerialUART.print(100.0f*(1.0f - cosf(7.0f*270.0f*ac_T[AC_BIN_SPEEDS-1])), 3);
     SerialUART.println(F(" %"));
@@ -1020,14 +1154,82 @@ static void acP7() {
     }
   }
   if (ac_done[4]) {
-    SerialUART.println(F("---- L TRACE: k,t_us,I_amp  (offline exponential refit) ----"));
-    for (uint8_t k = 0; k < AC_L_NS; k++) {
-      SerialUART.print(F("LST,")); SerialUART.print(k);
-      SerialUART.print(','); SerialUART.print(ac_lt[k], 1);
-      SerialUART.print(','); SerialUART.println(ac_li[k], 4);
+    SerialUART.println(F("---- L BINS: t_us_centre,I_mean,n,frac  (offline refit) ----"));
+    float span = ac_l_Iinf - ac_l_I0;
+    for (uint8_t b = 0; b < AC_L_TBINS; b++) {
+      if (ac_lb_n[b] == 0) continue;
+      float I = ac_lb_i[b] / ac_lb_n[b];
+      SerialUART.print(F("LSB,")); SerialUART.print((b + 0.5f) * AC_L_TBIN_US, 1);
+      SerialUART.print(','); SerialUART.print(I, 4);
+      SerialUART.print(','); SerialUART.print(ac_lb_n[b]);
+      SerialUART.print(','); SerialUART.println((span > 1e-6f) ? ((I - ac_l_I0)/span) : 0.0f, 4);
     }
+    SerialUART.print(F("LSB_I0,")); SerialUART.print(ac_l_I0, 4);
+    SerialUART.print(F(",LSB_Iinf,")); SerialUART.print(ac_l_Iinf, 4);
+    SerialUART.print(F(",tail_n,")); SerialUART.println((uint32_t)ac_l_tail_n);
   }
   SerialUART.println(F("=================================================="));
+}
+
+// ===========================================================================
+// S2 -- ZEA VERIFICATION.  'V'
+//
+// Storing ZEA removed the only thing that used to re-derive it every power-up.
+// That is the benefit, and this is the price: a wrong-joint flash or a slipped
+// magnet mount is now SILENT, because nothing recomputes the alignment.
+// This does ONE forced alignment, compares it to the value the firmware is
+// carrying, then puts the stored value back. It catches both failures.
+// Wrap-safe: the comparison folds through 2*pi, so 6.28 vs 0.01 reads as 0.02,
+// not 6.27.
+// ===========================================================================
+void acVerifyZea() {
+  if (running) { SerialUART.println(F("stop first (x)")); return; }
+  if (!driver_ok || !cs_linked) { SerialUART.println(F("refused: driver or CS not ready")); return; }
+  if (ZEA_STORED < 0.0f || DIR_STORED == 0) {
+    SerialUART.println(F("V: no stored ZEA to verify (ZEA_STORED < 0). Nothing to check."));
+    return;
+  }
+  SerialUART.println(F("[V] ZEA VERIFY  (one twitch; stored value is restored after)"));
+  acEnter();
+  motor.zero_electric_angle = NOT_SET;
+  motor.sensor_direction    = Direction::UNKNOWN;
+  motor.enable();
+  int ok = motor.initFOC();
+  motor.disable();
+  if (!ok) { SerialUART.println(F("    initFOC FAILED")); acExit(false); return; }
+  float meas = motor.zero_electric_angle;
+  int   mdir = (motor.sensor_direction == Direction::CW) ? +1 : -1;
+  // shortest signed distance around the circle
+  float d = meas - ZEA_STORED;
+  while (d >  _PI) d -= _2PI;
+  while (d < -_PI) d += _2PI;
+  float ddeg = degrees(fabsf(d));
+
+  SerialUART.print(F("    measured ZEA=")); SerialUART.print(meas, 4);
+  SerialUART.print(F(" vs stored ")); SerialUART.print(ZEA_STORED, 4);
+  SerialUART.print(F("  -> ")); SerialUART.print(ddeg, 2); SerialUART.print(F(" deg elec"));
+  SerialUART.print(F(" | dir ")); SerialUART.print(mdir > 0 ? F("CW") : F("CCW"));
+  SerialUART.print(F(" vs ")); SerialUART.print(DIR_STORED > 0 ? F("CW") : F("CCW"));
+  SerialUART.println();
+  if (mdir != DIR_STORED) {
+    SerialUART.println(F("    *** FAIL: DIRECTION MISMATCH. Wrong joint's constants, or the"));
+    SerialUART.println(F("    *** magnet mount has been rebuilt. Do NOT run this firmware."));
+  } else if (ddeg > 15.0f) {
+    SerialUART.println(F("    *** FAIL: >15 deg. Almost certainly the WRONG JOINT's constants,"));
+    SerialUART.println(F("    *** or the magnet has slipped on the shaft. Re-run autocalib."));
+  } else if (ddeg > 8.0f) {
+    SerialUART.println(F("    !! WARN: >8 deg, well outside alignment scatter (sd ~3.4 deg)."));
+    SerialUART.println(F("    !! Check the magnet mount before trusting torque numbers."));
+  } else {
+    SerialUART.println(F("    OK: within alignment scatter. Stored ZEA is good."));
+  }
+  // Put the stored values back -- initFOC just overwrote them.
+  motor.zero_electric_angle = ZEA_STORED;
+  motor.sensor_direction    = (DIR_STORED > 0) ? Direction::CW : Direction::CCW;
+  motor.enable(); (void)motor.initFOC(); motor.disable();
+  foc_ready = true;
+  acExit(true);
+  SerialUART.println(F("    stored ZEA reinstalled."));
 }
 
 // ===========================================================================
@@ -1048,6 +1250,9 @@ static void acStatus() {
     SerialUART.println();
   }
   SerialUART.println(F("  Shaft FREE, belt OFF. Any key aborts a running phase."));
+  SerialUART.print(F("  stored: ZEA=")); SerialUART.print(ZEA_STORED, 4);
+  SerialUART.print(F(" DIR=")); SerialUART.print(DIR_STORED);
+  SerialUART.println(F("   ('V' verifies them against a fresh alignment)"));
 }
 
 void acPhase(uint8_t n) {
