@@ -211,6 +211,31 @@ static const JointCal& CAL = JOINTS[JOINT_ID - 1];
 // Kt for the selected joint. Derived every time, so it cannot disagree with Ke.
 static inline float calKt() { return calKt(CAL); }
 
+// ---------------------------------------------------------------------------
+// THE ONE PLACE i_scale IS ALLOWED TO BE APPLIED
+// ---------------------------------------------------------------------------
+// i_scale = g = I_reported / I_true, from M2.
+//
+// The current LOOP needs no correction and must not be given one. R_eff and L
+// were both MEASURED in reported-amp units, so R_stored = R_true/g and
+// L_stored = L_true/g: the plant from volts to REPORTED amps is exactly
+// (R_stored + s*L_stored). Their ratio (tau) and the loop's DC gain are already
+// right, and the PI gains were tuned in those same units. Dividing R_eff, L or
+// the gains by i_scale would DOUBLE-count g and detune a loop that is correct.
+//
+// g leaks in exactly one place: the torque command. Real torque is Kt * I_true
+// = Kt * I_reported / g, and Kt itself is clean (Ke is fit from voltage and
+// speed, so it is independent of current-sense gain -- which is why the +0.38%
+// Kt-vs-KV agreement confirms the VOLTAGE scale and says nothing about this).
+// To actually deliver tau you must therefore ask for g*tau/Kt reported-amps:
+//
+//     I_command [reported A] = tau_desired / calKtCmd()
+//
+// i_scale = 1.0 makes this identical to calKt(), so it is inert until M2 runs.
+static inline float calKtCmd() {
+  return (CAL.i_scale > 0.0f) ? (calKt() / CAL.i_scale) : calKt();
+}
+
 // Print at boot so wrong-firmware-on-wrong-board is visible in ONE GLANCE
 // instead of inferred later from bad behaviour. The board must carry the same
 // physical label as CAL.id.
@@ -234,7 +259,16 @@ static inline void printJointCal(Print& out) {
   // Board scales. Both are pure multipliers on numbers the torque path uses, and
   // both are silent when wrong, so they get printed rather than assumed.
   out.print(F("  vbus_scale=")); out.print(CAL.vbus_scale, 6);
-  out.print(F(" i_scale=")); out.println(CAL.i_scale, 4);
+  out.print(F(" i_scale=")); out.print(CAL.i_scale, 4);
+  // Kt_cmd is what a torque command must divide by. It differs from Kt ONLY
+  // once M2 has produced an i_scale, and the difference IS the torque error
+  // you would otherwise ship silently -- so it is printed, not hidden.
+  out.print(F(" Kt_cmd=")); out.print(calKtCmd(), 6);
+  if (CAL.i_scale != 1.0f) {
+    out.print(F(" (torque cmds corrected by "));
+    out.print(100.0f*(1.0f/CAL.i_scale - 1.0f), 2); out.print(F("%)"));
+  }
+  out.println();
 
   // Drag is stored as POSITIVE magnitudes per direction; the consumer applies
   // sign(omega). Printed per direction because the asymmetry is the finding.

@@ -4,4 +4,6 @@
 .vscode/launch.json
 .vscode/ipch
 
+docs*
+
 *project_context.md*

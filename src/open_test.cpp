@@ -83,6 +83,7 @@
 //   logger: l=fast capture  L=slow capture  k=kick-step  j=zero-step
 //           d=dump CSV      a=stats (mean of last capture)
 //   autocalib: Y=menu/status  1..6=phases  7=report  0=reset  V=verify stored ZEA
+//   manual:    N=M2 current-sense ladder (needs a meter)  B/b=M4 breakaway +/-
 //           q=toggle telemetry interval 300 <-> 3000 ms
 // Boots DISABLED. 20 s auto-stop. 150 rad/s overspeed cutoff. Torque modes arm at 0.
 //
@@ -109,6 +110,21 @@
 //   mode transitions, every gain, the Vbus block, the logger, all print formats
 //   except the additions in item 7.
 // ============================================================================
+
+// ---------------------------------------------------------------------------
+// BUILD GUARD -- WRONG-HARDWARE BINARY
+// ---------------------------------------------------------------------------
+// platformio.ini's [env:A1] defines ENCODER_ABZ because A1 is the ORIGINAL
+// quadrature assembly. This source is the MT6816 4-wire SPI build. Without this
+// guard the pairing produced a binary that flashes, boots, prints an entirely
+// plausible JOINT/CFG banner, and then reads garbage angles -- the exact class
+// of silent wrong-hardware failure the failure catalogue exists to prevent. A
+// comment was not enough; make it fail at BUILD time instead of on the bench.
+#ifdef ENCODER_ABZ
+  #error "This source is the MT6816 4-wire SPI build; [env:A1] is ABZ/TIM4 hardware. \
+It would boot, print a valid-looking banner and read garbage. Restore the ABZ \
+sources on a branch and build there -- do not build this environment."
+#endif
 
 HardwareSerial SerialUART(PB4, PB3);
 
@@ -283,8 +299,16 @@ MT6816SPI encoder = MT6816SPI();           // ENC_BITS-bit absolute, ENC_CPR cou
 // which is A1's number, not this joint's -- R_eff is per-unit, see joint_cal.h.)
 const float VOLT_LIMIT      = 2.0f;
 // The SVPWM modulation reference handed to driver.voltage_limit -- see the long
-// note at the assignment in setup(). It bounds what the inverter can synthesise
-// (rail/sqrt(3) = 3.46 V), so it must stay comfortably above VOLT_LIMIT.
+// note at the assignment in setup(). It sets the HARD phase-voltage ceiling at
+// rail/sqrt(3) = 3.46 V, which is 28% of a 12.46 V bus.
+//
+// *** THIS IS A SPEED CEILING YOU WILL HIT. *** Required Uq at 270 rad/s is
+// Ke*w + R*Iq = 4.79 V unloaded and ~7 V at 10 A, against 3.46 V available.
+// The rig tops out near 190 rad/s unloaded and well below that under load.
+// Nothing measured so far was clipped -- the highest Uq ever commanded is 2.60
+// (AC_W_VLIMIT) and the highest reached is 2.00 -- so every constant in the
+// J01 row stands. But this must be raised before any high-speed work.
+// See README section 8.3 for the promotion condition and what a change costs.
 const float DRIVER_VOLT_LIMIT = 6.0f;
 const float VEL_MAX         = 20.0f;
 const float OVERSPEED_RADS  = 150.0f;   // torque mode has NO built-in speed limit
@@ -647,6 +671,7 @@ void printHelp() {
   SerialUART.println(F("--- f:initFOC(stored)  F:force align  e:encoder self-test  q:print interval ---"));
   SerialUART.println(F("--- logger: l=fast L=slow k=kick j=zero-kick d=dump a=stats ---"));
   SerialUART.println(F("--- V:verify stored ZEA | Y:autocalib menu  1..6:phases  7:report  0:reset ---"));
+  SerialUART.println(F("--- manual: N=M2 bus-power ladder  B/b=M4 breakaway ramp +/- ---"));
 }
 
 void startMotor() {
@@ -762,6 +787,12 @@ void handleSerial() {
       case 'd': case 'D': logDump(); break;
       case 'a': case 'A': logStats(); break;            // mean of last capture
       case 'Y': case 'y': acStatus();   break;         // status / menu
+      // Manual-assist, NOT part of the 1..7 chain. N / B / b chosen because
+      // 'F' is force-align and 'G' is go -- binding either would have shadowed
+      // an existing command silently.
+      case 'N': case 'n': acM2Assist(); break;         // M2 bus-power ladder
+      case 'B': acM4Breakaway(+1.0f);   break;         // M4 breakaway, forward
+      case 'b': acM4Breakaway(-1.0f);   break;         // M4 breakaway, reverse
       case '0': acPhase(0); break;                     // reset results
       case '1': acPhase(1); break;                     // LINK
       case '2': acPhase(2); break;                     // ALIGN
@@ -834,10 +865,26 @@ void setup() {
   // library default modulation_centered = 1) centres the modulation at
   // driver.voltage_limit/2. So this one number sets BOTH the achievable phase
   // voltage, rail/sqrt(3) = 3.46 V, AND the common-mode duty centre,
-  // 6.0/12.46 = 24% rather than 50%. Every measurement in the README was taken
-  // at 6.0; changing it moves the duty centre and therefore the dead-time
-  // behaviour that U0 describes, which invalidates R_eff and U0. Do NOT "tidy"
-  // it up to V_bus.
+  // 6.0/12.46 = 24% rather than 50%.
+  //
+  // WHAT RAISING IT WOULD AND WOULD NOT INVALIDATE (an earlier note here said
+  // "it invalidates R_eff and U0" -- the R_eff half of that was WRONG):
+  //   R_eff, Ke  IMMUNE. Ua = Ta*driver_vl while Ta ~ Uout = Uq/driver_vl, so
+  //              the factor cancels: the DIFFERENTIAL phase voltage depends on
+  //              commanded Uq alone. The star point floats, so only the
+  //              differential drives current. Both were fit against commanded
+  //              Uq, so both survive unchanged.
+  //   U0         AFFECTED. It is the dead-time / body-diode intercept, and
+  //              moving the duty centre 24% -> 50% changes the regime it was
+  //              measured in. Re-run phase 3 (which re-checks R_eff too, and
+  //              so tests the cancellation argument above rather than assuming
+  //              it).
+  //   LOW-SIDE   AFFECTED, and this is the one to watch. LowsideCurrentSense
+  //   SENSING    samples while the low-side FETs conduct. At a 24% centre the
+  //              low side is on ~76% of the time -- a comfortable window. At a
+  //              50% centre with high modulation that window shrinks, which is
+  //              a known failure mode on this board family. Confirm phase 1 and
+  //              the phase-5 |I| ratio after any change.
   driver.voltage_limit = DRIVER_VOLT_LIMIT;
   driver.dead_zone     = DEAD_ZONE;
   // Assigned explicitly so the CFG banner prints a NUMBER. Left unset it stays

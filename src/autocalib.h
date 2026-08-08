@@ -170,7 +170,15 @@ const uint8_t  AC_L_MIN_PTS   = 6;        // was 8. 6 is the statistical floor f
 // REMAINING samples of that repeat sit at a per-repeat offset. Across 32 reps the
 // offset sweeps 0..62 us = one full loop period, so sample k covers
 // [60(k-1), 60(k-1)+62] us and the union is contiguous.
-const uint8_t  AC_L_DITHER_US = 2;        // x AC_L_REPS must be >= one loop period
+// AC_L_DITHER_US * AC_L_REPS must be >= ONE LOOP PERIOD, or the sweep leaves a
+// hole and the un-dithered grid shows through. It was 2: 2 x 32 = 64 us against
+// a 75 us loop period at 13.3 kHz -- an 11 us hole per period, which is exactly
+// why session 3's LSB `n` column still peaked every third bin (21, 15, 17, 15,
+// 16...). 3 x 32 = 96 us covers 13.3 kHz with margin and still covers 16.8 kHz.
+// Over-covering is harmless: the offsets simply spread over 1.3 loop periods
+// and bin occupancy evens out. J01's existing fit is unaffected (that data is
+// already taken and the tau it produced was verified offline); this is for J02+.
+const uint8_t  AC_L_DITHER_US = 3;
 const float    AC_L_RMS_FAIL  = 0.20f;
 // F4 -- TIME BINNING. Averaging by SAMPLE INDEX throws away the loop-phase jitter
 // that is actually useful. The step is triggered after a millis()-based wait, so
@@ -227,6 +235,11 @@ const float    AC_BW_HZ       = 400.0f;   // for the SUGGESTED gains only
 // stale flag from an earlier attempt cannot leak into a later report.
 enum AcV { AC_PASS = 0, AC_WARN = 1, AC_FAIL = 2 };
 static bool ac_abort;
+// Set ONLY by the keypress branch of acService(), alongside ac_abort. Every
+// phase 1-7 ignores it and behaves exactly as before. The M2 ladder uses it to
+// tell "operator pressed a key to advance" from "overcurrent/overspeed tripped",
+// which acService() previously collapsed into one flag.
+static bool ac_key;
 static const __FlashStringHelper* acVs(AcV v) {
   return (v == AC_PASS) ? F("PASS") : (v == AC_WARN) ? F("WARN") : F("FAIL");
 }
@@ -306,7 +319,7 @@ static Mode      acs_mode;   static float acs_target, acs_vlim, acs_pql, acs_pdl
 static float     acs_zea;    static Direction acs_dir;   static bool acs_foc;
 
 static void acEnter() {
-  ac_abort  = false;
+  ac_abort  = false;   ac_key = false;
   acs_mode  = mode;   acs_target = target;
   acs_vlim  = motor.voltage_limit;
   acs_pql   = motor.PID_current_q.limit;
@@ -405,6 +418,7 @@ static void acService() {
   if (SerialUART.available()) {
     while (SerialUART.available()) (void)SerialUART.read();
     ac_abort = true;
+    ac_key   = true;          // "a human did this", not "a guard tripped"
     SerialUART.println(F("\n  !! ABORT key pressed"));
   }
 }
@@ -450,6 +464,16 @@ static void acCoast() {
     if (SerialUART.available()) { while (SerialUART.available()) (void)SerialUART.read(); ac_abort = true; break; }
   }
   delay(250);
+}
+
+// The refusals acPhase() has always applied, factored out so the manual-assist
+// routines below cannot accidentally skip one.
+static bool acReady() {
+  if (running) { SerialUART.println(F("stop first (x)")); return false; }
+  if (!driver_ok || !cs_linked) {
+    SerialUART.println(F("refused: driver or current sense not ready")); return false;
+  }
+  return true;
 }
 
 static bool acNeed(uint8_t n) {
@@ -1412,6 +1436,191 @@ void acVerifyZea() {
 }
 
 // ===========================================================================
+// M2 ASSIST -- 'N'.  ABSOLUTE CURRENT-SENSE SCALE, bus-power ladder.
+//
+// WHAT IT DOES NOT DO: it does not compute anything. It holds the rotor still
+// at five known voltages, long enough for an EXTERNAL meter to settle, and
+// prints the current the firmware THINKS is flowing at each. You supply the
+// truth from the bus side. That asymmetry is the whole point -- no internal
+// check can see a current-sense gain error, because every internal cross-check
+// divides one wrongly-scaled current by another and gets the right answer.
+//
+// WHY THE BUS AND NOT A PHASE LEAD: at a locked rotor the phase currents are
+// DC, but how they split between the three phases depends on where the rotor
+// happened to stop, which is unknown. Bus power has no such ambiguity: nothing
+// moves, so every watt in comes out as heat, and the firmware claims that heat
+// is 1.5*I^2*R_eff. Compare its claim to the wall.
+//
+// WHY FIVE POINTS AND NOT TWO -- this SUPERSEDES the two-point difference:
+// differencing removes the CONSTANT losses (MCU, gate drive, LEDs) but NOT the
+// terms proportional to I. Switching loss (~0.15 W at 3.1 A) and dead-time
+// body-diode conduction (~1.5*U0*I ~ 0.05 W) both survive it, and together they
+// are ~5% of the differenced signal -- the same size as the gain error being
+// hunted. A two-point difference would report g ~ 0.95 on a PERFECTLY
+// calibrated board. Five points and a quadratic separate them:
+//
+//     P_bus = a + b*I + c*I^2      a = housekeeping, b = switching + dead time
+//     g     = 1.5 * R_eff / c      (fit OFFLINE -- see README section 20.1)
+//
+// DOWNWARD ladder, same reason as phase 3: the lock is established at the
+// strongest hold first, so cogging never gets to win. Thermal: 3.2 W at the top
+// point, hence the 20 s hard cap per point and the instruction to bracket the
+// whole run with phase 3 so R_eff drift is bounded rather than assumed away.
+// ===========================================================================
+const uint8_t  AC_M2_N          = 5;
+const float    AC_M2_V[AC_M2_N] = { 0.70f, 0.55f, 0.40f, 0.25f, 0.16f };
+const uint16_t AC_M2_MAX_MS     = 20000;   // hard cap per point -- thermal
+const uint16_t AC_M2_TICK_MS    = 2000;    // running-mean heartbeat
+
+static void acM2Assist() {
+  if (!acReady()) return;
+  // The self-lock itself does not depend on the alignment -- velocityOpenloop()
+  // applies voltage at a fixed ELECTRICAL angle and the rotor pulls into it.
+  // Phase 2 is required anyway so that I_reported here is directly comparable
+  // to the phase-3 sweep, which is the number the fit is normalised against.
+  if (!acNeed(2)) return;
+
+  SerialUART.println(F("[M2] BUS-POWER LADDER.  Rotor self-locks -- HANDS OFF THE SHAFT."));
+  SerialUART.println(F("     At each point: let the meter settle (~10 s), write down Vbus and"));
+  SerialUART.println(F("     Ibus next to the I_reported line, then press any key for the next."));
+  SerialUART.println(F("     Press 3 immediately BEFORE and AFTER this run -- cold and hot R_eff"));
+  SerialUART.println(F("     bracket the thermal drift instead of leaving it in the fit."));
+  acEnter();
+  mode = MODE_OPENLOOP;
+  motor.controller = MotionControlType::velocity_openloop;
+  target = 0.0f;                      // zero openloop velocity = FIXED field angle
+
+  for (uint8_t k = 0; k < AC_M2_N && !ac_abort; k++) {
+    motor.voltage_limit = AC_M2_V[k];
+    motor.enable(); running = true; run_started = millis();
+    if (k == 0) acRun(600);           // first point: let the rotor swing in and settle
+    uint16_t c0 = encoder.raw;
+
+    SerialUART.print(F("  point ")); SerialUART.print(k + 1);
+    SerialUART.print('/');           SerialUART.print(AC_M2_N);
+    SerialUART.print(F("   Uq=")); SerialUART.println(AC_M2_V[k], 3);
+
+    uint32_t t0 = millis(), tp = millis();
+    double acc = 0; uint32_t n = 0;
+    while ((millis() - t0) < AC_M2_MAX_MS && !ac_abort) {
+      acService();
+      // A key here means ADVANCE, not abort. acService() cannot tell the two
+      // apart on its own, which is what ac_key exists for.
+      if (ac_key) { ac_key = false; ac_abort = false; break; }
+      acc += ac_i_amp; n++;
+      if ((millis() - tp) > AC_M2_TICK_MS) {
+        tp = millis();
+        // Safe to print inside the loop ONLY because the rotor is locked: the
+        // print-block commutation freeze needs a MOVING rotor to do damage.
+        SerialUART.print(F("      I_reported = "));
+        SerialUART.print(n ? (float)(acc / n) : 0.0f, 4);
+        SerialUART.println(F(" A  (running mean)"));
+      }
+    }
+    int32_t moved = acCntDelta(c0, encoder.raw);
+    SerialUART.print(F("    >> M2,")); SerialUART.print(AC_M2_V[k], 3);
+    SerialUART.print(','); SerialUART.print(n ? (float)(acc / n) : 0.0f, 4);
+    SerialUART.print(F("   n=")); SerialUART.print(n);
+    SerialUART.print(F(" drift=")); SerialUART.print(moved);
+    SerialUART.println(F(" cnt   <- record Vbus and Ibus for THIS line"));
+    if (acAbs32(moved) > AC_R_STILL_CNT)
+      SerialUART.println(F("    !! rotor MOVED -- this point is invalid, redo it"));
+  }
+  acExit(true);
+  if (ac_abort) SerialUART.println(F("[M2] ABORTED by a guard, not by you -- discard the last point."));
+  SerialUART.println(F("[M2] done. Press 3 NOW for hot R_eff, then fit P_bus = a + b*I + c*I^2"));
+  SerialUART.println(F("     offline and take g = 1.5*R_mean/c. See README section 20.1."));
+}
+
+// ===========================================================================
+// M4 ASSIST -- 'B' forward / 'b' reverse.  BREAKAWAY (STATIC friction).
+//
+// The current at which a STATIONARY rotor first moves. This is NOT phase 5's
+// drag_c: that is friction while ALREADY MOVING (0.075 A on J01). Breakaway is
+// the threshold to GET moving, it is always higher, and it varies around the
+// revolution because cogging adds and subtracts. It is the term that decides
+// whether impedance control feels alive or dead near zero commanded force --
+// belt-on it was 46% of standing leg load on A1, five times every other loss
+// combined.
+//
+// Nothing turns at the start. The rotor is still; the current rises until it
+// is not; 0.5 rad/s is only the threshold that counts as "it moved". (An
+// earlier description said "ramp Iq through zero at +-0.5 rad/s", which read as
+// though something should already be turning. It should not.)
+//
+// THE RAMP RATE IS THE MEASUREMENT. 0.005 A / 150 ms = 0.033 A/s, so breakaway
+// at 0.15 A takes ~4.5 s. Too fast and you measure the ramp, not the friction,
+// which is why this is firmware-timed rather than typed by hand -- the elapsed
+// time is reported so that failure is visible instead of assumed away.
+// ===========================================================================
+const float    AC_M4_STEP_A    = 0.005f;   // A per step
+const uint16_t AC_M4_DWELL_MS  = 150;      // -> 0.033 A/s
+const float    AC_M4_MOVE_RADS = 0.5f;     // "it moved"
+const float    AC_M4_ABORT_A   = 0.60f;    // give up: something is rubbing
+
+static void acM4Breakaway(float sgn) {
+  if (!acReady()) return;
+  // FOC current, so the commutation angle must be right or the number is
+  // meaningless. Accepts EITHER path to a valid alignment: a stored ZEA
+  // installed by 'f'/'V', or a fresh phase 2. acNeed(2) would wrongly refuse
+  // the first and acNeed(1) would wrongly allow neither.
+  if (!foc_ready) {
+    SerialUART.println(F("refused: no valid alignment. Press 'f' or 'V' (stored ZEA), or run"));
+    SerialUART.println(F("         phase 2. This ramp is FOC current -- a wrong ZEA invalidates it."));
+    return;
+  }
+  SerialUART.print(F("[M4] BREAKAWAY ramp, direction "));
+  SerialUART.print(sgn > 0 ? F("+") : F("-"));
+  SerialUART.print(F("   belt OFF, pulley bare, leg NOT attached.  start raw="));
+  SerialUART.println(encoder.raw);
+  acEnter();
+  mode = MODE_TORQUE_CURRENT;                       // 'c' mode -- FOC current
+  motor.torque_controller = TorqueControlType::foc_current;
+  motor.controller        = MotionControlType::torque;
+  motor.PID_current_q.reset(); motor.PID_current_d.reset();
+  target = 0.0f;
+  uint16_t c0 = encoder.raw;
+  motor.enable(); running = true; run_started = millis();
+
+  uint32_t tramp = millis();
+  float i = 0.0f; bool moved = false;
+  while (i < AC_M4_ABORT_A && !ac_abort) {
+    i += AC_M4_STEP_A;
+    target = sgn * i;
+    uint32_t t0 = millis();
+    while ((millis() - t0) < AC_M4_DWELL_MS && !ac_abort) {
+      acService();
+      // shaft_velocity is the MEASURED value here (unlike openloop, where
+      // velocityOpenloop() overwrites it with the command), so this is real.
+      if (fabsf(motor.shaft_velocity) > AC_M4_MOVE_RADS) { moved = true; break; }
+    }
+    if (moved) break;
+  }
+  uint32_t el = millis() - tramp;
+  target = 0.0f;
+  int32_t travel = acCntDelta(c0, encoder.raw);
+  acExit(true);
+
+  if (ac_abort) { SerialUART.println(F("    aborted -- discard")); return; }
+  if (!moved) {
+    SerialUART.print(F("    NO MOTION up to ")); SerialUART.print(AC_M4_ABORT_A, 3);
+    SerialUART.println(F(" A -- something is rubbing. Check bearing preload and"));
+    SerialUART.println(F("    that the magnet is not skimming the sensor (gap 0.5-1.0 mm, NEVER zero)."));
+    return;
+  }
+  SerialUART.print(F("    >> M4,")); SerialUART.print(sgn > 0 ? '+' : '-');
+  SerialUART.print(','); SerialUART.print(i, 4);
+  SerialUART.print(','); SerialUART.print(c0);
+  SerialUART.print(F("   A at raw=")); SerialUART.print(c0);
+  SerialUART.print(F("  ramp=")); SerialUART.print(el/1000.0f, 1);
+  SerialUART.print(F("s travel=")); SerialUART.print(travel);
+  SerialUART.println(F(" cnt"));
+  if (el < 1000)  SerialUART.println(F("    !! broke away in under 1 s -- you are measuring the RAMP. Halve AC_M4_STEP_A."));
+  if (i > 0.40f)  SerialUART.println(F("    !! > 0.4 A belt-off is a FAULT, not a baseline. A1's 0.34-1.34 A was belt-ON."));
+  SerialUART.println(F("    Rotate the shaft ~40 deg by hand and repeat -- 5 positions per direction."));
+}
+
+// ===========================================================================
 // STATUS + DISPATCH
 // ===========================================================================
 static void acStatus() {
@@ -1429,14 +1638,16 @@ static void acStatus() {
     SerialUART.println();
   }
   SerialUART.println(F("  Shaft FREE, belt OFF. Any key aborts a running phase."));
+  SerialUART.println(F("  --- manual-assist, NOT part of the 1..7 chain ---"));
+  SerialUART.println(F("  N = M2 bus-power ladder (needs 2; bracket it with 3, and a METER)"));
+  SerialUART.println(F("  B / b = M4 breakaway ramp, + / - direction (needs a valid alignment)"));
   SerialUART.print(F("  stored: ZEA=")); SerialUART.print(ZEA_STORED, 4);
   SerialUART.print(F(" DIR=")); SerialUART.print(DIR_STORED);
   SerialUART.println(F("   ('V' verifies them against a fresh alignment)"));
 }
 
 void acPhase(uint8_t n) {
-  if (running) { SerialUART.println(F("stop first (x)")); return; }
-  if (!driver_ok || !cs_linked) { SerialUART.println(F("refused: driver or current sense not ready")); return; }
+  if (!acReady()) return;
   switch (n) {
     case 0:
       for (uint8_t i = 0; i < 8; i++) ac_done[i] = false;
