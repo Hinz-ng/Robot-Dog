@@ -9,7 +9,26 @@ Hardware, firmware contract, measured plant characteristics, and the failure mod
 
 ---
 
-## 0. Changelog — 2026-08-07 AUTOCALIB + per-joint storage
+## 0. Changelog — 2026-08-07 session 3 (AUTOCALIB rev2 re-run) + `JointCal` schema v2
+
+| § | Change |
+|---|---|
+| **8.1a** | **A2/J01 re-measured, all six phases PASS.** `R_eff` 0.22108 Ω, `Ke` 0.017750, **`L` 43.31 µH from an 18-point dithered fit** |
+| **8.1a** | **`L` = 44.43 / 44.8 / 45.1 µH RETIRED.** Those were 5- and 7-point fits on a *phase-locked* sample grid, biased **+4% in τ**. The F5 dither closed it; the new τ = 195.9 µs was reproduced by an independent offline refit to 195.92 µs |
+| **8.1a** | **`U0` does not reproduce, and the fitted SE says it does.** 0.00367 / 0.00559 / **0.01026** V across three sessions against a per-fit SE of ~0.0016 → the real uncertainty is **±0.003 V, ~2× the fit's own SE**. A "6.5σ PASS" on this parameter is overconfident |
+| **8.3** | **`U0` feedforward promotion condition REWRITTEN**: it is *"a board measures `U0` > 0.03 V"*, **not** *"the bus exceeds 15 V"*. On B-SPI-01 the 5S projection is 0.078 A ≈ 3% of standing leg load, not 12.9%. `dead_zone = 0.005` stays closed for this board |
+| **8.1** | **`T_delay` restated as the fleet ratio `T/T_loop = 0.961 ± 0.014`** (5 points, 2 assemblies, 2 loop rates). Loss at 270 rad/s is **0.95%**, not 3.6%. The angle-lag sweep is **closed, not pending** |
+| **10** | **`Ke`'s 0.57% session spread is the BUS, not the motor.** Ke ratio 0.99434 vs Vbus ratio 0.99521 → 0.09% residual. Widens the live-Vbus promotion condition to include cross-session constant comparison |
+| **21** | **`JointCal` schema v2.** `Kt` **removed** (derived by `calKt()`); `i_scale`, `breakaway_A` and a **4-field direction-split drag map** added |
+| **NEW** | **`src/fleet_config.h`** — pole pairs, encoder resolution, `Kt/Ke`, dq magnitude, PWM frequency, `dead_zone`, `T/T_loop`, gear ratio. Everything that is the same on all twelve joints, in one place |
+| 20.1 | **M2 method replaced**: locked-rotor **bus power balance**, not a series ammeter in a phase lead |
+| 1, 1a, 10, 16 | Retracted `R_eff` = 0.1977 Ω / "9.3% inter-assembly difference" / "cannot lose counts" purged from the places they still lived |
+
+**Superseded:** `L` = 44.43 / 44.8 / 45.1 µH; `T = 57.0 µs` as a portable number (it is `0.961 × T_loop`); `U0`'s per-fit SE as its real uncertainty; the `\|I\|`/`Iq` free-spin gate; `dead_zone` reopening on bus voltage.
+
+---
+
+## 0e. Changelog — 2026-08-07 AUTOCALIB + per-joint storage
 
 | § | Change |
 |---|---|
@@ -108,7 +127,7 @@ Superseded and deleted: the `L ≈ 26 µH` inference (circular — it was `Kp·R
 | **Bus voltage sense** | **PA0**, resistive divider | **0.008358 V/count** (12-bit). Measured 2-point, not from a datasheet: 11.30 V → 1351, 22.50 V → 2694. Voltage ratio 1.991 vs count ratio 1.994. Full scale **34.23 V**, 8.36 mV/count. **6S at 25.2 V = 74% of range → no divider change needed.** Seed-only — see §12. |
 | Reference driver | Genuine B-G431B-ESC1 | Acceptance test still not run. Has genuine onboard ST-Link. |
 | Encoder | **MT6816** (AMR) on XJX-135 breakout | *Not* MT6701 — chip marking is ground truth. **ABZ mode**, 1024 PPR ×4 = **4096 CPR** (0.088°). Possible angle latency — §8 deferred list. |
-| Encoder interface | **TIM4 hardware quadrature**, register-level (§5) | Zero interrupts, zero CPU, cannot lose counts. |
+| Encoder interface | **A1: TIM4 hardware quadrature** (§5) · **A2/J01: MT6816 4-wire SPI, bit-banged** | Zero interrupts, zero CPU. ~~cannot lose counts~~ — **RETRACTED, see §12:** TIM4 faithfully counts noise, and A1 lost ~60 counts under 8–11 A. Only the SPI path can *detect* corruption (parity). |
 | Magnet | N35 **D6 × 3 mm** diametric, jig-centred, CA-bonded | **CLOSED.** Permanent mount; pen mark intact across many sessions. **No ferromagnetic material in/behind the field path.** History in §12. |
 | Reduction | 9:1 GT2 belt, 12T alu pinion → 108T printed pulley | **6 mm belt is the force ceiling — moving to 10 mm.** See §17. |
 | Programmer | Clone ST-Link V2.1 | PlatformIO/OpenOCD ✓. **Never attempt ST FW upgrade — brick risk.** |
@@ -128,13 +147,15 @@ Superseded and deleted: the `L ≈ 26 µH` inference (circular — it was `Kp·R
 |---|---|---|
 | Encoder | ABZ → TIM4 quadrature, 4096 cnt/rev | **MT6816 4-wire SPI, 16384 cnt/rev** |
 | Status | **Open count-loss fault.** Preserved un-modified | **Accepted 2026-08-06.** All new work happens here |
-| `R_eff` | 0.218 Ω (5 determinations) | **0.1977 Ω** (2 points only — needs C1) |
-| `U0` | 0.028 V | **0.0493 V** (2 points only — needs C1) |
-| ZEA | session-relative, sd 5.68° elec | **stored 6.0485 rad**, sd 2.93°, reproducible |
+| `R_eff` | 0.218 Ω (5 determinations) | **0.22108 Ω** (9-pt fit, §8.1a) |
+| `U0` | 0.028 V | **0.01026 V** — but it does not reproduce, §8.1a |
+| ZEA | session-relative, sd 5.68° elec | **stored 6.0542 rad**, sd 3.32°, reproducible |
 | Direction | CCW | **CW** |
-| Armed loop | 13.5 kHz | **12.5 kHz** |
+| Armed loop | 13.5 kHz | **13.3 kHz** |
 
-**The two assemblies differ by −9.3% in `R_eff`.** Different motor, different board, different shunts. **Do not use an ORIGINAL constant on the SPARE or vice versa.** Every table below is labelled.
+**The assemblies differ by +1.8% in `R_eff` and +0.9% in `Ke`** — small. ~~−9.3%~~ is **retracted**: it came from a 2-point fit on the SPARE (0.1977 Ω), which is exactly determined and therefore has no residual to expose a bad point. §12.
+
+**What does *not* transfer at all is `zea` and `sensor_direction`** — completely different, and a wrong one either refuses to run or inverts torque. **Do not use an ORIGINAL constant on the SPARE or vice versa.** Every table below is labelled.
 
 ---
 
@@ -322,24 +343,30 @@ Phases agree between the two directions to within 9°, confirming the error is *
 
 ### 8.1a — ASSEMBLY A2 (= J01), the SPI reference actuator
 
-AUTOCALIB rev1, 2026-08-07, belt OFF. Multimeter Vbus 12.51 V vs firmware 12.52 → `VBUS_SCALE` valid on this board too.
+**AUTOCALIB rev2, session 3, 2026-08-07, belt OFF. VERDICT PASS, all six phases.** Firmware Vbus 12.46 V. **Multimeter reading not yet written in for this session** — see §11 step 2a; `R_eff`, `U0` and `Ke` all scale linearly with `vbus_scale` and this is the only external check on it.
 
 | Constant | Value | Quality | Verdict |
 |---|---|---|---|
-| `ZEA` | **6.0516 rad elec** | 7 alignments, sd 3.40° elec, SE 1.61° | PASS |
-| `sensor_direction` | **CW** | 7/7 agree | PASS |
-| **`R_eff`** | **0.22184 Ω** | 9 pts, rms **1.76 mV**, SE **0.54%**, 0 dropped | PASS |
-| `U0` | 0.00367 V | SE 0.00153, **2.4σ** | **NOT DETERMINED** |
-| **`Ke`** | **0.017851 V/(rad/s)** | 10 pts both directions, rms 2.36 mV, SE **0.06%**, fit intercept 0.0006 | PASS |
-| `Kt` | 0.026777 N·m/A | = 1.5·Ke | PASS |
-| `L` | 44.4 µH (τ 200.3 µs) | index-averaged, **only 5 fit points** | PASS but thin |
-| Drag (belt OFF) | `Iq = 0.0785 + 0.000850·ω` | rms 4 mA, fwd/rev asymmetry +3.6% | — |
-| INL | **1.035° mech pk-pk** | 1/rev 0.372° @+120°, 2/rev 0.206° @+10° | PASS |
-| ZEA residual | +0.12° elec | independent check via parity even-part | PASS |
+| `zea` | **6.0542 rad elec** | 7 alignments, sd 3.32° elec, SE **1.57°** (78% of the 2.0° budget) | PASS |
+| `dir` | **CW** | 7/7 agree | PASS |
+| **`R_eff`** | **0.22108 Ω** | 9 pts, rms **1.84 mV**, SE **0.57%**, 0 dropped. 3-session spread 0.6% | PASS |
+| `U0` | **0.01026 V** | SE 0.0016, 6.5σ **in this fit** — but see below | **PASS, overconfident** |
+| **`Ke`** | **0.017750 V/(rad/s)** | 10 pts both directions, SE **0.05%**, intercept 0.8 mV | PASS |
+| `Kt` | 0.026626 N·m/A | **DERIVED** = 1.5·Ke, not stored. vs KV360 → 0.026526, **+0.38%** | PASS |
+| **`L`** | **43.31 µH** (τ **195.9 µs**) | **18 fit points**, dithered grid, t_d 80 µs | PASS |
+| Drag (belt OFF) | fwd `0.0750 + 9.33e-4·ω` · rev `0.0816 + 7.27e-4·ω` | **28% viscous asymmetry, reproducible** | — |
+| `\|I\|`/`Iq` | 1.245 – 1.313 | gross-sanity band 1.15–1.40 | PASS |
+| `T/T_loop` | 0.974 / 0.945 | T = 73.0 / 70.8 µs at f_loop 13347. Estimates agree to 3.1% | PASS |
+| INL | **1.029° mech pk-pk** | 1/rev 0.369°, 2/rev 0.204° mech | PASS |
+| ZEA residual | +0.467° elec | independent check via parity even-part | PASS |
 
-**`U0` is not determined and that is the expected outcome, not a fault.** The intercept has been the ill-conditioned parameter of this fit every single time; 9 points spanning 0.35–2.07 A is a short lever arm for it. Do not build anything that relies on this value.
+**`L` = 43.31 µH SUPERSEDES 44.43 / 44.8 / 45.1 µH.** Those came from 5- and 7-point fits on a sample grid that was *phase-locked to the control loop*, not randomly scattered as assumed: `acService()` **is** the loop, so samples landed at step + {0, 60, 120…} µs and only every third 20 µs bin was ever visited. The earliest fitted sample therefore sat at a fixed sub-band time, which biases τ **high**. The F5 per-repeat dither fixed it — 18 fit points, τ = 195.9 µs, **reproduced by an independent offline refit at 195.92 µs** with t_d 79.7 vs 80 µs. The two sub-band bins at 50 and 70 µs sit at frac ≈ 0.000 and −0.001, which independently confirms the ~80 µs step-onset lag that `t_d` absorbs.
 
-**`L` = 44.4 µH is measured at 0.9 → 3.2 A**, i.e. the *incremental* inductance near the operating point. Partial saturation plus lamination eddy currents make it legitimately lower than a small-signal value, so the −33% versus A1's 59–74 µH is not necessarily an error. Re-run phase 4 after the F4 time-binning fix (~17 fit points instead of 5) before treating it as settled.
+Measured at 0.9 → 3.2 A, so this is the *incremental* inductance near the operating point; partial saturation and lamination eddy currents make it legitimately lower than a small-signal value.
+
+> **`U0` PASSES at 6.5σ and still does not reproduce.** Three sessions: 0.00367 / 0.00559 / **0.01026 V**, an RMS spread of 0.0033 V against a per-fit SE of ~0.0016. **The fit's SE understates the real uncertainty by ~2×.** `U0` is the intercept of a sweep spanning only 0.08–0.46 V; any mild curvature — current-sense gain nonlinearity, or a dead-time voltage that itself depends on current — redistributes between slope and intercept, and the two are strongly anti-correlated. Cross-check: at U = 0.460 the measured current went 2.0690 → 2.0439 between sessions, a 1.2% impedance rise consistent with a few °C of winding warming, and the fit absorbed part of that into the intercept. **Use ±0.003 V, not ±0.0016.**
+>
+> **It does not matter.** 0.01026 / 0.22108 = **0.046 A deadband** → 0.11 N at the foot. At 5S, ~0.017 V → 0.078 A → 0.18 N. See §8.3 for what this does to the `dead_zone` promotion condition.
 
 **The belt costs ~0.97 A of Coulomb friction** — A1 belt-on was 1.05 A, A2 belt-off is 0.079 A. That subtraction is only possible because the belt-off baseline was taken *before* the belt went on, and it cannot be recovered afterwards.
 
@@ -358,10 +385,10 @@ Everything here is bench-measured unless marked. **This table outranks any other
 | Deadband in current | **0.129 A** = U₀/R_eff | derived | **Below the 0.16 A sense noise floor — closed** |
 | **L** | **65 µH** (range 59–74) | Locked-rotor Uq step, 3 fit methods (302 / 270 / 340 µs) | Step amplitude matches `ΔUq/R` to 4% |
 | **τ_e** = L/R | **300 µs** | as above | |
-| Loop transport delay | **~80–100 µs** | Identified from two step responses at different `CUR_TF` | ≈ ½ PWM + ½ loop period |
+| ~~Loop transport delay ~80–100 µs~~ | **SUPERSEDED** by the `T_delay` row below | Identified from two step responses at different `CUR_TF` | ~~≈ ½ PWM + ½ loop period~~ — that model is 15–29% low |
 | PWM frequency | **25 kHz** (library default) | `pwm_frequency` reads `NOT_SET`; STM32 default | Not scope-verified |
 | Modulation | **SVPWM** | Boot banner + ammeter A/B | Ceiling `V_bus/√3` = 6.58 V at 3S |
-| **T_delay** | **≈ ONE FULL LOOP PERIOD** | 3 points across 2 loop rates: T/T_loop = 0.956 (16.77 kHz), 0.953 and 0.978 (12.91 kHz) | **Supersedes ½·T_pwm + ½·T_loop**, which predicts 49.8/58.7/58.7 µs against 57.0/73.8/75.8 measured — 15–29% low. The PWM period (40 µs) is *shorter* than the loop period, so the duty update lands inside one PWM cycle and the loop period dominates. **Loop rate buys transport delay one-for-one.** Not per-unit: scales with 1/f_loop |
+| **`T_delay`** | **`T/T_loop` = 0.961 ± 0.014** | **5 points, 2 assemblies, 2 loop rates:** 0.956 (16.77 kHz) · 0.953, 0.978 (12.91 kHz) · **0.945, 0.974 (13.35 kHz)** | **Supersedes ½·T_pwm + ½·T_loop** (15–29% low) **and any statement of T in microseconds.** The PWM period (40 µs) is *shorter* than the loop period, so the duty update lands inside one PWM cycle and the loop period dominates. **Loop rate buys transport delay one-for-one.** Not per-unit — it lives in `src/fleet_config.h` as `T_DELAY_PER_LOOP`, not in `JointCal` |
 | Loop rate | **13.5 kHz** TORQUE(I) armed, **15 kHz** TORQUE(V), **21 kHz** OPENLOOP-armed, **126 kHz** OPENLOOP disarmed | `dt_us` per sample, cross-checked against `lps` to 9% | Anomaly closed. The disarmed figure completes the set and confirms it was always armed-vs-disarmed loop content |
 | Telemetry print cost | **~950 µs** at 921600 (was 5700 µs; ~800 before `Vb`/`Vb_src` were added) | `pr_us` | 6× improvement. Float formatting dominates |
 | **Bus-sense scale** | **0.008358 V/count** | 2-point vs multimeter, back-predicts both to 0.07% | Full scale 34.23 V |
@@ -404,9 +431,9 @@ Everything here is bench-measured unless marked. **This table outranks any other
 | 1/rev source | 0.79 N | Belt-off capture during the rebuild |
 | Higher current-loop bandwidth | ~100 Hz available at best | Effectively closed — at 80% of the transport-delay ceiling |
 | Genuine-board acceptance run | — | Completes the EG2124A evidence table |
-| **Live Vbus sampling** | Bench: none. Robot: 3–7 V of sag | **RE-AFFIRMED DEFERRED 2026-08-07.** Promotion condition **revised** to whichever comes first of *(a)* bench currents routinely above ~10 A, or *(b)* the first multi-actuator bus. See the review below |
+| **Live Vbus sampling** | Bench: none. Robot: 3–7 V of sag | **STILL DEFERRED, condition WIDENED 2026-08-07 (session 3).** Whichever comes first of *(a)* bench currents routinely above ~10 A, *(b)* the first multi-actuator bus, or ***(c)* whenever constants are compared ACROSS SESSIONS** — `Ke`'s entire 0.57% session drift turned out to be the pack's state of charge (§10), so cross-session comparability of `R`, `U0` and `Ke` all hinge on the bus reading being right *during* the measurement |
 | **PB14 thermistor** | Was the blocker for hot/cold `R_eff` | **DEFERRED, and no longer blocking anything.** See the review below |
-| **U₀ feedforward** | 0.57 N at 11.3 V → **1.26 N (12.9%) at 25.2 V** | **When the bench bus exceeds ~15 V.** Deadband = U₀/R_eff scales with bus: 0.133 A at 3S (below the 0.16 A noise floor, hence closed) but 0.297 A at 6S (above it). **Fix is U₀ feedforward, NOT a smaller `dead_zone`** — the EG2124A hardware dead time sets the floor. Re-measure U₀ with a locked-rotor sweep at the new bus before implementing |
+| **U₀ feedforward** | A1: 1.26 N (12.9%) projected at 25.2 V. **B-SPI-01: 0.18 N (~3%) at 5S** | **CONDITION REWRITTEN 2026-08-07 (session 3): when a BOARD measures `U0` > 0.03 V.** It was *"when the bench bus exceeds ~15 V"*, which was built on A1's `U0` = 0.028 V and projected a 0.297 A deadband. **`U0` is per-board and B-SPI-01's is 3× smaller** (0.01026 V → 0.046 A now, 0.078 A at 21 V ≈ 3% of standing leg load, not 12.9%). Bus voltage alone does not decide this; the board's own dead-time offset does. **`dead_zone = 0.005` stays closed for B-SPI-01.** Fix remains U₀ feedforward, not a smaller `dead_zone` — the EG2124A hardware dead time sets the floor |
 
 ### Deferral review — live Vbus and the PB14 thermistor (2026-08-07)
 
@@ -424,9 +451,19 @@ What a thermistor would still buy is *continuous* monitoring — valuable on a r
 
 ---
 
-### ✅ ANGLE LAG — CLOSED 2026-08-06 (SPARE assembly, SPI)
+### ✅ ANGLE LAG — CLOSED 2026-08-06, re-confirmed 2026-08-07 (session 3)
 
-**`T = 57.0 ± 6.5 µs`.** Theory `0.5/f_pwm + 0.5/f_loop` at 25 kHz / 14,970 Hz gives 53.4 µs — **agreement 7%. No unaccounted delay exists.**
+**The transferable constant is `T/T_loop` = 0.961 ± 0.014**, i.e. the transport delay is **one control-loop period**. It lives in `src/fleet_config.h` as `T_DELAY_PER_LOOP`; it is *not* per-unit and does *not* belong in `JointCal`.
+
+| | Value |
+|---|---|
+| Session-3 measurement | **T = 73.0 µs** (2nd estimate 70.8) at f_loop 13,347 → T/T_loop **0.974 / 0.945**, agreeing to **3.1%** |
+| Five-point history | 0.956, 0.953, 0.978, 0.945, 0.974 → **mean 0.961, sd 0.014**, across **2 assemblies and 2 loop rates** |
+| **Torque loss at 270 rad/s** | **0.95%** (7 × 270 × 73 µs = 7.9° elec) |
+
+> **Retraction.** An earlier note carried *"preliminary T ≈ 143 µs, implying 40–60 µs unaccounted delay and 3.6% torque loss at 270 rad/s."* That came from a **forward-only incidental capture**, which structurally cannot separate the EVEN terms (ZEA residual, INL) from the ODD one (transport). Two-direction parity separation gives T = 0.96 × one loop period **with no unexplained excess**, and the loss is **0.95%, not 3.6% — a 3.8× overstatement.** The angle-lag sweep that was the next bench task **no longer needs to be run.**
+
+Historical detail, kept because the method is the reusable part: the first SPI determination was **`T = 57.0 ± 6.5 µs`** at f_loop 14,970. Theory `0.5/f_pwm + 0.5/f_loop` gives 53.4 µs — 7% agreement — but that model only *appears* to work at one loop rate and is 15–29% low across the set. Use the ratio.
 
 **Method — parity separation, which is what finally worked.** In voltage mode with `Ud` forced to 0, the measured angle error is `sin δ = A/Ke + B·ω/Ke`. Then:
 
@@ -544,8 +581,8 @@ Legged robots run 5–30 N/mm. **You have 2–8× margin.**
 
 | gain | value |
 |---|---|
-| `PID_velocity.P` | 0.45 V/(rad/s) |
-| `PID_velocity.I` | 2.0 |
+| `PID_velocity.P` | **0.2 A/(rad/s)** — was 0.45 V/(rad/s) in voltage mode |
+| `PID_velocity.I` | **1.5** — was 2.0 |
 | `PID_velocity.D` | **0** — never use D: quantised encoder + filtered velocity = noise amplifier |
 | `LPF_velocity.Tf` | 0.02 |
 
@@ -555,7 +592,7 @@ Legged robots run 5–30 N/mm. **You have 2–8× margin.**
 
 ### Per-unit calibration policy for 12 joints (set 2026-08-06)
 
-The two bench assemblies differ by **9.3% in `R_eff`**, so what must be measured per joint is now answered with data rather than assumed.
+~~The two bench assemblies differ by **9.3% in `R_eff`**~~ — **retracted, the real spread is +1.8%** (§1a). What must be measured per joint is still answered with data rather than assumed, but the answer changed: **`zea` and `dir` are the mandatory ones**, not `R_eff`.
 
 | Constant | Scope | Per-unit? | Cost of sharing |
 |---|---|---|---|
@@ -582,7 +619,10 @@ The two bench assemblies differ by **9.3% in `R_eff`**, so what must be measured
 Every power-up:
 
 1. Power on. Motor boots **DISABLED**, mode = OPENLOOP, `foc_ready = false`.
-2. **Read the `CFG` banner** — `modulation / dead_zone / pwm_Hz / Vbus`. A measurement is only comparable to others taken under the same four values.
+2. **Read the `CFG` banner** — `modulation / dead_zone / pwm_Hz / Vbus / v_align / Uq_max / Uq_ceil / Ilim / spi_nops`. A measurement is only comparable to others taken under the same values.
+   - `pwm_Hz` now prints **25000** rather than `-12345`: the frequency is assigned explicitly instead of being left at `NOT_SET`. Same hardware behaviour, honest banner.
+   - **`Uq_max` is what `move()` clamps `voltage.q` to** (`motor.voltage_limit`). **`Uq_ceil` is what the modulator can physically synthesise**, `min(driver.voltage_limit, V_bus)/√3` = 3.46 V here. If `Uq_max` ever exceeds `Uq_ceil` you have a limit that does not exist and an integrator that will wind up against it.
+   - **The boot line above it also prints `vbus_scale`, `i_scale`, both drag pairs and `breakaway_A`**, and warns if a *built* joint still carries `i_scale = 1.0` or `breakaway_A = 0`.
 2a. **Put the multimeter on the pack terminals and write the reading in the session header, next to the banner `Vbus`.** The seed is a per-boot scale factor on every voltage the firmware reports, and it drifts 1.3% boot to boot (11.28–11.43 V observed vs 11.26–11.30 V true). Recording it costs 30 s and lets any session be rescaled in post-processing. Observed worst case 0.53%, which propagates to 0.5% on `R_eff` — inside the existing scatter, so this is bookkeeping, not a blocker.
 3. Press **`f`** → confirm a *real* alignment (twitch visible, no `Skip offset calib`).
 4. `v` / `t` / `c` → `g`.
@@ -730,14 +770,16 @@ Meta-lessons: instrument-first beats hypothesis iteration; verify resolved versi
 - **Instrumentation** — burst logger v2 (per-sample `dt`, `a` stats, capture-condition recording), 921600 telemetry.
 
 - **MT6816 SPI migration (SPARE, 2026-08-06)** — bit-banged 4-wire mode 3, PB5=CSN / PB6=MOSI / PB7=MISO / PB8=SCK, HVPP→3V3, UART unmoved. 2000/2000 reads clean; 2 parity errors in ~600 k reads (0.0003%), each costing one stale cycle. Locked-rotor `ratio` = 1.224 at both 1 A and 2 A. Armed loop 12,490 Hz vs 12,384 predicted. **20 s at ±2.0 V / ±110 rad/s with no drift and no stall — the exact condition that stalled the ABZ rig twice.**
-- **✅ M1 angle lag — CLOSED.** `T = 57.0 µs`, matches theory to 7%, **0.58% torque loss at 270 rad/s. No compensation to be written.** §8.3.
+- **✅ M1 angle lag — CLOSED, and re-confirmed at a second loop rate.** `T/T_loop = 0.961 ± 0.014` over 5 points / 2 assemblies / 2 loop rates. **0.95% torque loss at 270 rad/s at 13.3 kHz. No compensation to be written, and the sweep does not need running.** §8.3.
 - **Sensor INL characterised** — 0.93° mech pk-pk, 1/rev dominant. §7.
 
-**Immediate next (2026-08-07)**
-0. ✅ **AUTOCALIB shipped and validated** — rev1 run complete on A2, rev2 (F1–F4, S2) compiled clean at 70.3% RAM. **Re-run all phases once on A2 to validate the fixes against a known answer** (~5 min), then it is fleet-ready.
-1. ✅ **C1 done by AUTOCALIB.** See §8.1a. `U0` NOT determined (expected); `L` needs the rev2 re-run.
-2. **M2 — absolute current-sense scale** (§20.1). Series ammeter, locked rotor. **This is the one unmeasured systematic that puts a common-mode error on `R_eff`, `Kt` and every force number**, and nothing in the firmware can detect it.
-3. **M4 — breakaway/stiction** (§20.2). The 46% transparency term.
+**Immediate next (2026-08-07, after session 3)**
+0. ✅ **AUTOCALIB shipped and validated.** rev2 re-run complete on A2/J01, **all six phases PASS** (§8.1a). The F5 dither fix is confirmed: 18 fit points, τ reproduced by an independent offline refit to 0.01%. **Fleet-ready.**
+0a. ✅ **`JointCal` schema v2 + `fleet_config.h`** — `Kt` derived, `i_scale` / `breakaway_A` / 4-field drag added, `vbus_scale` un-hardcoded (§21).
+0b. 🔴 **Write the multimeter Vbus into the §8.1a header** vs firmware 12.46. One minute, and it also tests the Ke-vs-bus-voltage explanation in §10.
+1. ✅ **C1 done by AUTOCALIB.** See §8.1a. `L` settled at 43.31 µH; `U0` passes but does not reproduce — use ±0.003 V.
+2. 🔴 **M2 — absolute current-sense scale** (§20.1). **Locked-rotor bus power balance**, not a series ammeter. **This is the last common-mode systematic**: it puts an undetectable error on `R_eff`, `L` and every force number, and `Kt` is *not* affected — `Ke` is fit from voltage and speed. Predicted ΔI_bus = 99.0 mA.
+3. 🔴 **M4 — breakaway/stiction** (§20.2) → `breakaway_A`. The 46% transparency term. Predicted 0.10–0.25 A belt-off.
 4. **BUILD THE 10 mm / 9:1 ACTUATOR.** Parts in hand. Set the magnet gap 0.5–1.0 mm and centre it (§20.2 M8).
 5. Belt-on drag (M5) → INL again (M7) → `J_total` (M6) → hot/cold R (M10) → force-per-amp (M14).
 6. **Then** the MIT impedance controller, with friction and `U0` feedforward designed in rather than bolted on.
@@ -763,7 +805,7 @@ Meta-lessons: instrument-first beats hypothesis iteration; verify resolved versi
 
 ## 16. Thermal Ground Rules
 
-- The binding constraint is **motor copper**: `P_cu ≈ 1.5·R_ph·I²` with R_ph ≈ 0.218 Ω **on the ORIGINAL assembly** (≈0.198 Ω on the SPARE — see §2). 1.5 A ≈ 0.7 W; 4.5 A ≈ 6.6 W; 8.7 A ≈ 25 W; 19 A ≈ 118 W.
+- The binding constraint is **motor copper**: `P_cu ≈ 1.5·R_ph·I²` with R_ph ≈ 0.218 Ω **on the ORIGINAL assembly** (**0.22108 Ω on the SPARE/J01** — the ~0.198 figure was the retracted 2-point fit, §1a). 1.5 A ≈ 0.7 W; 4.5 A ≈ 6.6 W; 8.7 A ≈ 25 W; 19 A ≈ 118 W.
 - Vendor 18 A/60 s assumes propeller airflow. At stall there is no airflow → derate hard; >5 A sustained stall is instrumented-only.
 - **Open-loop mode applies `voltage_limit` directly with no current limit.** At `VOLT_LIMIT = 2.0` that is 8.6 A / 25 W with no throttle. Keep open-loop runs short or drop the limit to 1.0 for them.
 - Switching ripple contributes real RMS heating even at zero average current.
@@ -905,14 +947,40 @@ AUTOCALIB (`Y`, phases 1–7) covers `ZEA`, `dir`, `R_eff`, `U0`, `Ke`, `Kt`, `L
 | # | What | How | Why AUTOCALIB can't |
 |---|---|---|---|
 | **M1** | **`VBUS_SCALE`** | Probe sketch, 2 points at clearly different pack voltages, multimeter at the board terminals. `scale = (V₂−V₁)/(c₂−c₁)`. Discard the intercept unless it exceeds meter precision | No internal voltage reference exists. **And every voltage-derived constant scales with it:** `R_measured = R_true·(V_assumed/V_true)`, same factor on `U0` and `Ke`. This is why the report demands a written-in multimeter reading |
-| **M2** | **Absolute current-sense scale** | Series ammeter, locked rotor, 1.0 and 2.0 A commanded in `c` mode | `\|I\|/Iq = 1.2247` is *internally* consistent whichever scale is wrong. A 5% gain error puts −5% on `R_eff` and +5% on `Kt` and nothing in the firmware notices. The `Kt` vs `60/(2π·KV)` check (0.26% on A1) is the only other absolute handle, and KV is a nameplate number |
+| **M2** | **Absolute current-sense scale** → `i_scale` | **Locked-rotor BUS POWER BALANCE** — see the box below. *Not* a series ammeter in a phase lead | `\|I\|/Iq = 1.2247` is *internally* consistent whichever scale is wrong, so no firmware check can see it. The `Kt` vs `60/(2π·KV)` agreement (**+0.38% on J01**) confirms the **voltage** scale only — `Ke` is fit from voltage and speed and is independent of current-sense gain |
 | M3 | Bus-cap and FET voltage ratings | Read the markings | Physical inspection |
+
+> #### M2 — how, and why not the obvious way
+>
+> **Do not put an ammeter in a phase lead.** At a locked rotor the phase currents are DC, but their relationship to `Iq` depends on the unknown rotor position, so the reading is not convertible. Use the **bus**, with the same open-loop self-lock as AUTOCALIB phase 3, so `R_meas` is directly comparable.
+>
+> At a locked rotor there is no mechanical output, no back-EMF and no rotating-field core loss, so in the amplitude-invariant convention `P_copper = 1.5·I²·R_eff`. **Two points, differenced**, cancels the current-independent gate-drive and quiescent losses.
+>
+> 1. Multimeter in **DC current**, in series with the **positive bus lead** between pack and board. Second reading for Vbus at the board terminals.
+> 2. Boot, press `1`, then `2` (alignment must be valid). Do **not** press `3`.
+> 3. Open-loop hold at the phase-3 top point, `U = 0.460 V`. Record `I_bus_hi` and the reported `I`.
+> 4. Drop to `U = 0.160 V`. Record `I_bus_lo` and the reported `I`.
+> 5. **20 s at each point** — bus current is a chopped waveform and cheap meters need time to settle.
+>
+> **Prediction, stated before the test** (J01: `I` = 2.0439 / 0.6760 A, `R_eff` = 0.22108 Ω, Vbus 12.46 V):
+> `ΔP = 1.5·0.22108·(2.0439² − 0.6760²) = 1.2338 W` → **ΔI_bus = 99.0 mA**, and `g = ΔP / (Vbus · ΔI_bus_measured)`.
+>
+> | ΔI_bus measured | `g` | Action |
+> |---|---|---|
+> | 97–101 mA | 0.98–1.02 | **Record `i_scale = 1.0`, change nothing.** ≤2% torque error, below the leg's other errors |
+> | 94–97 or 101–105 mA | 1.02–1.05 | Store the measured `i_scale`, do **not** apply it. Note the torque bias in the row comment |
+> | outside ±5% | >1.05 | **Fix the sense scale at source** (shunt value / amp gain), then **re-run phases 3 and 4** — `R_eff` and `L` both move by `1/g`. Phase 5 (`Ke`) is unaffected |
+> | <60 mA or >150 mA | — | Not a gain error. Wiring, meter range, or the rotor moved. Re-check before believing it |
+>
+> **Known weakness, so you do not over-trust it:** dead-time body-diode conduction adds a term roughly proportional to `\|I\|` rather than `I²`, worth about `1.5·U0·ΔI` ≈ 0.02 W = **1.7% of ΔP**. M2 resolves `g` to roughly **±2%, not better** — enough to catch a real gain error, not enough to chase one.
+>
+> **Why it matters:** firmware commanding torque sets `I_sensed = τ_des/Kt`, so `I_true = τ_des/(Kt·g)` and **`τ_actual = τ_des/g`**. A 5%-high current sense means **5% low torque, permanently, with nothing flagging it.**
 
 ### 20.2 Per ASSEMBLY, after every mechanical rebuild
 
 | # | What | How | Notes |
 |---|---|---|---|
-| **M4** | **Breakaway / stiction** | `c` mode, ramp `Iq` slowly through zero at ±0.5 rad/s, record where motion starts | A different regime with different failure modes; easy to get subtly wrong unattended. A1: 0.34–1.34 A. **This is the 46% transparency term — the single largest one** |
+| **M4** | **Breakaway / stiction** → `breakaway_A` | `c` mode, belt OFF, shaft free. Ramp `Iq` in **+0.005 A steps every 150 ms** from 0; record the `Iq` at which `\|ω\|` first exceeds **0.5 rad/s**. Then command 0. **Rotate the shaft ~40° by hand and repeat — five positions minimum** over one mechanical revolution, then all five in the negative direction. Record mean, min, max and the direction split | **Not the same quantity as AUTOCALIB phase 5's Coulomb intercept.** Phase 5 measures **dynamic** drag while already moving (0.0783 A on J01); breakaway is the **static** threshold, and it is position-dependent because cogging adds to it. **Predicted 0.10–0.25 A belt-off**, i.e. 1.3–3× the dynamic figure. A1's 0.34–1.34 A was belt-**on** and is not the comparison. **>0.4 A belt-off means something mechanical is wrong** — check bearing preload and that the magnet is not touching the sensor (M8). **This is the 46% transparency term.** ⚠ Confirm `V` passed first (a wrong ZEA makes it meaningless); ⚠ a ramp fast enough to break away in <1 s is measuring the ramp, not the friction; ⚠ **never do this with the leg attached** — gravity torque swamps it, position-dependently |
 | **M5** | **Belt-on drag map** | AUTOCALIB **phase 5 with the belt fitted**, then subtract the belt-off baseline | Phase 5 works belt-on; only the numbers change. Do the belt-off run *first* — the baseline cannot be recovered later |
 | **M6** | **`J_rotor` / `J_total`** | Known `Iq` step on a free rotor, `α = dω/dt` from raw `cnt`, subtract drag from M5. `τ = Kt·Iq = J·α` | Geometric, ~1% between units, so it is a fleet constant. Needs M5 first, which is why it is not in the routine |
 | **M7** | **INL after belt fitting** | AUTOCALIB phases 5+6 again | Belt tension changes the magnet's off-axis position (DISP) and therefore INL. A2 belt-off: 1.035° mech, **1/rev dominant** → eccentricity → reducible by better centring |
@@ -933,12 +1001,16 @@ AUTOCALIB (`Y`, phases 1–7) covers `ZEA`, `dir`, `R_eff`, `U0`, `Ke`, `Kt`, `L
 
 ```
 belt OFF, shaft free, magnet gap 0.5-1.0 mm and centred
-  1. M1  VBUS_SCALE            (probe sketch + multimeter)     once per board
-  2. AUTOCALIB  Y 1 2 3 4 5 6 7                                 ~70 s
-  3. paste the row into joint_cal.h, add serials + date          §21
-  4. reflash with -D JOINT_ID=n, press V to verify               §21
-  5. M2  absolute current scale (series ammeter, locked rotor)   once per board
-  6. M4  breakaway
+  1. M1  vbus_scale            (probe sketch + multimeter)      once per board
+  2. AUTOCALIB  Y 1 2 3 4 5 6 7                                  ~70 s
+       -> emits ONE pasteable JointCal row (zea dir R_eff U0 Ke L
+          + the 4 drag fields, fitted per direction). vbus_scale,
+          i_scale and breakaway_A are CARRIED from the flashed row,
+          never overwritten, so a re-run cannot lose a hand result.
+  3. paste the row into joint_cal.h, add serials + date           §21
+  4. reflash with -e J<nn>, press V to verify                     §21
+  5. M2  absolute current scale (bus power balance)  -> i_scale   once per board
+  6. M4  breakaway                                   -> breakaway_A
   --- fit the belt ---
   7. M5  belt-on drag,  M7  INL again
   8. M6  J_total,  M10 hot/cold R
@@ -968,13 +1040,39 @@ pio run -e A1  -t upload     # the original ABZ assembly, JOINT_ID=13
 
 Cost: one paste per joint. The routine formats the row so the paste is mechanical.
 
+### Schema v2 (2026-08-07) — what changed and why
+
+| Change | Reason |
+|---|---|
+| **`Kt` REMOVED** | It is `1.5·Ke` *by convention*, not by measurement. Two stored numbers that must agree, with nothing checking them, is a latent partial-edit bug. Derived by **`calKt()`**; `KT_PER_KE` lives in `fleet_config.h` |
+| **`i_scale` ADDED** | The absolute current-sense scale (M2) had **no home at all**. `1.0` = uncorrected. `R_eff` and `L` are both ∝ `1/i_scale`; `Ke` is **not** — so changing it invalidates phases 3–4 but not phase 5 |
+| **`breakaway_A` ADDED** | The single largest transparency term (M4) had no home either |
+| **`drag_coulomb`/`drag_viscous` → 4 fields** | `drag_c_fwd`/`_rev`, `drag_v_fwd`/`_rev`. The fwd/rev asymmetry is **real and reproducible (28% in viscous on J01)** and a single mean discarded it. Stored as **positive magnitudes**; the consumer applies `sign(ω)` |
+
+Do the schema edit **while only one row carries real data** — the cost scales with the number of built joints.
+
+### Where every varying quantity lives — three files, one rule each
+
+| File | Holds | Test |
+|---|---|---|
+| **`src/fleet_config.h`** | pole pairs, encoder bits/CPR, `Kt/Ke = 1.5`, `sqrt(3/2)`, PWM frequency, `dead_zone`, **`T/T_loop = 0.961`**, gear ratio | Identical on every correctly built joint |
+| **`src/joint_cal.h`** | `zea`, `dir`, `R_eff`, `U0`, `Ke`, `L`, `vbus_scale`, `i_scale`, drag ×4, `breakaway_A` | Measured on one assembly, valid only there |
+| **`src/open_test.cpp`** | control gains, `VOLT_LIMIT`, `CURR_LIMIT`, capture settings | Bench harness; the robot will not inherit them |
+
+> #### ⚠ `vbus_scale` is NOT a fleet constant and must never be hardcoded
+> It is a resistor divider — two parts at (probably) 1% tolerance, so **up to ~2% board to board** — and **`R_eff`, `U0` and `Ke` all scale linearly with it**, which puts that 2% straight onto every torque command. It reads identically in all 13 rows today only because it was measured once on `B-SPI-01` and copied into the placeholders, so **an unbuilt row will silently inherit the wrong board's divider. M1 is mandatory per board.**
+>
+> It was also a literal in `open_test.cpp`, which would have overridden whatever any row said. Fixed 2026-08-07: `open_test.cpp` now reads `CAL.vbus_scale`.
+
+Things that are **not** stored per joint, and why: `T/T_loop` (fleet, scales with `1/f_loop`) · `J_rotor` (geometric, ~1% spread — fleet) · current-loop gains (`R` and `Ke` spread only ~2% between assemblies; not worth per-joint gains) · the **INL 32-bin profile** (too large for the struct — it goes to `docs/cal/*.csv`, and the row comment carries pk-pk plus the 1/rev and 2/rev amplitudes) · **force-per-amp** (a *leg* property, not a joint one — M14).
+
 ### What belongs to what — why the serial columns exist
 
 | Scope | Constants | Invalidated by |
 |---|---|---|
-| **MOTOR only** | `Ke`, `Kt`, `L`, cogging | Rewinding, magnet replacement |
-| **BOARD only** | `vbus_scale`, `U0` | Board swap |
-| **THE PAIRING** | **`zea`**, **`dir`**, `R_eff`, INL, drag | **Any** motor↔board swap, or touching the magnet mount |
+| **MOTOR only** | `Ke`, `L`, cogging | Rewinding, magnet replacement |
+| **BOARD only** | `vbus_scale`, `i_scale`, `U0` | Board swap |
+| **THE PAIRING** | **`zea`**, **`dir`**, `R_eff`, INL, drag, `breakaway_A` | **Any** motor↔board swap, or touching the magnet mount |
 
 `zea` depends on how the magnet happened to be glued on. Swap a motor between boards and `zea`/`dir` are meaningless. The serial columns make that visible in the diff instead of silent in the hardware.
 

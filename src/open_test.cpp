@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <SimpleFOC.h>
-#include "joint_cal.h"
+#include "fleet_config.h"   // FLEET: pole pairs, encoder, dq convention, driver config
+#include "joint_cal.h"      // PER-UNIT: this assembly only, picked by -D JOINT_ID
 
 // ============================================================================
 // ACTUATOR BASELINE + FOC CURRENT MODE + MT6816 4-WIRE SPI (bit-banged)
@@ -81,6 +82,8 @@
 //           e=encoder self-test (SPI health, no motor current)
 //   logger: l=fast capture  L=slow capture  k=kick-step  j=zero-step
 //           d=dump CSV      a=stats (mean of last capture)
+//   autocalib: Y=menu/status  1..6=phases  7=report  0=reset  V=verify stored ZEA
+//           q=toggle telemetry interval 300 <-> 3000 ms
 // Boots DISABLED. 20 s auto-stop. 150 rad/s overspeed cutoff. Torque modes arm at 0.
 //
 // ---------------------------------------------------------------------------
@@ -177,7 +180,7 @@ public:
 
     last_ok_rad = 0.0f;
     (void)readAngleRaw();          // prime last_ok_rad and the error counters
-    last_ok_rad = raw * (_2PI / 16384.0f);
+    last_ok_rad = raw * ENC_RAD_PER_COUNT;
 
     this->Sensor::init();
   }
@@ -225,7 +228,7 @@ public:
   // SimpleFOC calls this every loopFOC(); must return 0..2PI.
   float getSensorAngle() override {
     if (!readAngleRaw()) return last_ok_rad;         // stale for ONE cycle, then recovers
-    float a = raw * (_2PI / 16384.0f);
+    float a = raw * ENC_RAD_PER_COUNT;
     if (SPI_JUMP_GUARD) {
       float d = a - last_ok_rad;
       while (d >  _PI) d -= _2PI;                    // wrap to +-PI
@@ -245,7 +248,7 @@ public:
   }
 
   // diagnostics
-  int32_t  rawCount()   { return (int32_t)raw; }     // 0..16383, one mech rev
+  int32_t  rawCount()   { return (int32_t)raw; }     // 0..ENC_CPR-1, one mech rev
   uint16_t raw        = 0;
   uint8_t  no_mag     = 0;
   uint8_t  over_speed = 0;
@@ -259,7 +262,7 @@ private:
 
 // ---------------------------------------------------------------------------
 
-BLDCMotor motor = BLDCMotor(7);
+BLDCMotor motor = BLDCMotor(MOTOR_POLE_PAIRS);
 BLDCDriver6PWM driver = BLDCDriver6PWM(
     A_PHASE_UH, A_PHASE_UL,
     A_PHASE_VH, A_PHASE_VL,
@@ -268,19 +271,39 @@ BLDCDriver6PWM driver = BLDCDriver6PWM(
 // Clone sense chain is gain-compensated -> genuine constants. Do not change.
 LowsideCurrentSense currentSense = LowsideCurrentSense(0.003f, -64.0f/7.0f, A_OP1_OUT, A_OP2_OUT, A_OP3_OUT);
 
-MT6816SPI encoder = MT6816SPI();           // 14-bit absolute, 16384 counts/rev
+MT6816SPI encoder = MT6816SPI();           // ENC_BITS-bit absolute, ENC_CPR counts/rev
 
 // ---- safety / tuning constants ----
-// Uq rails -> real current = VOLT_LIMIT / R_eff(0.218). At 2.0 V that is ~9.2 A / 18 W
-// for the ~1 s it takes to react: thermally trivial. Debounced sense guard is the backstop.
+// THIS SKETCH'S bench envelope. Not fleet (fleet_config.h) and not per-unit
+// (joint_cal.h) -- a test harness owns these and the robot will not inherit them.
+//
+// Uq rails -> real current = VOLT_LIMIT / CAL.R_eff. At 2.0 V into 0.221 ohm that
+// is ~9.0 A / 18 W for the ~1 s it takes to react: thermally trivial. The
+// debounced sense guard is the backstop. (The old comment said R_eff = 0.218,
+// which is A1's number, not this joint's -- R_eff is per-unit, see joint_cal.h.)
 const float VOLT_LIMIT      = 2.0f;
+// The SVPWM modulation reference handed to driver.voltage_limit -- see the long
+// note at the assignment in setup(). It bounds what the inverter can synthesise
+// (rail/sqrt(3) = 3.46 V), so it must stay comfortably above VOLT_LIMIT.
+const float DRIVER_VOLT_LIMIT = 6.0f;
 const float VEL_MAX         = 20.0f;
 const float OVERSPEED_RADS  = 150.0f;   // torque mode has NO built-in speed limit
 const float VEL_STEP        = 1.0f;
 const float TORQUE_STEP     = 0.01f;
-// Raised for the angle-lag sweep: TORQUE(V) at 130 rad/s needs Uq = 2.56 V.
-// Ceiling is 2.6 V, NOT 3.5 -- Uq = 3.5 settles at 183 rad/s, past the
-// 150 rad/s overspeed guard. current_limit does not bind in voltage mode (§12).
+// TORQUE(V) target ceiling. Raised to 2.6 for the angle-lag sweep (130 rad/s
+// needs Uq = 2.56 V); 3.5 was rejected because Uq = 3.5 settles at 183 rad/s,
+// past the 150 rad/s overspeed guard. current_limit does not bind in voltage
+// mode (section 12).
+//
+// READ THIS BEFORE USING IT: TORQUE_MAX only sets how far '+' can wind `target`.
+// What is actually DELIVERED is clamped by motor.voltage_limit = VOLT_LIMIT in
+// BLDCMotor::move() -- voltage.q = constrain(target, -voltage_limit, +voltage_limit).
+// With VOLT_LIMIT = 2.0 every target above 2.0 V delivers exactly 2.0 V, so the
+// top 0.6 V of this range is currently UNREACHABLE. That is deliberate today:
+// the angle-lag sweep this headroom existed for is CLOSED (see fleet_config.h,
+// T_DELAY_PER_LOOP), and AUTOCALIB phase 5 raises voltage_limit itself for the
+// one sweep that still needs 2.6 and restores it afterwards. If a future test
+// needs > 2.0 V delivered, raise VOLT_LIMIT -- raising this alone does nothing.
 const float TORQUE_MAX      = 2.6f;
 const unsigned long AUTO_STOP_MS = 20000;
 const unsigned long OVERSPEED_GRACE_MS = 300;   // ignore overspeed right after arming
@@ -289,21 +312,10 @@ const float CURR_STEP   = 0.1f;
 const float CURR_MAX    = 2.0f;
 const float CURR_LIMIT  = 2.0f;
 
-// DEAD ZONE -- FINAL VALUE, set by argument and confirmed by measurement.
-// dead_zone is a fraction of the PWM period, so its cost in lost command voltage
-// is dead_zone * V_bus regardless of switching frequency: 0.057 V at 3S, 0.093 V
-// at 5S. Referred to foot force at G = N/J = 87.7 that is ~1.0 N / ~1.6 N.
-// The EG2124A already has interlock AND internal dead time, so its own dead time
-// (a fixed ~200-300 ns = 0.005-0.0075 of a 40 us period) is comparable to or
-// larger than this software value -- i.e. 0.005 is probably being absorbed by a
-// floor set in hardware. Going to 0.000 would make shoot-through protection
-// depend entirely on an undocumented interlock propagation delay on a clone
-// board; going to 0.010 doubles the deadband for no extra protection.
-// On STM32 6-PWM this value is baked into the timer at driver.init() -- it is NOT
-// runtime-mutable, and the requested fraction is quantised. Ground truth is the
-// measured U0 intercept from the locked-rotor sweep, NOT this number.
-// Long-term fix for the deadband is U0 feedforward, not a smaller dead zone.
-const float DEAD_ZONE   = 0.005f;
+// DEAD ZONE, PWM FREQUENCY: moved to fleet_config.h. Both are properties of the
+// EG2124A/B-G431B-ESC1 board family, identical on all twelve joints, and both are
+// echoed in the CFG banner because a measurement is only comparable to others
+// taken under the same values.
 
 const float CURQ_P = 0.1f,  CURQ_I = 335.0f;
 const float CURD_P = 0.1f,  CURD_I = 335.0f;
@@ -370,10 +382,17 @@ const int   DIR_STORED = CAL.dir;
 //   6S at 25.2 V = 3015 counts = 74% of range -> NO PB10 / 48V_EN change needed.
 // Re-calibrate if PB10 (48V_EN) is ever driven: it switches the divider range.
 //
-// VBUS_SCALE = 0 disables this entire feature. Behaviour then is byte-identical
-// to the old hardcode, which makes rollback a one-character edit.
+// THE SCALE ITSELF IS PER-BOARD AND COMES FROM joint_cal.h. It used to be a
+// literal here, which made it look like a fleet constant. It is not: it is a
+// resistor divider, so ~2% board to board, and R_eff, U0 and Ke all scale
+// linearly with it -- that 2% would land straight on every torque command. A
+// literal here would also have silently overridden whatever a future row said.
+// M1 (multimeter, two bus voltages) is mandatory per board.
+//
+// vbus_scale = 0 in the row disables this entire feature. Behaviour then is
+// byte-identical to a hardcoded divisor, which keeps rollback a one-field edit.
 const uint32_t PIN_VBUS   = PA0;
-const float VBUS_SCALE    = 0.008358f;  // V per ADC count -- MEASURED 2026-__-__
+const float VBUS_SCALE    = CAL.vbus_scale;   // V per ADC count -- PER BOARD, M1
 // SEED-ONLY. Arduino analogRead() returns 0 on any pin of this ADC once
 // currentSense.init() has armed the injected-conversion group -- confirmed
 // 2026-__-__ by vraw=0 from an isolated call in the print block, while the
@@ -624,10 +643,10 @@ void encoderSelfTest() {
 }
 
 void printHelp() {
-  SerialUART.println(F("--- g:go x:stop +/-:target | o t c v modes | f:initFOC ---"));
+  SerialUART.println(F("--- g:go  x/s:stop  +/-:target | modes: o=open t=torque(V) c=torque(I) v=vel ---"));
+  SerialUART.println(F("--- f:initFOC(stored)  F:force align  e:encoder self-test  q:print interval ---"));
   SerialUART.println(F("--- logger: l=fast L=slow k=kick j=zero-kick d=dump a=stats ---"));
-  SerialUART.println(F("--- V:verify ZEA | Y:autocalib menu  1..7:phases  0:reset ---"));
-  SerialUART.println(F("--- f:initFOC(stored)  F:force align  e:encoder self-test ---"));
+  SerialUART.println(F("--- V:verify stored ZEA | Y:autocalib menu  1..6:phases  7:report  0:reset ---"));
 }
 
 void startMotor() {
@@ -810,8 +829,22 @@ void setup() {
     }
   }
   driver.voltage_power_supply = vbus_filt;
-  driver.voltage_limit = 6.0f;
-  driver.dead_zone = DEAD_ZONE;
+  // driver.voltage_limit is NOT a safety limit -- it is the SVPWM MODULATION
+  // REFERENCE. setPhaseVoltage() normalises Ud/Uq against it and (with the
+  // library default modulation_centered = 1) centres the modulation at
+  // driver.voltage_limit/2. So this one number sets BOTH the achievable phase
+  // voltage, rail/sqrt(3) = 3.46 V, AND the common-mode duty centre,
+  // 6.0/12.46 = 24% rather than 50%. Every measurement in the README was taken
+  // at 6.0; changing it moves the duty centre and therefore the dead-time
+  // behaviour that U0 describes, which invalidates R_eff and U0. Do NOT "tidy"
+  // it up to V_bus.
+  driver.voltage_limit = DRIVER_VOLT_LIMIT;
+  driver.dead_zone     = DEAD_ZONE;
+  // Assigned explicitly so the CFG banner prints a NUMBER. Left unset it stays
+  // at NOT_SET and the banner printed -12345 -- a sentinel that reads like data.
+  // The STM32 HAL substitutes exactly 25000 when unset, so this changes nothing
+  // but the banner. "A library default is a decision nobody made."
+  driver.pwm_frequency = (long)PWM_FREQ_HZ;
   driver_ok = driver.init();
   SerialUART.println(driver_ok ? F("driver OK") : F("driver FAILED"));
 
@@ -822,7 +855,8 @@ void setup() {
   encoder.init();                            // bit-banged: consults no pin map
   motor.linkSensor(&encoder);
   SerialUART.print(F("MT6816 raw=")); SerialUART.print(encoder.rawCount());
-  SerialUART.print(F(" / 16384  parity_err=")); SerialUART.print(encoder.spi_err);
+  SerialUART.print(F(" / ")); SerialUART.print(ENC_CPR);
+  SerialUART.print(F("  parity_err=")); SerialUART.print(encoder.spi_err);
   SerialUART.print(F(" no_mag=")); SerialUART.println(encoder.no_mag);
   if (encoder.spi_err) SerialUART.println(F("!! SPI parity errors at boot -- check CSN and HVPP->VDD"));
   if (encoder.no_mag)  SerialUART.println(F("!! No_Mag_Warning at boot -- magnet weak/far. Fix before running."));
@@ -878,6 +912,15 @@ void setup() {
   SerialUART.print(F(" pwm_Hz="));    SerialUART.print(driver.pwm_frequency);
   SerialUART.print(F(" Vbus="));      SerialUART.print(driver.voltage_power_supply, 2);
   SerialUART.print(F(" vok="));       SerialUART.print(vbus_valid ? 1 : 0);
+  // The limits that actually bind, echoed because "a limit that does not bind is
+  // not protection" and "a clamp in the wrong units is not a clamp". Uq_max is
+  // what motor.move() constrains voltage.q to; Uq_ceil is what the modulator can
+  // physically synthesise. Uq_max > Uq_ceil would be a limit that does not exist.
+  SerialUART.print(F(" Uq_max="));    SerialUART.print(motor.voltage_limit, 2);
+  SerialUART.print(F(" Uq_ceil="));   SerialUART.print(
+      ((DRIVER_VOLT_LIMIT < driver.voltage_power_supply)
+         ? DRIVER_VOLT_LIMIT : driver.voltage_power_supply) * 0.57735f, 2);
+  SerialUART.print(F(" Ilim="));      SerialUART.print(motor.current_limit, 2);
   // Echo every load-bearing default: a library default is a decision nobody made.
   SerialUART.print(F(" v_align="));   SerialUART.print(motor.voltage_sensor_align, 2);
   SerialUART.print(F(" (I_align="));  SerialUART.print(motor.voltage_sensor_align / CAL.R_eff, 1);
@@ -924,12 +967,19 @@ void loop() {
         vbus_filt += a * (v - vbus_filt);
         vbus_valid = true;
         driver.voltage_power_supply = vbus_filt;
-        // SVPWM can only synthesise V_bus/sqrt(3) = 0.57735*V_bus. A PI output
+        // SVPWM can only synthesise rail/sqrt(3) = 0.57735*rail. A PI output
         // limit ABOVE that is not a limit: the integrator winds up against a
         // ceiling that does not exist, then dumps the windup when the bus
-        // recovers. Inert on the 3S bench (6.52 V ceiling vs VOLT_LIMIT 2.0);
-        // this exists for the robot.
-        float ceiling = vbus_filt * 0.57735f;
+        // recovers.
+        // THE RAIL IS NOT THE BUS. setPhaseVoltage() normalises against
+        // driver.voltage_limit and setPwm() clamps each phase to it, so the
+        // binding rail is min(driver.voltage_limit, V_bus). This used to read
+        // vbus_filt * 0.57735, which at DRIVER_VOLT_LIMIT = 6.0 on a 12.5 V bus
+        // claims 7.19 V against a real 3.46 V -- a 2x-optimistic "limit", i.e.
+        // exactly the failure this block exists to prevent. Dormant while
+        // VBUS_LIVE = false; fixed now rather than the day it is switched on.
+        float rail    = (DRIVER_VOLT_LIMIT < vbus_filt) ? DRIVER_VOLT_LIMIT : vbus_filt;
+        float ceiling = rail * 0.57735f;
         float lim = (VOLT_LIMIT < ceiling) ? VOLT_LIMIT : ceiling;
         motor.voltage_limit       = lim;
         motor.PID_current_q.limit = lim;
@@ -965,7 +1015,7 @@ void loop() {
     motor.current.q = 0.0f; motor.current.d = 0.0f;
   }
 
-  // SENSE-MISMATCH GUARD: raw (unsynchronised) |I| must stay near 1.225*|Iq|.
+  // SENSE-MISMATCH GUARD: raw (unsynchronised) |I| must stay near AMP_INV_MAG*|Iq|.
   // A large divergence means the dq feedback has collapsed and the loop is winding
   // to the voltage rail -- the 8-12 A runaway. Checked every ~2 ms.
   // The raw read is ONE unsynchronised instant of a PWM-rippling current, so it spikes
@@ -978,7 +1028,7 @@ void loop() {
     guard_div = 0;
     PhaseCurrent_s gc = currentSense.getPhaseCurrents();
     float raw = sqrtf(gc.a*gc.a + gc.b*gc.b + gc.c*gc.c);
-    float expect = 1.225f * fabsf(motor.current.q) + 0.6f;
+    float expect = AMP_INV_MAG * fabsf(motor.current.q) + 0.6f;
     if (raw > expect * 3.0f && raw > 3.0f && fabsf(motor.voltage.q) < VOLT_LIMIT * 0.9f) {
       if (++guard_hits >= GUARD_HITS) {
         guard_hits = 0;
@@ -991,6 +1041,11 @@ void loop() {
 
   if (running) {
     unsigned long run_ms = millis() - run_started;
+    // WHO WRITES shaft_velocity: motor.move() only. In the closed-loop modes it
+    // is the MEASURED speed and this guard is real. In OPENLOOP,
+    // velocityOpenloop() overwrites it with the COMMANDED value, which `target`
+    // already caps at VEL_MAX = 20 -- so this guard cannot trip in openloop and
+    // is not protection there. acService() carries the same caveat.
     if (run_ms > OVERSPEED_GRACE_MS && fabsf(motor.shaft_velocity) > OVERSPEED_RADS)
                                                           stopMotor("OVERSPEED");
     else if (run_ms > AUTO_STOP_MS)                        stopMotor("auto 20s");

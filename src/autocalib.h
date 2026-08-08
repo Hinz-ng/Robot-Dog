@@ -16,8 +16,8 @@
 //     case '6': acPhase(6); break;   // T/INL   computation only, no motor
 //     case '7': acPhase(7); break;   // REPORT  print the pasteable block
 //     case '0': acPhase(0); break;   // RESET   discard all results
-//     case 'V': case 'v': acVerifyZea(); break;  // NOTE: 'v' was VELOCITY mode --
-//               //  pick ONE. Suggested: keep 'v' for velocity, use 'V' only here.
+//     case 'V': acVerifyZea(); break;   // RESOLVED: lower-case 'v' stays VELOCITY
+//                                       // mode, upper-case 'V' verifies ZEA.
 //
 // ('A' is already logStats, so 'Y' is used for status.)
 //
@@ -45,14 +45,21 @@
 //
 // ---------------------------------------------------------------------------
 // WHAT IT PRODUCES
-//   MANDATORY per joint : ZEA_STORED, DIR_STORED
-//   PER-UNIT            : R_EFF, U0_V, KE, KT, drag map
+//   MANDATORY per joint : zea, dir
+//   PER-UNIT            : R_eff, U0, Ke, L, drag (Coulomb + viscous, PER DIRECTION)
 //   DIAGNOSTIC          : T_delay, INL profile, |I| ratio, SPI link health
+//   CARRIED, not measured: vbus_scale (M1), i_scale (M2), breakaway_A (M4) -- the
+//                         report re-emits whatever the flashed row holds so a
+//                         re-run never silently discards a hand measurement
 //   SUGGESTION ONLY     : current-loop gains (printed, NEVER applied)
+//   NOT EMITTED         : Kt. It is 1.5*Ke by convention and is derived by
+//                         calKt(); storing it would be a second number that must
+//                         agree with the first, with nothing checking them.
 //
 // EXCLUDED ON PURPOSE -- each would be WORSE automated than done by hand:
 //   J_rotor       geometric, ~1% between units, and needs friction subtraction
-//   breakaway     needs slow +-0.5 rad/s ramps through zero; different regime
+//   breakaway     needs slow +-0.5 rad/s ramps through zero; different regime.
+//                 Has a HOME though -- JointCal.breakaway_A, filled by hand (M4)
 //   hot/cold R    needs a thermal soak, minutes not seconds
 //   cogging map   not used by any planned controller
 //   force-per-amp needs a load cell and the assembled leg
@@ -280,7 +287,13 @@ static float    ac_bin_w [2][AC_BIN_SPEEDS];
 static float ac_zea, ac_zea_sd, ac_zea_se;   static int8_t ac_dir;
 static float ac_R, ac_U0, ac_R_se, ac_U0_se, ac_R_rms, ac_U0_sig;
 static float ac_L, ac_tau, ac_L_rms, ac_L_td;
-static float ac_Ke, ac_Kt, ac_Ke_se, ac_Ke_rms, ac_Ke_c;
+static float ac_Ke, ac_Ke_se, ac_Ke_rms, ac_Ke_c;
+// Drag, fitted PER DIRECTION: Iq = drag_c + drag_v*|omega|, magnitudes only.
+// index 0 = forward (omega > 0), 1 = reverse. A single mean pair discarded a
+// reproducible 28% fwd/rev asymmetry, which is why JointCal now carries four.
+static float ac_drag_c[2], ac_drag_v[2], ac_drag_rms[2];
+static uint8_t ac_drag_n[2];
+static AcV   ac_v_drag;
 static float ac_T[AC_BIN_SPEEDS], ac_T_floop[AC_BIN_SPEEDS], ac_inl_pp, ac_zea_resid;
 static float ac_ratio_lo, ac_ratio_hi;
 static float ac_link_us; static uint32_t ac_link_err;
@@ -342,7 +355,7 @@ static uint32_t ac_loops = 0;         // control-loop iterations, for the f_loop
 static inline float acPhaseAmp() {
   PhaseCurrent_s c = currentSense.getPhaseCurrents();
   // sqrt(ia^2+ib^2+ic^2) = 1.2247 * amplitude in the amplitude-invariant frame
-  return sqrtf(c.a*c.a + c.b*c.b + c.c*c.c) * 0.816497f;
+  return sqrtf(c.a*c.a + c.b*c.b + c.c*c.c) * AMP_INV_MAG_INV;
 }
 
 // F3 -- squared magnitude, for the ratio gate. Returned SQUARED so it can be
@@ -416,11 +429,11 @@ static void acRampTarget(float to) {
 // `long`, so labs() is not safe either. Explicit helper instead.
 static inline uint32_t acAbs32(int32_t v) { return (uint32_t)((v < 0) ? -v : v); }
 
-// Signed count difference with the 16384 wrap handled.
+// Signed count difference with the ENC_CPR wrap handled.
 static int32_t acCntDelta(uint16_t a, uint16_t b) {
   int32_t d = (int32_t)b - (int32_t)a;
-  if (d >  8192) d -= 16384;
-  if (d < -8192) d += 16384;
+  if (d >  (int32_t)(ENC_CPR/2)) d -= (int32_t)ENC_CPR;
+  if (d < -(int32_t)(ENC_CPR/2)) d += (int32_t)ENC_CPR;
   return d;
 }
 
@@ -583,7 +596,17 @@ static void acP3() {
     while ((millis() - t0) < AC_R_MEAS_MS && !ac_abort) {
       acService(); acc += ac_i_amp; accv += motor.voltage.q; n++;
     }
-    if (n < 100) continue;
+    if (n < 100) {
+      // Not a drift drop -- the measurement window produced too few samples
+      // (an abort, or a loop rate collapse). Counted separately so that
+      // ac_rn + ac_rdrop always reconciles against AC_R_N; a silently vanishing
+      // point used to make the tally line lie.
+      ac_rdrop++;
+      SerialUART.print(F("    DROP U=")); SerialUART.print(AC_R_V[k], 3);
+      SerialUART.print(F(" -- only ")); SerialUART.print(n);
+      SerialUART.println(F(" samples in the window"));
+      continue;
+    }
     int32_t moved = acCntDelta(c0, encoder.raw);
     if (acAbs32(moved) > AC_R_STILL_CNT) {
       ac_rdrop++;
@@ -785,6 +808,13 @@ static void acP5() {
       }
     }
   ac_wn = 0; ac_ratio_lo = 99.0f; ac_ratio_hi = 0.0f;
+  // ac_floop is indexed by (direction, speed index), NOT by ac_wn, so a point
+  // skipped for n < 500 leaves its slot untouched. Without this clear that slot
+  // would still hold the PREVIOUS run's loop rate and phase 6 would divide a
+  // fresh T by a stale f_loop. Statics are zeroed at boot, so only a re-run was
+  // ever exposed -- which is exactly what a re-run is for.
+  for (uint8_t i = 0; i < 2*AC_W_N; i++) ac_floop[i] = 0.0f;
+  for (uint8_t d = 0; d < 2; d++) { ac_drag_c[d] = ac_drag_v[d] = ac_drag_rms[d] = 0.0f; ac_drag_n[d] = 0; }
 
   mode = MODE_TORQUE;
   motor.torque_controller = TorqueControlType::voltage;
@@ -832,7 +862,7 @@ static void acP5() {
           aP2 += acPhaseMag2(); aD2 += (double)iq*iq + (double)id*id; nr++;
         }
         if (slot >= 0) {
-          uint8_t b = (uint8_t)(((uint32_t)encoder.raw * AC_BINS) >> 14);   // /16384
+          uint8_t b = (uint8_t)(((uint32_t)encoder.raw * AC_BINS) >> ENC_BITS);  // /ENC_CPR
           if (b < AC_BINS) {
             ac_bin_id[d][slot][b] += id;
             ac_bin_iq[d][slot][b] += iq;
@@ -845,7 +875,7 @@ static void acP5() {
       if (tl_ms > 0) ac_floop[ (d*AC_W_N) + k ] = (float)ac_loops * 1000.0f / (float)tl_ms;
       float mIq = (float)(aIq/n), mId = (float)(aId/n), mV = (float)(aV/n);
       // one sqrt, at the end, on the RATIO of means-of-squares
-      float mR = (nr > 50 && aD2 > 1e-9) ? sqrtf((float)(aP2 / (1.5 * aD2))) * 1.2247f : 0.0f;
+      float mR = (nr > 50 && aD2 > 1e-9) ? sqrtf((float)(aP2 / (1.5 * aD2))) * AMP_INV_MAG : 0.0f;
       if (mR > 0.5f) { if (mR < ac_ratio_lo) ac_ratio_lo = mR; if (mR > ac_ratio_hi) ac_ratio_hi = mR; }
       if (slot >= 0) ac_bin_w[d][slot] = mV;
 
@@ -872,9 +902,44 @@ static void acP5() {
 
   AcFit f = acFit(ac_wx, ac_wy, ac_wn);
   ac_Ke = f.m; ac_Ke_se = f.se_m; ac_Ke_rms = f.rms; ac_Ke_c = f.c;
-  // Amplitude-invariant dq: Ke = pp*lambda and Kt = 1.5*pp*lambda, so Kt = 1.5*Ke.
-  // The master table's 0.0266/0.0177 = 1.503 is the bench confirmation of this.
-  ac_Kt = 1.5f * ac_Ke;
+  // Kt is NOT fitted and NOT stored. Amplitude-invariant dq forces Kt = 1.5*Ke
+  // exactly (KT_PER_KE in fleet_config.h); calKt() derives it on demand.
+
+  // ---- DRAG, per direction ----------------------------------------------
+  // Iq = drag_c + drag_v*|omega|, fitted on MAGNITUDES so both directions come
+  // out positive and the consumer applies sign(omega). Split by the sign of the
+  // measured speed rather than by loop index, because a point dropped for
+  // n < 500 breaks any index-to-direction mapping.
+  // These four numbers used to be fitted by hand off the phase-7 CSV. Twelve
+  // joints x four numbers is exactly the arithmetic this routine exists to
+  // remove, and hand-fitting was what collapsed them to a single mean in the
+  // first place.
+  {
+    static float dx[AC_W_N], dy[AC_W_N];
+    for (uint8_t d = 0; d < 2; d++) {
+      uint8_t n = 0;
+      for (uint8_t i = 0; i < ac_wn && n < AC_W_N; i++) {
+        bool fwd = (ac_w_vel[i] > 0.0f);
+        if (fwd != (d == 0)) continue;
+        if (fabsf(ac_w_vel[i]) < 1.0f) continue;      // not actually spinning
+        dx[n] = fabsf(ac_w_vel[i]);
+        dy[n] = fabsf(ac_w_iq[i]);
+        n++;
+      }
+      AcFit g = acFit(dx, dy, n);
+      ac_drag_n[d]   = n;
+      ac_drag_c[d]   = g.ok ? g.c : 0.0f;
+      ac_drag_v[d]   = g.ok ? g.m : 0.0f;
+      ac_drag_rms[d] = g.ok ? g.rms : 0.0f;
+    }
+  }
+  // A negative Coulomb intercept is unphysical and means the sweep never got
+  // below the speed where viscous drag dominates -- report it, do not hide it.
+  ac_v_drag = AC_PASS;
+  for (uint8_t d = 0; d < 2; d++) {
+    if (ac_drag_n[d] < 3)                          ac_v_drag = AC_FAIL;
+    else if (ac_drag_c[d] < 0.0f || ac_drag_v[d] < 0.0f) ac_v_drag = AC_WARN;
+  }
 
   ac_v_Ke = AC_PASS;
   if (!f.ok || ac_wn < 6)                    ac_v_Ke = AC_FAIL;
@@ -900,6 +965,17 @@ static void acP5() {
   SerialUART.print(F(" (theory 1.2247, squared-domain)   ")); SerialUART.println(acVs(ac_v_ratio));
   SerialUART.println(F("    NOTE: this is a GROSS-SANITY band only. The tight 1.22-1.23 check"));
   SerialUART.println(F("    is a LOCKED-ROTOR measurement -- do it by hand in 'c' mode."));
+  for (uint8_t d = 0; d < 2; d++) {
+    SerialUART.print(d == 0 ? F("    drag fwd  ") : F("    drag rev  "));
+    SerialUART.print(F("Iq = ")); SerialUART.print(ac_drag_c[d], 4);
+    SerialUART.print(F(" + ")); SerialUART.print(ac_drag_v[d], 6);
+    SerialUART.print(F("*|w|   n=")); SerialUART.print(ac_drag_n[d]);
+    SerialUART.print(F(" rms=")); SerialUART.print(ac_drag_rms[d]*1000.0f, 2);
+    SerialUART.println(F(" mA"));
+  }
+  SerialUART.print(F("    ")); SerialUART.println(acVs(ac_v_drag));
+  SerialUART.println(F("    DYNAMIC drag only. The STATIC breakaway threshold is larger and"));
+  SerialUART.println(F("    is not measurable here -- run M4 by hand and fill breakaway_A."));
   ac_done[5] = (ac_v_Ke != AC_FAIL);
   if (ac_done[5]) SerialUART.println(F("    next: 6"));
 }
@@ -937,7 +1013,7 @@ static float acBinAngleDeg(uint8_t d, uint8_t s, uint8_t b) {
   float Iq = ac_bin_iq[d][s][b] / ac_bin_n[d][s][b];
   float w  = ac_bin_w[d][s];
   if (fabsf(w) < 1.0f) return 0.0f;
-  float we = 7.0f * w;
+  float we = (float)MOTOR_POLE_PAIRS * w;
   float y  = ac_R*Id - we*ac_L*Iq;            // volts attributable to angle error
   float sn = y / (ac_Ke * w);
   if (sn >  0.999f) sn =  0.999f;
@@ -954,6 +1030,13 @@ static void acP6() {
 
   for (uint8_t s = 0; s < AC_BIN_SPEEDS; s++) {
     ac_T[s] = 0.0f;
+    // Hoisted out of the bin loop. acBinAngleDeg() returns a hard 0.0 when the
+    // slot's speed was never established (phase 5 dropped that sweep point), and
+    // a bin full of zeros used to be folded into the INL even-part as if it were
+    // data -- biasing the profile toward zero -- before the slot was discarded a
+    // few lines later. Discard it first.
+    float w = 0.5f*(fabsf(ac_bin_w[0][s]) + fabsf(ac_bin_w[1][s]));
+    if (w < 1.0f) continue;
     double os = 0, oss = 0; uint8_t on = 0;
     for (uint8_t b = 0; b < AC_BINS; b++) {
       if (ac_bin_n[0][s][b] < AC_BIN_MIN_N || ac_bin_n[1][s][b] < AC_BIN_MIN_N) continue;
@@ -969,9 +1052,7 @@ static void acP6() {
     if (on < 8) continue;
     float om  = (float)(os/on);
     float osd = (on > 1) ? (float)sqrt((oss - (double)on*om*om) / (on - 1)) : 0.0f;
-    float w   = 0.5f*(fabsf(ac_bin_w[0][s]) + fabsf(ac_bin_w[1][s]));
-    if (w < 1.0f) continue;
-    ac_T[s] = radians(om) / (7.0f * w);
+    ac_T[s] = radians(om) / ((float)MOTOR_POLE_PAIRS * w);
     any = true;
     // f_loop for the speeds that were binned: the last AC_BIN_SPEEDS of each
     // direction. Average forward and reverse.
@@ -988,6 +1069,12 @@ static void acP6() {
     if (fl > 1.0f) {
       SerialUART.print(F(" T_loop=")); SerialUART.print(1e6f/fl, 1);
       SerialUART.print(F(" us  T/T_loop=")); SerialUART.print(ac_T[s]*fl, 3);
+      // T/T_loop is the transferable number; T in microseconds is only true at
+      // the loop rate it was taken at. Compare against the fleet constant so a
+      // drifting assembly shows up here rather than in a README table later.
+      SerialUART.print(F(" (fleet ")); SerialUART.print(T_DELAY_PER_LOOP, 3);
+      SerialUART.print(F("+-")); SerialUART.print(T_DELAY_PER_LOOP_SD, 3);
+      SerialUART.print(F(")"));
     }
     SerialUART.println();
   }
@@ -1004,12 +1091,12 @@ static void acP6() {
   else if (AC_BIN_SPEEDS >= 2) ac_v_T = AC_WARN;      // only one estimate survived
 
   SerialUART.print(F("    INL pk-pk ")); SerialUART.print(ac_inl_pp, 2);
-  SerialUART.print(F(" deg elec = ")); SerialUART.print(ac_inl_pp/7.0f, 3);
+  SerialUART.print(F(" deg elec = ")); SerialUART.print(ac_inl_pp/(float)MOTOR_POLE_PAIRS, 3);
   SerialUART.print(F(" deg MECH | ZEA residual ")); SerialUART.print(ac_zea_resid, 3);
   SerialUART.print(F(" deg elec   ")); SerialUART.println(acVs(ac_v_T));
   if (ac_v_T == AC_FAIL)
     SerialUART.println(F("    !! T inconsistent across speeds -> the fixed-delay model does NOT hold here."));
-  if (ac_inl_pp/7.0f > 1.5f)
+  if (ac_inl_pp/(float)MOTOR_POLE_PAIRS > 1.5f)
     SerialUART.println(F("    !! INL above the 1.5 deg datasheet max -- check magnet CENTRING (1/rev term)."));
   if (fabsf(ac_zea_resid) > 3.0f)
     SerialUART.println(F("    !! ZEA residual large -- the installed ZEA is off by more than 3 deg elec."));
@@ -1020,17 +1107,24 @@ static void acP6() {
 // ===========================================================================
 // PHASE 7 -- REPORT. Nothing that has not been MEASURED is emitted as a number.
 // ===========================================================================
-// Emits either a valid initialiser or an explicit hole -- never a number that
-// was not measured, and never something that would silently compile to garbage
-// if pasted.
-static void acPrintVal(const __FlashStringHelper* decl, float v, uint8_t dp,
+// One line of the verdict table: value, verdict, what it is. NOT pasteable --
+// the single pasteable artefact is the JointCal row further down, so there is
+// exactly one thing to copy and no way to paste half a calibration.
+static void acPrintVal(const __FlashStringHelper* name, float v, uint8_t dp,
                        bool measured, AcV verdict, const __FlashStringHelper* note) {
-  SerialUART.print(decl);
-  if (measured) { SerialUART.print(v, dp); SerialUART.print(F("f;")); }
-  else          { SerialUART.print(F("0.0f; /* NOT MEASURED */")); }
-  SerialUART.print(F("  // ")); SerialUART.print(note);
-  SerialUART.print(F("  [")); SerialUART.print(measured ? acVs(verdict) : F("MISSING"));
-  SerialUART.println(F("]"));
+  SerialUART.print(F("  ")); SerialUART.print(name);
+  if (measured) SerialUART.print(v, dp);
+  else          SerialUART.print(F("--"));
+  SerialUART.print(F("\t[")); SerialUART.print(measured ? acVs(verdict) : F("MISSING"));
+  SerialUART.print(F("]  ")); SerialUART.println(note);
+}
+
+// A struct field in the pasteable row. Emits a compilable literal in every case:
+// a measured value, or the documented safe default plus the phase still to run.
+static void acRowF(float v, uint8_t dp, bool measured, uint8_t phase) {
+  if (measured) { SerialUART.print(v, dp); SerialUART.print(F("f")); }
+  else { SerialUART.print(F("0.0f /* NOT MEASURED - run ")); SerialUART.print(phase);
+         SerialUART.print(F(" */")); }
 }
 
 static void acP7() {
@@ -1041,6 +1135,9 @@ static void acP7() {
   for (uint8_t n = 1; n <= 6; n++) if (ac_done[n] && vs[n] > worst) worst = vs[n];
   if (ac_done[3] && ac_v_U0    > worst) worst = ac_v_U0;
   if (ac_done[5] && ac_v_ratio > worst) worst = ac_v_ratio;
+  // The drag fit feeds four fields of the pasteable row, so its verdict has to
+  // reach the headline. A negative Coulomb intercept is a number you must not paste.
+  if (ac_done[5] && ac_v_drag  > worst) worst = ac_v_drag;
 
   SerialUART.println();
   SerialUART.println(F("================ AUTOCALIB REPORT ================"));
@@ -1071,28 +1168,84 @@ static void acP7() {
   SerialUART.println(F("   trusting R_EFF, U0 or KE. They all scale with it."));
   SerialUART.println();
 
-  SerialUART.println(F("// ==== JOINT CALIBRATION ====  fill in: joint id / belt=OFF / date"));
-  if (ac_done[2]) {
-    SerialUART.print(F("const float ZEA_STORED = ")); SerialUART.print(ac_zea, 4);
-    SerialUART.print(F("f;   // sd ")); SerialUART.print(degrees(ac_zea_sd), 2);
-    SerialUART.print(F(" deg elec, SE ")); SerialUART.print(degrees(ac_zea_se), 2);
-    SerialUART.print(F(" deg  [")); SerialUART.print(acVs(ac_v_zea)); SerialUART.println(F("]"));
-    SerialUART.print(F("const int   DIR_STORED = ")); SerialUART.print(ac_dir > 0 ? F("+1") : F("-1"));
-    SerialUART.print(F(";        // ")); SerialUART.println(ac_dir > 0 ? F("CW") : F("CCW"));
-  } else {
-    SerialUART.println(F("const float ZEA_STORED = /* NOT MEASURED - run 2 */;"));
-    SerialUART.println(F("const int   DIR_STORED = /* NOT MEASURED - run 2 */;"));
+  // ---- verdict table: read this BEFORE pasting anything -------------------
+  SerialUART.println(F("---- MEASURED (read every verdict before you paste) ----"));
+  acPrintVal(F("zea    "), ac_zea, 4, ac_done[2], ac_v_zea, F("rad elec, wrap-safe median"));
+  SerialUART.print(F("  dir    "));
+  if (ac_done[2]) SerialUART.print(ac_dir > 0 ? F("CW (+1)") : F("CCW (-1)"));
+  else            SerialUART.print(F("--"));
+  SerialUART.print(F("\t[")); SerialUART.print(ac_done[2] ? acVs(ac_v_zea) : F("MISSING"));
+  SerialUART.println(F("]  inverts torque if wrong"));
+  acPrintVal(F("R_eff  "), ac_R,  5, ac_done[3], ac_v_R,  F("ohm, slope of the self-locked sweep"));
+  acPrintVal(F("U0     "), ac_U0, 5, ac_done[3], ac_v_U0, F("V, INTERCEPT -- the weak parameter of that fit"));
+  acPrintVal(F("Ke     "), ac_Ke, 6, ac_done[5], ac_v_Ke, F("V/(rad/s), both directions in one fit"));
+  acPrintVal(F("L (uH) "), ac_L*1e6f, 2, ac_done[4], ac_v_L, F("incremental at ~3 A"));
+  if (ac_done[5]) {
+    acPrintVal(F("drag_c_fwd "), ac_drag_c[0], 4, true, ac_v_drag, F("A"));
+    acPrintVal(F("drag_c_rev "), ac_drag_c[1], 4, true, ac_v_drag, F("A"));
+    acPrintVal(F("drag_v_fwd "), ac_drag_v[0], 6, true, ac_v_drag, F("A/(rad/s)"));
+    acPrintVal(F("drag_v_rev "), ac_drag_v[1], 6, true, ac_v_drag, F("A/(rad/s)"));
+    // Kt is DERIVED and deliberately absent from the row. Printed here only as
+    // the one absolute cross-check the routine can make on the VOLTAGE scale.
+    SerialUART.print(F("  Kt     ")); SerialUART.print(KT_PER_KE*ac_Ke, 6);
+    SerialUART.print(F("\tDERIVED = 1.5*Ke, never stored. vs nameplate KV"));
+    SerialUART.print(MOTOR_KV_NAMEPLATE, 0); SerialUART.print(F(" = "));
+    SerialUART.print(60.0f/(_2PI*MOTOR_KV_NAMEPLATE), 6);
+    SerialUART.print(F("  ("));
+    SerialUART.print(100.0f*(KT_PER_KE*ac_Ke*_2PI*MOTOR_KV_NAMEPLATE/60.0f - 1.0f), 2);
+    SerialUART.println(F("%) -- confirms the VOLTAGE scale only, see M2"));
   }
-  acPrintVal(F("const float R_EFF      = "), ac_R,  5, ac_done[3], ac_v_R,  F("ohm, slope of the self-locked sweep"));
-  acPrintVal(F("const float U0_V       = "), ac_U0, 5, ac_done[3], ac_v_U0, F("V, INTERCEPT -- the weak parameter"));
-  acPrintVal(F("const float KE         = "), ac_Ke, 6, ac_done[5], ac_v_Ke, F("V/(rad/s), both directions"));
-  acPrintVal(F("const float KT         = "), ac_Kt, 6, ac_done[5], ac_v_Ke, F("Nm/A = 1.5*KE (amplitude-invariant dq)"));
-  SerialUART.print(F("const float L_H        = "));
-  if (ac_done[4]) { SerialUART.print(ac_L*1e6f, 2); SerialUART.print(F("e-6f;")); }
-  else            { SerialUART.print(F("0.0f; /* NOT MEASURED - run 4 */")); }
-  SerialUART.print(F("  // H, tau=")); SerialUART.print(ac_tau*1e6f, 1);
-  SerialUART.print(F(" us  [")); SerialUART.print(ac_done[4] ? acVs(ac_v_L) : F("MISSING"));
-  SerialUART.println(F("]"));
+  SerialUART.println();
+
+  // ---- the ONE pasteable artefact ----------------------------------------
+  // A JointCal row in joint_cal.h's field order. This used to emit standalone
+  // `const float R_EFF = ...` declarations, which have not matched the storage
+  // schema since joint_cal.h existed: pasting them would not have compiled into
+  // anything the firmware actually reads.
+  SerialUART.println(F("---- PASTE THIS ROW INTO joint_cal.h (replace the whole row) ----"));
+  SerialUART.println(F("// fill in: id (MUST match the board label), board_sn, motor_sn, date, belt"));
+  SerialUART.print(F("  { \""));   SerialUART.print(CAL.id);
+  SerialUART.print(F("\", \""));   SerialUART.print(CAL.board_sn);
+  SerialUART.print(F("\", \""));   SerialUART.print(CAL.motor_sn);
+  SerialUART.print(F("\", \"YYYY-MM-DD\", \"")); SerialUART.print(CAL.belt);
+  SerialUART.println(F("\","));
+
+  SerialUART.print(F("     "));
+  if (ac_done[2]) { SerialUART.print(ac_zea, 4); SerialUART.print(F("f, "));
+                    SerialUART.print(ac_dir > 0 ? F("+1") : F("-1")); }
+  else            { SerialUART.print(F("-1.0f, 0")); }
+  SerialUART.print(F(", ")); acRowF(ac_R, 5, ac_done[3], 3);
+  SerialUART.println(F(",        // zea, dir, R_eff"));
+
+  SerialUART.print(F("     ")); acRowF(ac_U0, 5, ac_done[3], 3);
+  SerialUART.println(F(",                      // U0"));
+
+  SerialUART.print(F("     ")); acRowF(ac_Ke, 6, ac_done[5], 5);
+  SerialUART.print(F(", "));
+  if (ac_done[4]) { SerialUART.print(ac_L*1e6f, 2); SerialUART.print(F("e-6f")); }
+  else            { SerialUART.print(F("0.0f /* NOT MEASURED - run 4 */")); }
+  SerialUART.println(F(",         // Ke, L"));
+
+  // vbus_scale / i_scale / breakaway_A are CARRIED from the flashed row, never
+  // measured here. Re-emitting them means a re-run cannot silently discard an
+  // M1/M2/M4 result that cost a multimeter and twenty minutes to obtain.
+  SerialUART.print(F("     ")); SerialUART.print(CAL.vbus_scale, 6);
+  SerialUART.print(F("f, ")); SerialUART.print(CAL.i_scale, 4);
+  SerialUART.print(F("f,      // vbus_scale, i_scale  CARRIED (M1 / M2)"));
+  if (CAL.i_scale == 1.0f) SerialUART.print(F("  <-- PENDING M2"));
+  SerialUART.println();
+
+  SerialUART.print(F("     ")); acRowF(ac_drag_c[0], 4, ac_done[5], 5);
+  SerialUART.print(F(", ")); acRowF(ac_drag_c[1], 4, ac_done[5], 5);
+  SerialUART.println(F(",         // drag_c fwd, rev"));
+  SerialUART.print(F("     ")); acRowF(ac_drag_v[0], 6, ac_done[5], 5);
+  SerialUART.print(F(", ")); acRowF(ac_drag_v[1], 6, ac_done[5], 5);
+  SerialUART.println(F(",     // drag_v fwd, rev"));
+
+  SerialUART.print(F("     ")); SerialUART.print(CAL.breakaway_A, 4);
+  SerialUART.print(F("f },                   // breakaway_A  CARRIED (M4)"));
+  if (CAL.breakaway_A == 0.0f) SerialUART.print(F("  <-- PENDING M4"));
+  SerialUART.println();
   SerialUART.println();
 
   SerialUART.println(F("---- DIAGNOSTICS (not per-unit constants) ----"));
@@ -1114,9 +1267,9 @@ static void acP7() {
       SerialUART.println(F("  T = T/T_loop divided by the sketch's f_loop, not this number."));
     } else SerialUART.println();
     SerialUART.print(F("  torque loss at 270 rad/s = "));
-    SerialUART.print(100.0f*(1.0f - cosf(7.0f*270.0f*ac_T[AC_BIN_SPEEDS-1])), 3);
+    SerialUART.print(100.0f*(1.0f - cosf((float)MOTOR_POLE_PAIRS*270.0f*ac_T[AC_BIN_SPEEDS-1])), 3);
     SerialUART.println(F(" %"));
-    SerialUART.print(F("INL pk-pk      ")); SerialUART.print(ac_inl_pp/7.0f, 3);
+    SerialUART.print(F("INL pk-pk      ")); SerialUART.print(ac_inl_pp/(float)MOTOR_POLE_PAIRS, 3);
     SerialUART.println(F(" deg MECH -- fit 1/rev vs 2/rev offline from the bins below"));
     SerialUART.print(F("ZEA residual   ")); SerialUART.print(ac_zea_resid, 3);
     SerialUART.println(F(" deg elec -- independent check on the installed ZEA"));
@@ -1150,7 +1303,20 @@ static void acP7() {
     SerialUART.print(F("  suggested   P=")); SerialUART.print(ac_L*wbw, 4);
     SerialUART.print(F(" I=")); SerialUART.print(ac_R*wbw, 1);
     SerialUART.print(F("   for ")); SerialUART.print(AC_BW_HZ, 0);
-    SerialUART.println(F(" Hz.  NOT APPLIED -- paste them yourself if you want them."));
+    SerialUART.println(F(" Hz.  NOT APPLIED."));
+    // Kp = L*w_bw, Ki = R*w_bw is an IDEAL-PLANT formula: it has no transport
+    // delay term, and this rig has a measured one of ~T_DELAY_PER_LOOP loop
+    // periods. A well-damped loop caps at roughly 1/(3T), and the configured
+    // gains were bench-tuned to 412 Hz at zeta = 0.60 -- already ~80% of that
+    // ceiling. Raising Ki would eat phase margin the formula cannot see.
+    // BENCH EVIDENCE OUTRANKS THE FORMULA. Treat this as a sanity check on
+    // R and L, not as a recommendation.
+    SerialUART.print(F("  delay ceiling ~1/(3T) = "));
+    float fl = ac_done[6] ? ac_T_floop[AC_BIN_SPEEDS-1] : 0.0f;
+    float Td = (fl > 1.0f) ? tDelayAt(fl) : 0.0f;
+    if (Td > 0.0f) { SerialUART.print(1.0f/(3.0f*Td), 0); SerialUART.print(F(" Hz")); }
+    else           { SerialUART.print(F("(run 6 for f_loop)")); }
+    SerialUART.println(F("  -- the formula above ignores it. Do not apply blind."));
   }
 
   if (ac_done[6]) {
