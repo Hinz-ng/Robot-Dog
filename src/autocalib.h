@@ -1,6 +1,6 @@
 #pragma once
 // ============================================================================
-// autocalib.h  --  ONE-KEY PER-JOINT CHARACTERISATION  (belt OFF)
+// autocalib.h  --  ONE-KEY PER-JOINT CHARACTERISATION
 // ============================================================================
 // Include this in open_test.cpp IMMEDIATELY BEFORE `void handleSerial()` (it
 // must be above handleSerial so the case labels can see acPhase), and add:
@@ -26,6 +26,20 @@
 // motor energised or the globals half-mutated. Each phase saves and restores
 // everything it touches, and refuses to run if its prerequisites have not
 // PASSED -- so out-of-order presses cannot silently produce garbage.
+//
+// BELT STATE -- it is NOT "belt off" across the board, and saying so blanket
+// was actively misleading once M2 got deferred past the belt build:
+//     FREE SHAFT REQUIRED : 2 (the alignment must settle unloaded)
+//                           5, 6 (free spin)
+//     BELT-AGNOSTIC       : 1, 3, 4 and the M2 ladder -- all locked-rotor, the
+//                           rotor never turns, so the belt is not in the loop.
+//                           The one thing that DOES matter there is that the
+//                           rotor must not creep: watch the drift column.
+//     BOTH, DELIBERATELY  : M4. Belt-off is the baseline; belt-on at M5 is the
+//                           number that decides impedance quality. Its banner
+//                           REPORTS the state instead of demanding one.
+// The leg links must be off for anything involving friction, in every state --
+// gravity torque is position-dependent and cannot be averaged out.
 //
 // PREREQUISITE CHAIN
 //     1 LINK   -> none
@@ -180,14 +194,17 @@ const uint8_t  AC_L_MIN_PTS   = 6;        // was 8. 6 is the statistical floor f
 // already taken and the tau it produced was verified offline); this is for J02+.
 const uint8_t  AC_L_DITHER_US = 3;
 const float    AC_L_RMS_FAIL  = 0.20f;
-// F4 -- TIME BINNING. Averaging by SAMPLE INDEX throws away the loop-phase jitter
-// that is actually useful. The step is triggered after a millis()-based wait, so
-// its phase relative to the ~58 us control loop is effectively random across
-// repeats: the samples already land at scattered times. Binning those (t, I)
-// pairs by TIME turns that jitter into EQUIVALENT-TIME SAMPLING.
-// Measured on assembly A2: tau = 200 us against a 58.5 us sample period is only
-// 3.4 samples/tau, so index-averaging left exactly 5 points in the 0.15-0.85
-// fit band -- the bare minimum. 20 us bins over the same data give ~17.
+// F4 -- TIME BINNING.  *** PARTLY SUPERSEDED BY F5 ABOVE -- read that first. ***
+// STILL TRUE: averaging by SAMPLE INDEX throws away timing information that is
+// useful, and binning the (t, I) pairs by TIME instead is the right move. Index
+// averaging left exactly 5 points in the 0.15-0.85 fit band on assembly A2 --
+// tau = 200 us against a 58.5 us sample period is only 3.4 samples/tau.
+// RETRACTED: F4 originally claimed the step's phase relative to the control loop
+// was "effectively random across repeats", and predicted ~17 fit points from
+// that free jitter alone. It is NOT random -- acService() IS the loop, so the
+// samples land on a rigid grid, and time binning ALONE gave 7 points, not 17.
+// The 18 points actually achieved come from F5's DELIBERATE per-repeat dither.
+// Time binning is the mechanism; the dither is what supplies the coverage.
 const uint8_t  AC_L_TBINS     = 48;       // 48 x 20 us = 960 us of rise
 const uint16_t AC_L_TBIN_US   = 20;
 const uint8_t  AC_L_BIN_MIN_N = 3;        // samples needed before a bin is used
@@ -240,6 +257,13 @@ static bool ac_abort;
 // tell "operator pressed a key to advance" from "overcurrent/overspeed tripped",
 // which acService() previously collapsed into one flag.
 static bool ac_key;
+// Set ONLY by the overcurrent / overspeed branches. The three abort conditions
+// are independent `if`s in the same acService() call, so a keypress arriving in
+// the SAME iteration as an overcurrent trip sets ac_key AND ac_abort. A caller
+// that clears ac_abort on ac_key alone would then resume after a genuine fault.
+// ac_guard is what makes "a human did this" and "a guard tripped" separable
+// when both are true: a guard trip is never clearable.
+static bool ac_guard;
 static const __FlashStringHelper* acVs(AcV v) {
   return (v == AC_PASS) ? F("PASS") : (v == AC_WARN) ? F("WARN") : F("FAIL");
 }
@@ -319,7 +343,7 @@ static Mode      acs_mode;   static float acs_target, acs_vlim, acs_pql, acs_pdl
 static float     acs_zea;    static Direction acs_dir;   static bool acs_foc;
 
 static void acEnter() {
-  ac_abort  = false;   ac_key = false;
+  ac_abort  = false;   ac_key = false;   ac_guard = false;
   acs_mode  = mode;   acs_target = target;
   acs_vlim  = motor.voltage_limit;
   acs_pql   = motor.PID_current_q.limit;
@@ -329,8 +353,14 @@ static void acEnter() {
   acs_foc   = foc_ready;
 }
 
-// keep_align = true only for phase 2 on success, which deliberately leaves the
-// freshly measured ZEA in place so phases 3-6 commutate with it.
+// keep_align = true means "do not restore the saved alignment on the way out".
+// Phase 2 passes true on success because it deliberately INSTALLS the ZEA it
+// just measured. Phases 3, 4, 5 and both manual-assist routines also pass true,
+// but for the opposite reason: they never touch the alignment, so restoring a
+// snapshot of it would be a no-op at best and could only ever undo phase 2's
+// install. false is for the paths that DID disturb it and failed -- a failed or
+// aborted alignment must never be left installed, because it would silently
+// become the commutation offset for every later run in the session.
 static void acExit(bool keep_align) {
   motor.disable(); running = false;
   motor.voltage_limit       = acs_vlim;
@@ -403,7 +433,7 @@ static void acService() {
   else                       ac_i_amp = sqrtf(motor.current.q*motor.current.q
                                             + motor.current.d*motor.current.d);
   if (ac_i_amp > AC_IMAX_ABORT) {
-    ac_abort = true;
+    ac_abort = true;  ac_guard = true;
     SerialUART.print(F("\n  !! ABORT overcurrent: ")); SerialUART.print(ac_i_amp, 2);
     SerialUART.println(F(" A amplitude"));
   }
@@ -412,14 +442,19 @@ static void acService() {
   // is meaningful only outside openloop -- which is exactly where the shaft can
   // actually run away.
   if (mode != MODE_OPENLOOP && fabsf(motor.shaft_velocity) > OVERSPEED_RADS) {
-    ac_abort = true;
+    ac_abort = true;  ac_guard = true;
     SerialUART.println(F("\n  !! ABORT overspeed"));
   }
   if (SerialUART.available()) {
     while (SerialUART.available()) (void)SerialUART.read();
     ac_abort = true;
     ac_key   = true;          // "a human did this", not "a guard tripped"
-    SerialUART.println(F("\n  !! ABORT key pressed"));
+    // NEUTRAL wording on purpose. A key means ABORT to phases 1-7 but ADVANCE to
+    // the M2 ladder, and every phase already prints its own "aborted  FAIL"
+    // line. Printing "!! ABORT" here made a normal five-point M2 run announce
+    // ABORT five times while working correctly -- which is exactly the message
+    // that makes someone stop and redo a good measurement.
+    SerialUART.println(F("\\n  -- key received"));
   }
 }
 
@@ -1303,7 +1338,11 @@ static void acP7() {
     SerialUART.print(F(" .. ")); SerialUART.print(ac_ratio_hi, 3);
     SerialUART.print(F("  (theory 1.2247)  [")); SerialUART.print(acVs(ac_v_ratio));
     SerialUART.println(F("]"));
-    SerialUART.println(F("DRAG MAP (belt OFF)   U_cmd, vel, Iq"));
+    // Tagged with the row's belt field rather than hardcoded: this same block
+    // is produced belt-ON at M5, and an untagged "belt OFF" label on belt-on
+    // data is how a baseline gets overwritten by its own successor.
+    SerialUART.print(F("DRAG MAP (belt ")); SerialUART.print(CAL.belt);
+    SerialUART.println(F(")   U_cmd, vel, Iq"));
     for (uint8_t i = 0; i < ac_wn; i++) {
       SerialUART.print(F("  DRAG,")); SerialUART.print(ac_w_u[i], 2);
       SerialUART.print(','); SerialUART.print(ac_w_vel[i], 2);
@@ -1493,7 +1532,13 @@ static void acM2Assist() {
   for (uint8_t k = 0; k < AC_M2_N && !ac_abort; k++) {
     motor.voltage_limit = AC_M2_V[k];
     motor.enable(); running = true; run_started = millis();
-    if (k == 0) acRun(600);           // first point: let the rotor swing in and settle
+    // Mirrors phase 3 exactly, so I_reported here is directly comparable to a
+    // phase-3 point: 600 ms initial swing-in, then the same per-point settle.
+    // The settle also has to happen BEFORE c0 is latched, or the drift column
+    // counts the settling transient of the voltage change as creep and stops
+    // meaning what its label claims.
+    if (k == 0) acRun(600);
+    acRun(AC_R_SETTLE_MS);
     uint16_t c0 = encoder.raw;
 
     SerialUART.print(F("  point ")); SerialUART.print(k + 1);
@@ -1504,9 +1549,14 @@ static void acM2Assist() {
     double acc = 0; uint32_t n = 0;
     while ((millis() - t0) < AC_M2_MAX_MS && !ac_abort) {
       acService();
-      // A key here means ADVANCE, not abort. acService() cannot tell the two
-      // apart on its own, which is what ac_key exists for.
-      if (ac_key) { ac_key = false; ac_abort = false; break; }
+      // A key here means ADVANCE, not abort -- but ONLY if no guard also fired
+      // in the same iteration. ac_guard is never cleared, so an overcurrent or
+      // overspeed trip that happens to coincide with a keypress still aborts.
+      if (ac_key) {
+        ac_key = false;
+        if (!ac_guard) ac_abort = false;      // clean advance
+        break;
+      }
       acc += ac_i_amp; n++;
       if ((millis() - tp) > AC_M2_TICK_MS) {
         tp = millis();
@@ -1518,11 +1568,16 @@ static void acM2Assist() {
       }
     }
     int32_t moved = acCntDelta(c0, encoder.raw);
-    SerialUART.print(F("    >> M2,")); SerialUART.print(AC_M2_V[k], 3);
-    SerialUART.print(','); SerialUART.print(n ? (float)(acc / n) : 0.0f, 4);
-    SerialUART.print(F("   n=")); SerialUART.print(n);
-    SerialUART.print(F(" drift=")); SerialUART.print(moved);
-    SerialUART.println(F(" cnt   <- record Vbus and Ibus for THIS line"));
+    // Same split as M4: a clean CSV line, then a sentence.
+    //     M2,<Uq>,<I_reported>,<n>,<drift_cnt>
+    SerialUART.print(F("M2,")); SerialUART.print(AC_M2_V[k], 3);
+    SerialUART.print(',');      SerialUART.print(n ? (float)(acc / n) : 0.0f, 4);
+    SerialUART.print(',');      SerialUART.print(n);
+    SerialUART.print(',');      SerialUART.println(moved);
+    SerialUART.print(F("    Uq=")); SerialUART.print(AC_M2_V[k], 3);
+    SerialUART.print(F(" I_reported=")); SerialUART.print(n ? (float)(acc / n) : 0.0f, 4);
+    SerialUART.print(F(" A, drift ")); SerialUART.print(moved);
+    SerialUART.println(F(" cnt   <- write Vbus and Ibus against THIS line"));
     if (acAbs32(moved) > AC_R_STILL_CNT)
       SerialUART.println(F("    !! rotor MOVED -- this point is invalid, redo it"));
   }
@@ -1571,8 +1626,11 @@ static void acM4Breakaway(float sgn) {
   }
   SerialUART.print(F("[M4] BREAKAWAY ramp, direction "));
   SerialUART.print(sgn > 0 ? F("+") : F("-"));
-  SerialUART.print(F("   belt OFF, pulley bare, leg NOT attached.  start raw="));
-  SerialUART.println(encoder.raw);
+  SerialUART.print(F("   pulley bare, LEG NOT ATTACHED.  Row says belt="));
+  SerialUART.print(CAL.belt);
+  SerialUART.print(F(" -- the reading describes whatever is ACTUALLY fitted, so"));
+  SerialUART.println(F(" tag it. start raw="));
+  SerialUART.print(F("     ")); SerialUART.println(encoder.raw);
   acEnter();
   mode = MODE_TORQUE_CURRENT;                       // 'c' mode -- FOC current
   motor.torque_controller = TorqueControlType::foc_current;
@@ -1608,12 +1666,20 @@ static void acM4Breakaway(float sgn) {
     SerialUART.println(F("    that the magnet is not skimming the sensor (gap 0.5-1.0 mm, NEVER zero)."));
     return;
   }
-  SerialUART.print(F("    >> M4,")); SerialUART.print(sgn > 0 ? '+' : '-');
-  SerialUART.print(','); SerialUART.print(i, 4);
-  SerialUART.print(','); SerialUART.print(c0);
-  SerialUART.print(F("   A at raw=")); SerialUART.print(c0);
-  SerialUART.print(F("  ramp=")); SerialUART.print(el/1000.0f, 1);
-  SerialUART.print(F("s travel=")); SerialUART.print(travel);
+  // Machine-readable, alone on its line and fully comma-delimited, so a whole
+  // session pastes straight into docs/cal/*.csv:
+  //     M4,<dir>,<amps>,<raw>,<ramp_s>,<travel_cnt>
+  SerialUART.print(F("M4,"));  SerialUART.print(sgn > 0 ? '+' : '-');
+  SerialUART.print(',');       SerialUART.print(i, 4);
+  SerialUART.print(',');       SerialUART.print(c0);
+  SerialUART.print(',');       SerialUART.print(el/1000.0f, 2);
+  SerialUART.print(',');       SerialUART.println(travel);
+  // Human-readable, separately. Mixing the two put "A at raw=" AFTER the count
+  // and printed the rotor position twice.
+  SerialUART.print(F("    breakaway ")); SerialUART.print(i, 4);
+  SerialUART.print(F(" A at raw=")); SerialUART.print(c0);
+  SerialUART.print(F("   ramp ")); SerialUART.print(el/1000.0f, 1);
+  SerialUART.print(F(" s, travel ")); SerialUART.print(travel);
   SerialUART.println(F(" cnt"));
   if (el < 1000)  SerialUART.println(F("    !! broke away in under 1 s -- you are measuring the RAMP. Halve AC_M4_STEP_A."));
   if (i > 0.40f)  SerialUART.println(F("    !! > 0.4 A belt-off is a FAULT, not a baseline. A1's 0.34-1.34 A was belt-ON."));
@@ -1624,7 +1690,7 @@ static void acM4Breakaway(float sgn) {
 // STATUS + DISPATCH
 // ===========================================================================
 static void acStatus() {
-  SerialUART.println(F("--- AUTOCALIB (belt OFF).  0=reset 1..6=phases 7=report ---"));
+  SerialUART.println(F("--- AUTOCALIB.  0=reset 1..6=phases 7=report ---"));
   const __FlashStringHelper* nm[7] = { F(""), F("1 LINK   zero current"),
     F("2 ALIGN  ZEA + direction"), F("3 R/U0   self-locked, still"),
     F("4 L      step train, locked"), F("5 SPIN   free-spin both dirs (~50 s)"),
@@ -1637,10 +1703,14 @@ static void acStatus() {
     if (n == 6 && !ac_done[4]) SerialUART.print(F(" (also needs 4)"));
     SerialUART.println();
   }
-  SerialUART.println(F("  Shaft FREE, belt OFF. Any key aborts a running phase."));
+  SerialUART.println(F("  Any key aborts a running phase."));
+  SerialUART.println(F("  FREE SHAFT + BELT OFF is needed by 2, 5 and 6 only."));
+  SerialUART.println(F("  1, 3, 4 are LOCKED-ROTOR and belt-agnostic. Leg links off throughout."));
   SerialUART.println(F("  --- manual-assist, NOT part of the 1..7 chain ---"));
-  SerialUART.println(F("  N = M2 bus-power ladder (needs 2; bracket it with 3, and a METER)"));
-  SerialUART.println(F("  B / b = M4 breakaway ramp, + / - direction (needs a valid alignment)"));
+  SerialUART.println(F("  N = M2 bus-power ladder. BELT-AGNOSTIC (locked rotor). Needs 2 and an"));
+  SerialUART.println(F("      external METER; bracket it with 3. Rotor must not creep -- watch drift."));
+  SerialUART.println(F("  B / b = M4 breakaway ramp, + / - . Needs a valid alignment. Run it"));
+  SerialUART.println(F("      BELT-OFF for the baseline and again BELT-ON at M5; tag which."));
   SerialUART.print(F("  stored: ZEA=")); SerialUART.print(ZEA_STORED, 4);
   SerialUART.print(F(" DIR=")); SerialUART.print(DIR_STORED);
   SerialUART.println(F("   ('V' verifies them against a fresh alignment)"));

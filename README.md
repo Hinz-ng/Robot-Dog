@@ -9,7 +9,25 @@ Hardware, firmware contract, measured plant characteristics, and the failure mod
 
 ---
 
-## 0. Changelog — 2026-08-08 review response: manual-test firmware + the phase-voltage ceiling
+## 0. Changelog — 2026-08-08 review round 2: one safety-path bug and six clarity defects
+
+| # | Fix |
+|---|---|
+| **F1** | **`ac_key` could clear a genuine guard trip.** The three abort conditions in `acService()` are independent `if`s in the same call, so a keypress arriving in the *same iteration* as an overcurrent set both `ac_key` and `ac_abort` — and the M2 ladder's advance cleared `ac_abort` on `ac_key` alone, resuming after a real fault. **Low probability, safety path.** Added `ac_guard`, set only by the overcurrent/overspeed branches and never cleared |
+| **F2** | **A normal M2 advance printed `!! ABORT key pressed`** — five times in a five-point run, while working correctly. That is the message that makes someone stop and redo a good measurement. Now a neutral `-- key received`; each caller reports what it actually did |
+| **F3** | **The F4 comment still asserted what F5 retracted**, nine lines apart, with the wrong one unmarked: *"phase relative to the loop is effectively random… 20 µs bins give ~17"*. It is not random, and binning alone gave **7**. Marked **PARTLY SUPERSEDED**, keeping only the true part (time binning is the mechanism; the **dither** supplies the coverage) |
+| **F4** | **`printJointCal()`'s label named the wrong quantity.** `calKtCmd() = Kt/i_scale`, so the command is *multiplied* by `i_scale` — at 1.05 the command goes **+5%**, but it printed **−4.76%** under the label "torque cmds corrected by". Now prints **both**, each correctly named |
+| **F5** | **The `i_scale` field comment told you to do the opposite of the `calKtCmd()` note.** Field comment: *"invalidates phases 3-4"*. `calKtCmd()` note: *"must not divide `R_eff`, `L` or the gains by it"*. Both true statements, opposite instructions, and the field comment is read first. Rewritten to separate the two cases: **storing** a measured `i_scale` invalidates nothing; correcting the gain **at source** moves the reported-amp unit and does require re-running 3–4 |
+| **F6** | **M4's output printed `c0` twice** and put `" A at raw="` *after* the count, so it read as though the position were in amps; `ramp` and `travel` sat outside the delimited prefix. Now `M4,<dir>,<amps>,<raw>,<ramp_s>,<travel_cnt>` alone on its line, sentence separately. **Same fix applied to M2's line**, which had the same defect |
+| **F7** | **"belt OFF" was hardcoded into things that do not need it** — and that starts mattering now that M2 is deferred past the belt build. Scoped: free shaft is needed by **2, 5, 6 only**; **1, 3, 4 and the M2 ladder are locked-rotor and belt-agnostic**; **M4 is run in both states deliberately**, so its banner now reports `CAL.belt` instead of demanding one. Phase 7's `DRAG MAP (belt OFF)` label now prints the actual belt field — an untagged belt-off label on belt-on data is how a baseline gets overwritten by its successor |
+| — | `acExit()`'s *"keep_align = true only for phase 2"* comment was already stale (3, 4, 5 all pass true). Rewritten to say what the flag actually means |
+| — | M2 now settles for `AC_R_SETTLE_MS` **before** latching the drift baseline, so the `drift` column means creep during the window rather than the settling transient of the voltage change |
+
+**Task order revised** (§15): ordered by **what expires**, not by what is interesting. M4 and `J_rotor` are belt-off baselines and cannot be recovered after B0; **M2 is locked-rotor and belt-agnostic, so it moves behind the belt** — deferred, with a promotion condition, and with §8.2 now carrying an explicit note that every force figure in this document rides on an unmeasured `i_scale`.
+
+---
+
+## 0a. Changelog — 2026-08-08 review round 1: manual-test firmware + the phase-voltage ceiling
 
 | § | Change |
 |---|---|
@@ -31,7 +49,7 @@ Hardware, firmware contract, measured plant characteristics, and the failure mod
 
 ---
 
-## 0a. Changelog — 2026-08-07 session 3 (AUTOCALIB rev2 re-run) + `JointCal` schema v2
+## 0b. Changelog — 2026-08-07 session 3 (AUTOCALIB rev2 re-run) + `JointCal` schema v2
 
 | § | Change |
 |---|---|
@@ -50,7 +68,7 @@ Hardware, firmware contract, measured plant characteristics, and the failure mod
 
 ---
 
-## 0e. Changelog — 2026-08-07 AUTOCALIB + per-joint storage
+## 0c. Changelog — 2026-08-07 AUTOCALIB + per-joint storage
 
 | § | Change |
 |---|---|
@@ -68,7 +86,7 @@ Hardware, firmware contract, measured plant characteristics, and the failure mod
 
 ---
 
-## 0d. Changelog — 2026-08-06 SPI migration + angle-lag CLOSED
+## 0d1. Changelog — 2026-08-06 SPI migration + angle-lag CLOSED
 
 Full file replacement. Every change declared.
 
@@ -90,7 +108,7 @@ Full file replacement. Every change declared.
 
 ---
 
-## 0c. Changelog — 2026-08-01 bus-sense / M1-d session
+## 0d2. Changelog — 2026-08-01 bus-sense / M1-d session
 
 Full file replacement. Every change declared.
 
@@ -116,7 +134,7 @@ Full file replacement. Every change declared.
 
 ---
 
-## 0b. Changelog — 2026-07-29 characterisation session
+## 0d3. Changelog — 2026-07-29 characterisation session
 
 Substantial rewrite. Every change declared, so nothing regresses silently.
 
@@ -429,6 +447,13 @@ Everything here is bench-measured unless marked. **This table outranks any other
 | 6th electrical harmonic (42/rev) | 0.029 A → 0.12 N | Position-fold; dead time + back-EMF shape |
 | Current-mode torque ripple floor | **0.217 A pp → 0.93 N pp** | Iq_pp at 35 rad/s in TORQUE(I) |
 | **J_total** | **not measured** | Deferred to the 10 mm-belt actuator |
+
+> ### ⚠ EVERY FORCE FIGURE BELOW CARRIES AN UNMEASURED `i_scale`
+> No force number in this document has been validated against an absolute current reference. `F = 2·G·η·Kt·I` uses the **reported** current, and `τ_actual = τ_des / g` where `g = I_reported / I_true` is **unmeasured until M2 runs** (§20.1). A 5%-high current sense means every force here is 5% optimistic, uniformly and silently — it does not show up as scatter, because every internal cross-check divides one wrongly-scaled current by another.
+>
+> The `Kt` vs `60/(2π·KV)` agreement (+0.38%) confirms the **voltage** scale only; `Ke` is fit from voltage and speed and is independent of current-sense gain.
+>
+> **Treat every N and N/A in §8.2, §17 and §19 as carrying an unquantified ±(0–6)% common-mode factor** until `i_scale` is measured. It does not change any *ratio* — the 46% friction share, the transparency percentages and the gear-ratio argument are all immune, because the factor cancels. It changes the absolute numbers only.
 
 **Transparency budget at the foot** (against 9.8 N for one leg of a 4 kg robot):
 
@@ -848,19 +873,24 @@ Meta-lessons: instrument-first beats hypothesis iteration; verify resolved versi
 - **✅ M1 angle lag — CLOSED, and re-confirmed at a second loop rate.** `T/T_loop = 0.961 ± 0.014` over 5 points / 2 assemblies / 2 loop rates. **0.95% torque loss at 270 rad/s at 13.3 kHz. No compensation to be written, and the sweep does not need running.** §8.3.
 - **Sensor INL characterised** — 0.93° mech pk-pk, 1/rev dominant. §7.
 
-**Immediate next — nothing on this list is optional and nothing else belongs on it**
+**Immediate next — ordered by what EXPIRES, not by what is interesting**
+
+The belt-off plant is a baseline that fitting the belt destroys. Anything measured against it has to happen first; anything that can be done in either state gets deferred behind it.
 
 | # | Task | Time | Status |
 |---|---|---|---|
-| 0 | **Write in the multimeter Vbus** vs firmware 12.46 (§8.1a header) | 1 min | 🔴 |
-| 1 | ✅ `AC_L_DITHER_US` 2 → 3 · `[env:A1]` build guard · `calKtCmd()` | — | ✅ done |
-| 2 | ✅ `acM2Assist()` (`N`) and `acM4Breakaway()` (`B`/`b`) | — | ✅ done |
-| **3** | **M2 — current-sense scale** → `i_scale` (§20.1) | 30 min | 🔴 **the last common-mode systematic** |
-| **4** | **M4 — breakaway, belt off** → `breakaway_A` (§20.2) | 20 min | 🔴 **the 46% transparency term** |
-| 5 | **M6a — `J_rotor`, belt off** → `fleet_config.h` (§20.2) | 15 min | 🔴 promoted ahead of the belt: the belt-off drag map already exists |
-| 6 | **Save `docs/cal/J01_2026-08-07.csv`** — BIN, LSB and DRAG blocks verbatim | 10 min | 🔴 **unrecoverable after B0** |
-| 7 | Paste `i_scale` + `breakaway_A`, reflash, press `V` | 10 min | 🔴 |
-| **8** | **§22 — the belt-on routine, B0–B13** | — | 🚀 nothing else blocking |
+| 1 | ✅ **F1/F2** — `ac_key` could clear a genuine guard trip; the keypress print said "!! ABORT" during normal M2 advances | — | ✅ done |
+| 2 | ✅ **F3–F7** — superseded F4 comment, `Kt_cmd` label, `i_scale` field comment, CSV lines, belt-state scoping | — | ✅ done |
+| **3** | **M4 breakaway, belt OFF** — `B`/`b`, five positions each direction | 20 min | 🔴 **irreversible; this is the one that expires.** Expect 0.10–0.25 A |
+| **4** | **M6a `J_rotor`, belt OFF** | 30 min | 🔴 expensive to recover after the belt. Inherits `i_scale` later by multiplication |
+| 5 | **Save `docs/cal/J01_2026-08-07.csv`** — BIN, LSB and DRAG blocks verbatim | 10 min | 🔴 also unrecoverable |
+| 6 | Paste `breakaway_A` into the J01 row, reflash, press `V` | 10 min | |
+| 7 | ✅ Annotate the force figures as carrying an unmeasured `i_scale` (§8.2) | — | ✅ done — a deferral without a note becomes a forgotten error |
+| **8** | **Belt goes on. §22, B0–B13.** | — | 🚀 nothing blocking |
+| ⏸ | **M2 — current-sense scale** (§20.1). Bench PSU preferred; a known series shunt in the bus line is the fallback if the PSU readout is not trustworthy | 30 min | ⏸ **before M14, before the sim actuator model, and before any force number is called validated.** Belt-agnostic (locked rotor), so it does not expire |
+| ⏸ | Write in the multimeter Vbus vs firmware 12.46 (§8.1a) | 1 min | ⏸ do it at the next power-up |
+
+**Why M2 moved behind the belt.** It is a locked-rotor measurement — the rotor never turns, so the belt is not in the loop and nothing about it expires. M4 and `J_rotor` do expire. Ordering by expiry rather than by importance is the only thing that distinguishes them.
 
 **Deferred, with promotion conditions** — see §8.3 for the full table.
 `DRIVER_VOLT_LIMIT` 6.0 → ~V_bus, **before the first commanded velocity above 150 rad/s** · `open_test.cpp` structure, **before CAN / Tier-1 integration** · live Vbus, **≥10 A bench currents or cross-session constant comparison** · ABZ fault on A1, un-blocking, whenever.
@@ -1060,7 +1090,9 @@ AUTOCALIB (`Y`, phases 1–7) covers `ZEA`, `dir`, `R_eff`, `U0`, `Ke`, `Kt`, `L
 > | **B. Pack + two DMMs** | DMM1 on **2 A DC** in series with the battery **positive**; DMM2 on volts at the **board terminals**, not the pack — the ammeter's own resistance drops voltage | ~±2% |
 > | **C. Pack + one DMM** | Current sweep first, then swap to volts and read Vbus at the top and bottom point only. Sag across the sweep is ~40 mV (0.3%), so interpolating is fine | ~±2.5% |
 >
-> **Procedure.** Belt off, nothing on the pulley, hands off the shaft, motor bolted down.
+> **This test is BELT-AGNOSTIC.** The rotor is magnetically locked and never turns, so the belt is not in the loop — which is why M2 can be deferred past the belt build while M4 and `J_rotor` cannot. The one thing that does matter is that the rotor must not *creep*: the routine prints a `drift` count per point, and a point that moved is invalid.
+>
+> **Procedure.** Nothing on the pulley, **leg links off**, hands off the shaft, motor bolted down.
 > 1. Power up; confirm the banner says the joint you think it is.
 > 2. `1`, then `2`. Alignment must PASS.
 > 3. **`3`** → this is your **cold `R_eff`**. Write it down.

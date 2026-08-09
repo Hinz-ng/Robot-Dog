@@ -73,9 +73,17 @@ struct JointCal {
   float  vbus_scale;       // V per ADC count. M1, needs a multimeter.
                            //   NOT a fleet constant -- see the warning below
   float  i_scale;          // I_true = I_sensed / i_scale.  M2.  1.0 = uncorrected.
-                           //   R_eff and L are BOTH proportional to 1/i_scale and
-                           //   Ke is NOT, so changing this invalidates phases 3-4
-                           //   but not phase 5
+                           //   STORING a measured value here does NOT invalidate
+                           //   the stored R_eff or L, and you must NOT rescale
+                           //   them or the current-loop gains -- see the calKtCmd()
+                           //   note below for why. It is applied in exactly ONE
+                           //   place: the torque -> current conversion.
+                           //   The DIFFERENT case, easily confused with it: if
+                           //   the sense gain is corrected AT SOURCE (in the
+                           //   LowsideCurrentSense constructor) then the
+                           //   reported-amp UNIT itself moves, R_eff and L both
+                           //   shift by 1/g, and phases 3-4 MUST be re-run.
+                           //   Ke is independent of current-sense gain either way
 
   // ---- PAIRING, belt-state dependent (see .belt) ----
   float  drag_c_fwd;       // A            free-spin Coulomb intercept, |omega| > 0
@@ -265,8 +273,17 @@ static inline void printJointCal(Print& out) {
   // you would otherwise ship silently -- so it is printed, not hidden.
   out.print(F(" Kt_cmd=")); out.print(calKtCmd(), 6);
   if (CAL.i_scale != 1.0f) {
-    out.print(F(" (torque cmds corrected by "));
-    out.print(100.0f*(1.0f/CAL.i_scale - 1.0f), 2); out.print(F("%)"));
+    // TWO different percentages, and the label used to name the wrong one.
+    // calKtCmd() = Kt / i_scale, so I_command = tau * i_scale / Kt: the COMMAND
+    // is multiplied by i_scale (+5% at i_scale = 1.05). The 1/i_scale - 1 figure
+    // is the torque ERROR you would have shipped uncorrected (-4.76% at 1.05).
+    // Both are worth seeing; neither is a name for the other.
+    out.print(F(" (uncorrected torque error "));
+    out.print(100.0f*(1.0f/CAL.i_scale - 1.0f), 2);
+    out.print(F("%, cmds now scaled "));
+    if (CAL.i_scale > 1.0f) out.print('+');
+    out.print(100.0f*(CAL.i_scale - 1.0f), 2);
+    out.print(F("%)"));
   }
   out.println();
 
