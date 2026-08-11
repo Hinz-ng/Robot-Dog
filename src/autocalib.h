@@ -264,6 +264,34 @@ static bool ac_key;
 // ac_guard is what makes "a human did this" and "a guard tripped" separable
 // when both are true: a guard trip is never clearable.
 static bool ac_guard;
+
+// TRUE when the alignment measured on the bench disagrees with the FLASHED row
+// by more than the fail threshold -- i.e. the constants in the binary belong to
+// a DIFFERENT PHYSICAL JOINT.
+//
+// Why it exists: phase 7 CARRIES vbus_scale, i_scale and breakaway_A from the
+// flashed row, because a re-run must not discard an M1/M2/M4 result. That is
+// correct when the row is this joint's. It is exactly wrong when it is not --
+// J02's first report carried J01's breakaway_A = 0.2920 with no warning at all,
+// even though the 'V' check had failed thirty lines earlier. The report had
+// every piece of information needed to catch it and said nothing.
+//
+// Set by BOTH detectors, because either can run first and the operator may never
+// press 'V':
+//   acVerifyZea()  -- explicit check against the flashed row
+//   acP2()         -- a fresh alignment IS the same comparison, for free
+// Never auto-cleared: only phase 0 (reset) clears it, because the mismatch is a
+// property of the hardware-vs-binary pairing and does not go away mid-session.
+static bool ac_zea_mismatch = false;
+
+// Shortest signed elec-angle distance, wrap-safe. Used by both detectors so they
+// cannot drift apart in how they define "disagrees".
+static float acZeaDeltaDeg(float measured, float stored) {
+  float d = measured - stored;
+  while (d >  _PI) d -= _2PI;
+  while (d < -_PI) d += _2PI;
+  return degrees(fabsf(d));
+}
 static const __FlashStringHelper* acVs(AcV v) {
   return (v == AC_PASS) ? F("PASS") : (v == AC_WARN) ? F("WARN") : F("FAIL");
 }
@@ -454,7 +482,7 @@ static void acService() {
     // line. Printing "!! ABORT" here made a normal five-point M2 run announce
     // ABORT five times while working correctly -- which is exactly the message
     // that makes someone stop and redo a good measurement.
-    SerialUART.println(F("\\n  -- key received"));
+    SerialUART.println(F("\n  -- key received"));
   }
 }
 
@@ -617,6 +645,25 @@ static void acP2() {
   if (dir_split) SerialUART.println(F("    !! direction detection DISAGREED between runs -- sensor or wiring."));
 
   if (ac_v_zea == AC_FAIL) { ac_done[2] = false; acExit(false); return; }
+
+  // WRONG-JOINT DETECTOR. Phase 2 has just measured the alignment, so comparing
+  // it to the FLASHED row is free -- and it closes the hole where the operator
+  // never presses 'V'. Same thresholds and the same wrap-safe comparison as
+  // acVerifyZea(), so the two cannot disagree about what "different joint" means.
+  // Guarded on a CALIBRATED row: an unfilled row (zea < 0, dir == 0) has nothing
+  // to disagree with, and must not trip this.
+  if (ZEA_STORED >= 0.0f && DIR_STORED != 0) {
+    float dd = acZeaDeltaDeg(ac_zea, ZEA_STORED);
+    if (ac_dir != DIR_STORED || dd > 15.0f) {
+      ac_zea_mismatch = true;
+      SerialUART.print(F("    *** WRONG JOINT: measured ZEA is ")); SerialUART.print(dd, 1);
+      SerialUART.print(F(" deg from the FLASHED row, dir "));
+      SerialUART.print(ac_dir > 0 ? F("CW") : F("CCW"));
+      SerialUART.print(F(" vs ")); SerialUART.println(DIR_STORED > 0 ? F("CW") : F("CCW"));
+      SerialUART.println(F("    *** The binary carries ANOTHER JOINT'S constants. Measured values"));
+      SerialUART.println(F("    *** below are still valid; phase 7 will BLOCK the carried ones."));
+    }
+  }
 
   // Install the measured values so phases 3-6 commutate with them.
   motor.zero_electric_angle = ac_zea;
@@ -1221,6 +1268,15 @@ static void acP7() {
   //     R_measured = R_true * (V_assumed / V_true)
   // and the same factor lands on U0 and Ke. This is the one input the routine
   // cannot self-check, so it is demanded explicitly rather than assumed.
+  if (ac_zea_mismatch) {
+    SerialUART.println();
+    SerialUART.println(F("*** ZEA VERIFY FAILED THIS SESSION. The flashed row is a DIFFERENT JOINT."));
+    SerialUART.println(F("*** Measured values below are VALID -- phase 2 installed a fresh ZEA and"));
+    SerialUART.println(F("*** every phase ran against it. CARRIED values are NOT: id, board_sn,"));
+    SerialUART.println(F("*** motor_sn, vbus_scale, i_scale and breakaway_A all belong to the OTHER"));
+    SerialUART.println(F("*** joint and must be entered by hand. They are blocked in the row below."));
+    SerialUART.println();
+  }
   SerialUART.print(F("!! WRITE IN: multimeter Vbus = ______ V   (firmware read "));
   SerialUART.print(driver.voltage_power_supply, 2); SerialUART.println(F(")"));
   SerialUART.println(F("   >1% apart -> recalibrate VBUS_SCALE for THIS BOARD before"));
@@ -1263,9 +1319,13 @@ static void acP7() {
   // anything the firmware actually reads.
   SerialUART.println(F("---- PASTE THIS ROW INTO joint_cal.h (replace the whole row) ----"));
   SerialUART.println(F("// fill in: id (MUST match the board label), board_sn, motor_sn, date, belt"));
-  SerialUART.print(F("  { \""));   SerialUART.print(CAL.id);
-  SerialUART.print(F("\", \""));   SerialUART.print(CAL.board_sn);
-  SerialUART.print(F("\", \""));   SerialUART.print(CAL.motor_sn);
+  // id / serials are carried too, and on a mismatch they name the WRONG board.
+  SerialUART.print(F("  { \""));
+  if (ac_zea_mismatch) SerialUART.print(F("___")); else SerialUART.print(CAL.id);
+  SerialUART.print(F("\", \""));
+  if (ac_zea_mismatch) SerialUART.print(F("___")); else SerialUART.print(CAL.board_sn);
+  SerialUART.print(F("\", \""));
+  if (ac_zea_mismatch) SerialUART.print(F("___")); else SerialUART.print(CAL.motor_sn);
   SerialUART.print(F("\", \"YYYY-MM-DD\", \"")); SerialUART.print(CAL.belt);
   SerialUART.println(F("\","));
 
@@ -1288,11 +1348,20 @@ static void acP7() {
   // vbus_scale / i_scale / breakaway_A are CARRIED from the flashed row, never
   // measured here. Re-emitting them means a re-run cannot silently discard an
   // M1/M2/M4 result that cost a multimeter and twenty minutes to obtain.
-  SerialUART.print(F("     ")); SerialUART.print(CAL.vbus_scale, 6);
-  SerialUART.print(F("f, ")); SerialUART.print(CAL.i_scale, 4);
-  SerialUART.print(F("f,      // vbus_scale, i_scale  CARRIED (M1 / M2)"));
-  if (CAL.i_scale == 1.0f) SerialUART.print(F("  <-- PENDING M2"));
-  SerialUART.println();
+  // BUT carrying is only correct when the flashed row IS this joint. If the ZEA
+  // check said otherwise, these are another joint's numbers and emitting them
+  // into a pasteable row is how one joint's calibration silently becomes two.
+  SerialUART.print(F("     "));
+  if (ac_zea_mismatch) {
+    SerialUART.print(F("0.0f, 1.0f,   // vbus_scale, i_scale  *** CARRY BLOCKED --"));
+    SerialUART.println(F(" ZEA VERIFY FAILED, these were ANOTHER JOINT'S. Run M1 and M2. ***"));
+  } else {
+    SerialUART.print(CAL.vbus_scale, 6);
+    SerialUART.print(F("f, ")); SerialUART.print(CAL.i_scale, 4);
+    SerialUART.print(F("f,      // vbus_scale, i_scale  CARRIED (M1 / M2)"));
+    if (CAL.i_scale == 1.0f) SerialUART.print(F("  <-- PENDING M2"));
+    SerialUART.println();
+  }
 
   SerialUART.print(F("     ")); acRowF(ac_drag_c[0], 4, ac_done[5], 5);
   SerialUART.print(F(", ")); acRowF(ac_drag_c[1], 4, ac_done[5], 5);
@@ -1301,10 +1370,16 @@ static void acP7() {
   SerialUART.print(F(", ")); acRowF(ac_drag_v[1], 6, ac_done[5], 5);
   SerialUART.println(F(",     // drag_v fwd, rev"));
 
-  SerialUART.print(F("     ")); SerialUART.print(CAL.breakaway_A, 4);
-  SerialUART.print(F("f },                   // breakaway_A  CARRIED (M4)"));
-  if (CAL.breakaway_A == 0.0f) SerialUART.print(F("  <-- PENDING M4"));
-  SerialUART.println();
+  SerialUART.print(F("     "));
+  if (ac_zea_mismatch) {
+    SerialUART.print(F("0.0f },  // breakaway_A  *** CARRY BLOCKED -- was ANOTHER"));
+    SerialUART.println(F(" JOINT'S. Run M4. ***"));
+  } else {
+    SerialUART.print(CAL.breakaway_A, 4);
+    SerialUART.print(F("f },                   // breakaway_A  CARRIED (M4)"));
+    if (CAL.breakaway_A == 0.0f) SerialUART.print(F("  <-- PENDING M4"));
+    SerialUART.println();
+  }
   SerialUART.println();
 
   SerialUART.println(F("---- DIAGNOSTICS (not per-unit constants) ----"));
@@ -1441,11 +1516,7 @@ void acVerifyZea() {
   if (!ok) { SerialUART.println(F("    initFOC FAILED")); acExit(false); return; }
   float meas = motor.zero_electric_angle;
   int   mdir = (motor.sensor_direction == Direction::CW) ? +1 : -1;
-  // shortest signed distance around the circle
-  float d = meas - ZEA_STORED;
-  while (d >  _PI) d -= _2PI;
-  while (d < -_PI) d += _2PI;
-  float ddeg = degrees(fabsf(d));
+  float ddeg = acZeaDeltaDeg(meas, ZEA_STORED);   // shared with acP2's detector
 
   SerialUART.print(F("    measured ZEA=")); SerialUART.print(meas, 4);
   SerialUART.print(F(" vs stored ")); SerialUART.print(ZEA_STORED, 4);
@@ -1454,12 +1525,17 @@ void acVerifyZea() {
   SerialUART.print(F(" vs ")); SerialUART.print(DIR_STORED > 0 ? F("CW") : F("CCW"));
   SerialUART.println();
   if (mdir != DIR_STORED) {
+    ac_zea_mismatch = true;
     SerialUART.println(F("    *** FAIL: DIRECTION MISMATCH. Wrong joint's constants, or the"));
     SerialUART.println(F("    *** magnet mount has been rebuilt. Do NOT run this firmware."));
   } else if (ddeg > 15.0f) {
+    ac_zea_mismatch = true;
     SerialUART.println(F("    *** FAIL: >15 deg. Almost certainly the WRONG JOINT's constants,"));
     SerialUART.println(F("    *** or the magnet has slipped on the shaft. Re-run autocalib."));
   } else if (ddeg > 8.0f) {
+    // WARN deliberately does NOT set ac_zea_mismatch. 8-15 deg is "check the
+    // magnet mount", not "this is a different joint" -- blocking the carry here
+    // would make the routine cry wolf on a slightly disturbed mount.
     SerialUART.println(F("    !! WARN: >8 deg, well outside alignment scatter (sd ~3.4 deg)."));
     SerialUART.println(F("    !! Check the magnet mount before trusting torque numbers."));
   } else {
@@ -1472,6 +1548,8 @@ void acVerifyZea() {
   foc_ready = true;
   acExit(true);
   SerialUART.println(F("    stored ZEA reinstalled."));
+  if (ac_zea_mismatch)
+    SerialUART.println(F("    *** phase 7 will now BLOCK the carried fields. See its header. ***"));
 }
 
 // ===========================================================================
@@ -1611,7 +1689,22 @@ static void acM2Assist() {
 const float    AC_M4_STEP_A    = 0.005f;   // A per step
 const uint16_t AC_M4_DWELL_MS  = 150;      // -> 0.033 A/s
 const float    AC_M4_MOVE_RADS = 0.5f;     // "it moved"
-const float    AC_M4_ABORT_A   = 0.60f;    // give up: something is rubbing
+// GIVE-UP LIMIT, and the WARN threshold below must stay strictly under it or it
+// can never fire -- the loop exits at i >= AC_M4_ABORT_A, so a warning set AT
+// the abort value is unreachable. Raised 0.60 -> 0.80 so that the +5 sigma warn
+// point (0.60) is inside the range the ramp can actually reach and a legitimately
+// high reading gets RECORDED rather than reported as "NO MOTION". Thermally
+// free: 1.5 * 0.8^2 * 0.221 = 0.21 W.
+const float    AC_M4_ABORT_A   = 0.80f;
+// Warn, do not abort. J01 belt-off: mean 0.2923, sd 0.0611 (the +-20.9% is the
+// PLANT -- grease redistribution -- not the method).
+//   0.40 A = +1.76 sigma -> fires on ~4% of HEALTHY readings. It DID fire, on a
+//            0.4050 A reading, and that false alarm cost a teardown detour.
+//   0.60 A = +5.04 sigma -> a real outlier.
+const float    AC_M4_WARN_A    = 0.60f;
+// Pre-slide creep indicator. J01 ran 107-146 counts; 200 is ~1.4x the worst
+// observed. See the note at the check itself for why TRAVEL and not elapsed time.
+const int32_t  AC_M4_WARN_CNT  = 200;
 
 static void acM4Breakaway(float sgn) {
   if (!acReady()) return;
@@ -1681,9 +1774,31 @@ static void acM4Breakaway(float sgn) {
   SerialUART.print(F("   ramp ")); SerialUART.print(el/1000.0f, 1);
   SerialUART.print(F(" s, travel ")); SerialUART.print(travel);
   SerialUART.println(F(" cnt"));
-  if (el < 1000)  SerialUART.println(F("    !! broke away in under 1 s -- you are measuring the RAMP. Halve AC_M4_STEP_A."));
-  if (i > 0.40f)  SerialUART.println(F("    !! > 0.4 A belt-off is a FAULT, not a baseline. A1's 0.34-1.34 A was belt-ON."));
+  // ELAPSED TIME CARRIES NO INDEPENDENT INFORMATION and the old `el < 1000` test
+  // was dead code. The ramp is deterministic: el = (i / AC_M4_STEP_A) *
+  // AC_M4_DWELL_MS = i * 30000 ms/A, so el < 1000 ms is just i < 0.0333 A. At
+  // J01's 0.2923 A the ramp takes 8.8 s and the test could never have fired.
+  //
+  // TRAVEL is the quantity that actually detects a too-slow ramp relative to the
+  // creep: the current keeps climbing throughout the pre-slide creep, so a long
+  // creep inflates the recorded breakaway. Direction of the bias is HIGH.
+  // Order of magnitude, with the assumption named because it is not measured:
+  // if the creep averages ~half the 0.5 rad/s detection threshold, 200 counts is
+  // ~0.31 s of creep and ~0.010 A of inflation. The creep SPEED is not recorded,
+  // so treat that as a scale, not a correction -- do not subtract it.
+  if (acAbs32(travel) > AC_M4_WARN_CNT) {
+    SerialUART.print(F("    !! long pre-slide creep (")); SerialUART.print(travel);
+    SerialUART.println(F(" cnt) -- reading is biased HIGH. Compare against the other positions."));
+  }
+  if (i > AC_M4_WARN_A) {
+    SerialUART.print(F("    !! > ")); SerialUART.print(AC_M4_WARN_A, 2);
+    SerialUART.println(F(" A -- outside the measured plant spread (+5 sigma on J01). Investigate."));
+  }
   SerialUART.println(F("    Rotate the shaft ~40 deg by hand and repeat -- 5 positions per direction."));
+  SerialUART.println(F("    Let it SETTLE into a cogging detent before the next reading -- a rotor"));
+  SerialUART.println(F("    left mid-creep is still elastically loaded and will break away far too"));
+  SerialUART.println(F("    easily in the OPPOSITE direction (J02 gave 0.0350 A that way, 1/4 of"));
+  SerialUART.println(F("    the truth, after 583 counts of unexplained forward motion)."));
 }
 
 // ===========================================================================
@@ -1721,6 +1836,7 @@ void acPhase(uint8_t n) {
   switch (n) {
     case 0:
       for (uint8_t i = 0; i < 8; i++) ac_done[i] = false;
+      ac_zea_mismatch = false;
       SerialUART.println(F("AUTOCALIB state reset (installed ZEA is NOT reverted -- power-cycle for that)"));
       break;
     case 1: acP1(); break;
