@@ -9,7 +9,7 @@
 // platformio.ini, so the constants are never hand-edited before a flash -- you
 // pick an ENVIRONMENT, not a number:
 //
-//     pio run -e J01 -t upload
+//     pio run -e J02 -t upload
 //
 // WHY HAND-ENTERED AND NOT AUTO-SAVED
 //   AUTOCALIB prints a pasteable row; YOU paste it. Deliberately manual:

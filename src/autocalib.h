@@ -546,6 +546,25 @@ static bool acNeed(uint8_t n) {
   return false;
 }
 
+// VALID COMMUTATION, which is NOT the same requirement as a FRESH ALIGNMENT.
+// acNeed(2) demands that phase 2 ran THIS SESSION; this accepts either a stored
+// ZEA installed by 'f'/'V' or a fresh phase 2, which is what the downstream
+// phases actually need. Use acNeed(n) for DATA dependencies (phase 4 needs
+// phase 3's R) and this for COMMUTATION dependencies.
+//
+// WHY THE DISTINCTION IS WORTH A HELPER: alignment settles where the alignment
+// torque balances FRICTION, so the ZEA it returns is biased by whatever the
+// plant's friction happens to be. The lowest-friction plant state is belt-OFF,
+// so the belt-off ZEA is the one worth keeping -- and forcing a re-alignment as
+// the price of reaching a later phase silently replaces it with a worse one.
+// acM4Breakaway() already reasons exactly this way; this generalises it.
+static bool acHaveCommutation() {
+  if (foc_ready) return true;
+  SerialUART.println(F("refused: no valid alignment. Press 'f' or 'V' to install the stored"));
+  SerialUART.println(F("         ZEA, or run phase 2 to measure a fresh one."));
+  return false;
+}
+
 // ===========================================================================
 // PHASE 1 -- SPI LINK. Zero current, ~0.3 s. Gates everything downstream:
 // calibrating against a broken sensor burns a minute and yields plausible junk.
@@ -679,7 +698,12 @@ static void acP2() {
 // PHASE 3 -- R_eff and U0. Magnetic self-lock, rotor STATIONARY, sweep DOWN.
 // ===========================================================================
 static void acP3() {
-  if (!acNeed(2)) return;
+  // NOT acNeed(2). This phase is velocity_openloop at target = 0: the field
+  // angle is commanded directly and the rotor pulls into it, so the ZEA is not
+  // used anywhere in it. Gating on a fresh phase 2 was forcing an alignment
+  // that the measurement does not need, and phases 4-6 inherit their gates
+  // from here, so the cost was paid by the whole downstream chain.
+  if (!acHaveCommutation()) return;
   SerialUART.println(F("[3] R/U0  (rotor self-locks; do not touch the shaft)"));
   acEnter();
   mode = MODE_OPENLOOP;
@@ -903,7 +927,12 @@ static void acP4() {
 // self-regulates to where Iq equals the drag current -- no velocity loop needed.
 // ===========================================================================
 static void acP5() {
-  if (!acNeed(3)) return;
+  if (!acNeed(3)) return;        // DATA: the drag fit is normalised against R
+  // COMMUTATION: unlike phases 3 and 4 this one runs MODE_TORQUE through the
+  // FOC path, so a wrong ZEA corrupts Ke and the whole drag map. Phase 3 no
+  // longer implies an alignment, so state the requirement here rather than
+  // inheriting it.
+  if (!acHaveCommutation()) return;
   SerialUART.println(F("[5] FREE-SPIN  (shaft must be free; ~50 s)"));
   acEnter();
   for (uint8_t d = 0; d < 2; d++)
@@ -1593,9 +1622,11 @@ static void acM2Assist() {
   if (!acReady()) return;
   // The self-lock itself does not depend on the alignment -- velocityOpenloop()
   // applies voltage at a fixed ELECTRICAL angle and the rotor pulls into it.
-  // Phase 2 is required anyway so that I_reported here is directly comparable
-  // to the phase-3 sweep, which is the number the fit is normalised against.
-  if (!acNeed(2)) return;
+  // The real requirement is comparability with the phase-3 sweep, which the fit
+  // is normalised against -- and phase 3 now accepts a stored ZEA too, so
+  // demanding a fresh phase 2 here would make M2 the last thing on the bench
+  // still forcing a re-alignment. Same gate as phase 3, for the same reason.
+  if (!acHaveCommutation()) return;
 
   SerialUART.println(F("[M2] BUS-POWER LADDER.  Rotor self-locks -- HANDS OFF THE SHAFT."));
   SerialUART.println(F("     At each point: let the meter settle (~10 s), write down Vbus and"));

@@ -200,17 +200,83 @@ static constexpr float FRICTION_TRIAL_SPREAD = 0.20f;   // fractional, 1 sigma-i
 // difference -- but see the provenance warning on DRIVETRAIN_ETA below before
 // treating that eta as a measurement, because it is not one.
 //
-// G IS NOT A CONSTANT. It is a Jacobian and it varies through the stroke, worst
-// toward full extension where the Jacobian collapses. ANY force figure quoted in
-// newtons MUST state the leg height it was evaluated at.
+// G IS NOT A CONSTANT. It is a Jacobian and it varies through the stroke. ANY
+// force figure quoted in newtons MUST state the leg height it was evaluated at.
 //
-// STILL TO FILL IN: which h produces 87.7. The target is dz/dtheta = N/G =
-// 9/87.7 = 102.6 mm. Compute dz/dtheta at h = 115, 134 and 165 mm from the
-// frozen geometry (80 mm proximal / 100 mm distal five-bar, hip pivot separation
-// from CAD), find which gives 102.6 mm, and record all three. Desk exercise, no
-// instruments -- it is unfilled here because the hip pivot separation is not in
-// this repository, not because it is hard.
-static constexpr float G_FOOT_PER_MOTOR_NM = 87.7f;   // 1/m, at h = ___ mm  <-- FILL IN
+// *** 87.7 IS THE STROKE-AVERAGE. IT IS NOT EVALUATED AT ANY HEIGHT. ***
+// Resolved 2026-08-12, desk exercise. The alpha-average of |dh/dalpha| over the
+// working stroke (alpha = 40..70 deg) is 102.641 mm -> G = 87.68, reproducing
+// the stored 87.70 to 0.02%. (The h-weighted average gives 87.39, which does
+// NOT match -- so the stored value was specifically an ALPHA-average.) The old
+// question here, "which h produces 87.7", does have an answer -- alpha = 51.53
+// deg, h_pin = 127.7 mm -- but it is the wrong question: 87.7 was never
+// evaluated there. EVERY FORCE FIGURE QUOTED WITH 87.7 IS A STROKE MEAN.
+// Defensible for ENERGY (a jump integrates over the stroke). WRONG for PEAK
+// force, which wants the worst case -- use G_FOOT_AT_STROKE_TOP for that.
+//
+// THE HIP PIVOT SEPARATION WAS NEVER NEEDED. The old note here said this was
+// blocked on CAD. It is not: the five-bar is COAXIAL-HIP and symmetric, so the
+// separation is zero by construction and the closed form is elementary.
+// project_context.md's own asymptotics confirm it independently -- it records
+// h -> L1*cos(a) + L2 as L2 -> infinity, which is exactly this formula's limit,
+// and a stroke collapsing to 0.424*L1, which is L1*(cos40 - cos70) and pins the
+// 40..70 deg working range. Both were written before this was computed.
+//
+// Coaxial-hip symmetric five-bar, L1 = 80 (proximal), L2 = 100 (distal):
+//     h        = L1*cos(a) + sqrt(L2^2 - (L1*sin a)^2)
+//     |dh/da|  = L1*sin(a) * (1 + L1*cos(a)/sqrt(L2^2 - (L1*sin a)^2))
+// Stroke check: h spans 93.31..147.05 mm = 53.74 mm against the README's
+// recorded 53.7 mm envelope. Independent confirmation of the model.
+//
+//   alpha   h_pin   h_ground  |dh/da|      G      F/I     added mass/leg
+//    40   147.05   159.05     88.17   102.08   5.000 N/A    0.4210 kg  <- stroke top
+//    50   130.44   142.44    101.16    88.96   4.358        0.3198
+//   51.53 127.72   139.72    102.62    87.70   4.296        0.3109     <- where Gbar lands
+//    55   121.42   133.42    105.34    85.44   4.185        0.2949
+//   63.44 105.70   117.70    108.20    83.18   4.074        0.2795     <- Jacobian PEAK
+//    70    93.31   105.31    106.37    84.61   4.145        0.2892     <- stroke bottom
+// (F/I at Kt = 0.026621 and eta = 0.92; added mass = 2*J_rotor*G^2, i.e. per leg
+//  with BOTH motors reflected.)
+//
+// NON-MONOTONIC: the Jacobian PEAKS at alpha = 63.44 deg and turns back, so G --
+// and force per amp -- has a MINIMUM mid-low stroke and RISES AT BOTH ENDS. Do
+// not assume a monotonic collapse toward extension when writing the jump
+// controller; the weakest point is in the middle, not at an extreme.
+//
+// Validated against the README's own recorded force-per-amp prediction: this
+// model gives 4.145 / 5.000 N/A at alpha = 70 / 40 deg against the recorded
+// 4.13 / 4.98 -- both endpoints to 0.4%. The recorded MIDDLE value, 4.32 at
+// "alpha = 55", does NOT reproduce: this model gives 4.185 there. 4.32 needs
+// alpha = 50.9 deg. Most likely that entry is not a third angle at all but the
+// STROKE MEAN (4.296 at Gbar = 87.70) that acquired an angle label -- which
+// fits the 0.4% agreement of the two real endpoints. Treat the "55 deg" label
+// as wrong, not the model.
+//
+// G SWINGS 22.7% (83.18 .. 102.08). Consequences, all previously quoted at Gbar:
+//     peak thrust 513 N (robot)   -> spans 487 .. 597 N
+//     per leg 128.2 N             -> spans 121.6 .. 149.3 N
+//     force per amp 4.30 N/A      -> spans 4.07 .. 5.00 N/A
+//     added mass, 4 legs 1.243 kg -> spans 1.118 .. 1.684 kg
+//     effective jump mass 5.24 kg -> spans 5.12 .. 5.68 kg
+// The added-mass swing is the one that bites: reflected inertia goes as G^2, so
+// it is WORST at the top of the stroke -- which is exactly where a jump leaves
+// the ground. That sharpens the 478 mm apex question (README 17) rather than
+// settling it, and it sharpens it through the MASS channel, not the force one.
+//
+// h_pin vs h_ground: the ~12 mm contact offset is a rigid VERTICAL translation,
+// so it shifts h but NOT dh/dalpha -- the table above is unaffected. Working
+// range is 93.3-147.1 mm to the foot PIN, 105.3-159.1 mm to the ground.
+// CONFIRM FROM CAD that the contact point translates with the pin rather than
+// rotating with a distal link; if it rotates, the Jacobian gains a term and
+// every G in the table above changes.
+static constexpr float G_FOOT_PER_MOTOR_NM   = 87.70f;   // 1/m, STROKE MEAN over alpha 40-70
+static constexpr float G_FOOT_AT_STROKE_TOP  = 102.08f;  // 1/m, alpha 40 deg -- use for PEAK force
+static constexpr float G_FOOT_AT_STROKE_MIN  = 83.18f;   // 1/m, alpha 63.44 deg -- weakest point
+static constexpr float LEG_L1_PROX_MM        = 80.0f;    // proximal link
+static constexpr float LEG_L2_DIST_MM        = 100.0f;   // distal link
+static constexpr float LEG_ALPHA_MIN_DEG     = 40.0f;    // stroke TOP,    h_pin 147.05 mm
+static constexpr float LEG_ALPHA_MAX_DEG     = 70.0f;    // stroke BOTTOM, h_pin  93.31 mm
+static constexpr float LEG_CONTACT_OFFSET_MM = 12.0f;    // foot pin -> ground. Shifts h, not dh/da
 
 // ---------------------------------------------------------------------------
 // DRIVETRAIN EFFICIENCY -- *** BACK-SOLVED, NOT MEASURED. CIRCULAR. ***
