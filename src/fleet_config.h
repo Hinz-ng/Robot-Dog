@@ -43,6 +43,30 @@ static constexpr float MOTOR_KV_NAMEPLATE = 360.0f;   // rpm/V -- cross-check on
 // numbers that must agree, with nothing checking them, is a latent edit bug.
 static constexpr float KT_PER_KE = 1.5f;
 
+// ---------------------------------------------------------------------------
+// *** EVERY CURRENT AND TORQUE LIMIT IN THIS PROJECT IS IN *REPORTED* AMPS. ***
+// ---------------------------------------------------------------------------
+// M2, 2026-08-20, measured the current sense UNDER-reading on both built boards:
+//     J01  i_scale = 0.9621 +-1.2%   -> true current is 3.9% HIGHER than reported
+//     J02  i_scale = 0.9690 +-2.7%   -> 3.2% higher (PROVISIONAL, see joint_cal.h)
+// So a limit written as 6.0 A actually trips at ~6.24 A of real current, and a
+// torque commanded through calKt() at i_scale = 1.0 is delivered ~3-4% OVER.
+// Affected today: AC_IMAX_ABORT (autocalib.h), CURR_LIMIT / motor.current_limit
+// and the guard thresholds (open_test.cpp) -- all reported amps, all under-stated
+// by the same 3-4%. NOT dangerous at present bench margins. IT MUST BE RESOLVED
+// BEFORE TIER-0 SHIPS A TORQUE LIMIT, and the fix is one decision, not a sweep:
+// either keep reported amps everywhere and derate the limits, or correct the
+// sense gain AT SOURCE in the LowsideCurrentSense constructor -- in which case
+// the reported-amp UNIT itself moves, R_eff and L both shift by 1/g on every
+// row, and AUTOCALIB phases 3-4 must be re-run fleet-wide. Do not do half of it.
+//
+// Two boards 0.72% apart, both ~3.5% low, points at the current-sense constant
+// assumed in the library rather than at per-board shunt tolerance -- which would
+// scatter in both directions. It is still NOT pooled into a fleet constant here:
+// two samples can fail to reject commonality, they cannot establish it, and
+// pooling is exactly the move that hid a real 0.80% vbus_scale difference for
+// two weeks. i_scale stays per-row in joint_cal.h.
+//
 // sqrt(ia^2 + ib^2 + ic^2) = sqrt(3/2) * |I_dq| for a balanced three-phase set.
 // This is the integrity check that closes at every rotor position and every
 // speed: |I| / sqrt(Iq^2 + Id^2) must sit at 1.2247. Used by the sense-mismatch
@@ -282,6 +306,9 @@ static constexpr float LEG_CONTACT_OFFSET_MM = 12.0f;    // foot pin -> ground. 
 // DRIVETRAIN EFFICIENCY -- *** BACK-SOLVED, NOT MEASURED. CIRCULAR. ***
 // ---------------------------------------------------------------------------
 // eta = 4.5 / (2 * 87.7 * 0.026626 * 1.05) = 0.918, from A1's stored line.
+// (0.026626 is the pre-2026-08-18 Kt; at the M1-corrected 0.026912 the same
+// arithmetic returns 0.908. It changes nothing -- see below, it is circular
+// either way, and a circular number does not become sound by being rescaled.)
 //
 // THAT LINE'S OWN "HOW MEASURED" COLUMN READS `F = 2*G*eta*Kt*I`. The 4.5 N was
 // COMPUTED with a formula that already contained eta -- so back-solving eta out

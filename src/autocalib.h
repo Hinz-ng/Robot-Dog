@@ -160,7 +160,30 @@ const float   AC_ZEA_SD_WARN  = 0.08f;
 const float   AC_ZEA_SE_FAIL  = 0.035f;   // rad elec (2.0 deg) on the median
 
 const uint8_t AC_R_N          = 9;
-const float   AC_R_V[AC_R_N]  = { 0.46f, 0.40f, 0.35f, 0.30f, 0.25f,
+// TOP POINT 0.46 -> 0.68 V, PERMANENT AND FLEET-WIDE, 2026-08-20. Not a tuning
+// preference: it fixed a diagnostic that was returning a physically impossible
+// answer. R and U0 are strongly anti-correlated in this fit, so a short lever
+// arm lets them trade off against each other.
+//
+//                      corr(R,U0)   SE(R)        U0 signif.        resid rms
+//   old top 0.46 V     -0.89/-0.90  0.68/0.69%   9.1s / 2.8s WARN  2.19/2.23 mV
+//   new top 0.68 V     -0.84/-0.84  0.41/0.37%   13.0s / 12.1s     1.87/1.67 mV
+//
+// The consequence that mattered was the cold/hot bracket around M2. On the old
+// ladder the fitted dR was +1.87% while U0 moved -67%, and refitting the slope
+// with U0 HELD gave dR = -1.78%: heating that ran backwards. On the new ladder
+// dU0 is -16% and dR-with-U0-held is +0.71% = +1.8 K, which is what two
+// back-to-back ~8 J sweeps should do. J02 agrees: +0.43% = +1.1 K, 9/9 points,
+// zero drift, U0 at 14.4s/13.7s.
+//
+// *** RETRACTION, recorded because the conclusion survived and its reasoning
+// did not. *** The old bracket was first rejected with "every hot current is
+// higher, so R did not rise". That silently assumes U0 is FIXED. It was not --
+// it moved 67%, and the entire fitted R rise was that trade-off. The correct
+// diagnostic is the constrained refit with U0 held, never a raw current
+// comparison. A right answer reached by wrong reasoning is the more dangerous
+// failure, because it survives the retraction of the reasoning.
+const float   AC_R_V[AC_R_N]  = { 0.68f, 0.40f, 0.35f, 0.30f, 0.25f,
                                   0.20f, 0.16f, 0.12f, 0.08f };   // DESCENDING
 const uint16_t AC_R_SETTLE_MS = 350;
 const uint16_t AC_R_MEAS_MS   = 250;
@@ -226,7 +249,12 @@ const float    AC_T_AGREE     = 0.25f;    // the two T estimates must agree
 
 const float    AC_RAMP_V      = 0.05f;
 const uint8_t  AC_RAMP_MS     = 10;
-const float    AC_IMAX_ABORT  = 6.0f;     // A amplitude: hard abort
+// *** REPORTED AMPS, NOT TRUE AMPS. *** M2 2026-08-20 measured the sense
+// UNDER-reading by 3.9% (J01) / 3.2% (J02), so this trips at ~6.24 / 6.19 A of
+// real current. Every current limit in this project is in the same units -- see
+// the i_scale block in fleet_config.h. Not dangerous at these margins; it has
+// to be stated before anything ships a torque limit.
+const float    AC_IMAX_ABORT  = 6.0f;     // A amplitude: hard abort (REPORTED A)
 const float    AC_COAST_RADS  = 5.0f;
 // F1 -- the |I|/Iq gate. |I| = sqrt(ia^2+ib^2+ic^2) is ALWAYS POSITIVE, so
 // mean(|I|) > |mean(I)| whenever there is ripple, and the smaller the DC current
@@ -342,6 +370,13 @@ static float ac_wx[2*AC_W_N], ac_wy[2*AC_W_N];        // Ke fit: vel, U - R*Iq -
 static float ac_w_vel[2*AC_W_N], ac_w_iq[2*AC_W_N], ac_w_u[2*AC_W_N];
 static float ac_floop[2*AC_W_N];                      // F3: measured loop rate per point
 static uint8_t ac_wn;
+// One-shot: set by handleSerial() when it sees '-' immediately followed by
+// '5' (the swapped-order chord for finding 2's mandatory repeat -- fwd/rev
+// asymmetry was confounded with warm-up ordering because every phase-5 run
+// went forward-then-reverse). acP5() consumes and clears it unconditionally
+// on entry so a failed/aborted run, or a '-' typed for unrelated jogging
+// long before some later '5', can never leave a stale swap armed.
+static bool ac_p5_swap_next = false;
 // [direction][speed slot][bin] ; direction 0 = forward, 1 = reverse
 static float    ac_bin_id[2][AC_BIN_SPEEDS][AC_BINS];
 static float    ac_bin_iq[2][AC_BIN_SPEEDS][AC_BINS];
@@ -927,13 +962,22 @@ static void acP4() {
 // self-regulates to where Iq equals the drag current -- no velocity loop needed.
 // ===========================================================================
 static void acP5() {
+  // Consumed unconditionally, before either early return below, so a refused
+  // or aborted call can't leave the swap armed for some later, unrelated '5'.
+  bool swap = ac_p5_swap_next;
+  ac_p5_swap_next = false;
   if (!acNeed(3)) return;        // DATA: the drag fit is normalised against R
   // COMMUTATION: unlike phases 3 and 4 this one runs MODE_TORQUE through the
   // FOC path, so a wrong ZEA corrupts Ke and the whole drag map. Phase 3 no
   // longer implies an alignment, so state the requirement here rather than
   // inheriting it.
   if (!acHaveCommutation()) return;
-  SerialUART.println(F("[5] FREE-SPIN  (shaft must be free; ~50 s)"));
+  SerialUART.print(F("[5] FREE-SPIN  (shaft must be free; ~50 s)"));
+  // Order is part of the plant state for this run -- printed so it lands in
+  // the capture, not just typed and forgotten (finding 2's swapped repeat is
+  // worthless if the log doesn't say which run was which).
+  SerialUART.println(swap ? F("  -- ORDER SWAPPED: reverse first ('-' then '5')")
+                           : F("  -- order: forward first (default)"));
   acEnter();
   for (uint8_t d = 0; d < 2; d++)
     for (uint8_t s = 0; s < AC_BIN_SPEEDS; s++) {
@@ -960,10 +1004,19 @@ static void acP5() {
   motor.PID_current_q.limit = AC_W_VLIMIT;
   motor.PID_current_d.limit = AC_W_VLIMIT;
 
-  for (uint8_t d = 0; d < 2 && !ac_abort; d++) {
+  // order[] controls which direction physically RUNS first; d itself keeps
+  // its fixed meaning (0 = forward, 1 = reverse) everywhere it indexes
+  // storage (ac_bin_*, ac_floop, drag_c/drag_v fwd-rev), so swapping the
+  // order cannot relabel which data is which -- only the warm-up sequence.
+  uint8_t order[2];
+  if (swap) { order[0] = 1; order[1] = 0; } else { order[0] = 0; order[1] = 1; }
+  for (uint8_t oi = 0; oi < 2 && !ac_abort; oi++) {
+    uint8_t d = order[oi];
     float sgn = (d == 0) ? +1.0f : -1.0f;
     SerialUART.println(d == 0 ? F("    -- FORWARD --") : F("    -- REVERSE --"));
-    if (d == 1) acCoast();                       // never command a reversing voltage
+    if (oi > 0) acCoast();                        // never command a reversing voltage
+                                                    // straight off the prior direction,
+                                                    // whichever direction ran first
     if (ac_abort) break;
     target = 0.0f;
     motor.PID_current_q.reset(); motor.PID_current_d.reset();
@@ -1308,8 +1361,15 @@ static void acP7() {
   }
   SerialUART.print(F("!! WRITE IN: multimeter Vbus = ______ V   (firmware read "));
   SerialUART.print(driver.voltage_power_supply, 2); SerialUART.println(F(")"));
-  SerialUART.println(F("   >1% apart -> recalibrate VBUS_SCALE for THIS BOARD before"));
+  // Threshold lowered from 1% to 0.5% on 2026-08-18. Two boards were then
+  // measured 0.80% apart, and J01's own M1 error was 1.08% -- which a ">1%"
+  // trigger would have let through by 0.02 percentage points. A 1% gate cannot
+  // separate "correct" from "one board's divider on another board's numbers".
+  SerialUART.println(F("   >0.5% apart -> recalibrate VBUS_SCALE for THIS BOARD before"));
   SerialUART.println(F("   trusting R_EFF, U0 or KE. They all scale with it."));
+  SerialUART.println(F("   Two boards MEASURED 0.80% apart 2026-08-18: this is not a formality."));
+  SerialUART.println(F("   USE A METER YOU HAVE CHECKED. The original scale was 1.1% low"));
+  SerialUART.println(F("   because of the METER, not the fit, and it stood for eleven days."));
   SerialUART.println();
 
   // ---- verdict table: read this BEFORE pasting anything -------------------
@@ -1329,15 +1389,24 @@ static void acP7() {
     acPrintVal(F("drag_c_rev "), ac_drag_c[1], 4, true, ac_v_drag, F("A"));
     acPrintVal(F("drag_v_fwd "), ac_drag_v[0], 6, true, ac_v_drag, F("A/(rad/s)"));
     acPrintVal(F("drag_v_rev "), ac_drag_v[1], 6, true, ac_v_drag, F("A/(rad/s)"));
-    // Kt is DERIVED and deliberately absent from the row. Printed here only as
-    // the one absolute cross-check the routine can make on the VOLTAGE scale.
+    // Kt is DERIVED and deliberately absent from the row. Printed as a NAMEPLATE
+    // cross-check and nothing more.
+    // *** RETRACTED 2026-08-18: this used to say "the one absolute cross-check
+    // the routine can make on the VOLTAGE scale", and the printed line said
+    // "confirms the VOLTAGE scale only". It cannot. Ke is COMPUTED from
+    // vbus_scale, so this comparison cannot referee the scale it was derived
+    // from -- it is circular. The old J01 agreement of +0.38% looked like
+    // confirmation and was a coincidence of a divider that was 1.1% LOW; at the
+    // corrected scale the same joint reads +1.45%. Only M1 against an external
+    // meter checks vbus_scale. What this line IS still good for: excluding a
+    // grossly wrong nameplate KV (KV380 lands 7-8% out, not 1-2%).
     SerialUART.print(F("  Kt     ")); SerialUART.print(KT_PER_KE*ac_Ke, 6);
     SerialUART.print(F("\tDERIVED = 1.5*Ke, never stored. vs nameplate KV"));
     SerialUART.print(MOTOR_KV_NAMEPLATE, 0); SerialUART.print(F(" = "));
     SerialUART.print(60.0f/(_2PI*MOTOR_KV_NAMEPLATE), 6);
     SerialUART.print(F("  ("));
     SerialUART.print(100.0f*(KT_PER_KE*ac_Ke*_2PI*MOTOR_KV_NAMEPLATE/60.0f - 1.0f), 2);
-    SerialUART.println(F("%) -- confirms the VOLTAGE scale only, see M2"));
+    SerialUART.println(F("%) -- NAMEPLATE check only. It CANNOT check vbus_scale: Ke comes from it. Run M1."));
   }
   SerialUART.println();
 
@@ -1603,19 +1672,44 @@ void acVerifyZea() {
 // body-diode conduction (~1.5*U0*I ~ 0.05 W) both survive it, and together they
 // are ~5% of the differenced signal -- the same size as the gain error being
 // hunted. A two-point difference would report g ~ 0.95 on a PERFECTLY
-// calibrated board. Five points and a quadratic separate them:
+// calibrated board. A ladder and a quadratic separate them:
 //
 //     P_bus = a + b*I + c*I^2      a = housekeeping, b = switching + dead time
-//     g     = 1.5 * R_eff / c      (fit OFFLINE -- see README section 20.1)
+//     g     = 1.5 * R / c          (fit OFFLINE -- see README section 20.1)
+//
+// USE THE LADDER'S OWN R, NOT A PHASE-3 R -- changed 2026-08-20. The R in that
+// formula must come from this run's own U_delivered-vs-I slope, over this run's
+// own current range, in this run's own thermal state. A cross-session phase 3
+// re-introduces exactly the drift the cold/hot bracket exists to bound, and
+// R_eff turns out to be current-range dependent by 1.0-1.6% anyway. The
+// self-fit formulation also removes the need for the phase-3 bypass clip.
 //
 // DOWNWARD ladder, same reason as phase 3: the lock is established at the
-// strongest hold first, so cogging never gets to win. Thermal: 3.2 W at the top
-// point, hence the 20 s hard cap per point and the instruction to bracket the
-// whole run with phase 3 so R_eff drift is bounded rather than assumed away.
+// strongest hold first, so cogging never gets to win.
+//
+// EIGHT POINTS, 12 s EACH -- widened from five at 20 s on 2026-08-20, because
+// J02's SE(c) came in at 2.37% against J01's 0.66%, which is the difference
+// between a decisive result and a provisional one. A 3-parameter quadratic on
+// n = 5 has 2 degrees of freedom; n = 8 has 5.
+//   *** ARITHMETIC NOTE, so the next reader does not "fix" this back. *** The
+//   session write-up called for "7 points (add 0.62, 0.47, 0.32)". Five plus
+//   three is EIGHT, and 4 dof needs 7 -- the two halves of that instruction
+//   disagree. The three named voltages were taken, because they are the
+//   concrete half AND because the thermal arithmetic confirms them: the old
+//   ladder was 10.84 W-equivalent x 20 s = 217 J, the new one is 17.94 x 12 =
+//   215 J. Eight-at-twelve reproduces the old thermal load almost exactly,
+//   which is what "cap dwell at 12 s so total thermal load doesn't rise" means.
+//   Seven would come in under it.
+// The 12 s cap does double duty: point 1 was still HEATING through its 20 s
+// averaging window on both joints (drift -0.63% J01, -0.93% J02), smearing the
+// (I_reported, Ibus) pairing the whole fit rests on. A shorter window reduces
+// that smear, and 12 s is still long enough for a DMM to settle.
 // ===========================================================================
-const uint8_t  AC_M2_N          = 5;
-const float    AC_M2_V[AC_M2_N] = { 0.70f, 0.55f, 0.40f, 0.25f, 0.16f };
-const uint16_t AC_M2_MAX_MS     = 20000;   // hard cap per point -- thermal
+const uint8_t  AC_M2_N          = 8;
+const float    AC_M2_V[AC_M2_N] = { 0.70f, 0.62f, 0.55f, 0.47f,
+                                    0.40f, 0.32f, 0.25f, 0.16f };  // DESCENDING
+const uint16_t AC_M2_MAX_MS     = 12000;   // hard cap per point -- thermal AND
+                                           //   point-1 heating smear, see above
 const uint16_t AC_M2_TICK_MS    = 2000;    // running-mean heartbeat
 
 static void acM2Assist() {
@@ -1692,8 +1786,12 @@ static void acM2Assist() {
   }
   acExit(true);
   if (ac_abort) SerialUART.println(F("[M2] ABORTED by a guard, not by you -- discard the last point."));
-  SerialUART.println(F("[M2] done. Press 3 NOW for hot R_eff, then fit P_bus = a + b*I + c*I^2"));
-  SerialUART.println(F("     offline and take g = 1.5*R_mean/c. See README section 20.1."));
+  SerialUART.println(F("[M2] done. Press 3 NOW for hot R_eff (the thermal bracket)."));
+  SerialUART.println(F("     Fit BOTH offline, from THIS run's own data:"));
+  SerialUART.println(F("       P_bus = a + b*I + c*I^2      and      U_del = U0 + R*I"));
+  SerialUART.println(F("       g = 1.5*R/c   <- R is the SELF-FIT slope above, NOT a phase-3 R."));
+  SerialUART.println(F("     U_del uses the meter burden: V_term = V_s - Ibus*R_b, R_b UNPOWERED."));
+  SerialUART.println(F("     See CALIBRATION.md M2 for the full procedure and the error budget."));
 }
 
 // ===========================================================================
@@ -1841,6 +1939,9 @@ static void acStatus() {
     F("2 ALIGN  ZEA + direction"), F("3 R/U0   self-locked, still"),
     F("4 L      step train, locked"), F("5 SPIN   free-spin both dirs (~50 s)"),
     F("6 T/INL  computation only") };
+  SerialUART.println(F("  ('-' then '5' within 0.8s runs phase 5 reverse-first, for the"));
+  SerialUART.println(F("   swapped-order repeat -- fwd/rev asymmetry was confounded with"));
+  SerialUART.println(F("   warm-up ordering when every run went forward-first.)"));
   const uint8_t pre[7] = { 0, 0, 1, 2, 3, 3, 5 };
   for (uint8_t n = 1; n <= 6; n++) {
     SerialUART.print(ac_done[n] ? F("  [x] ") : F("  [ ] "));

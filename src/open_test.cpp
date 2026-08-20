@@ -401,17 +401,30 @@ const int   DIR_STORED = CAL.dir;
 // this clone. Pure proportional fit; the 33 mV offset from a 2-point line fit is
 // smaller than the +-0.05 V rounding in the 22.5 V meter reading, so it is not
 // resolvable and is discarded. Back-predicts both points to within 0.07%.
-//   full scale  = 4095 * 0.008358 = 34.23 V bus
-//   resolution  = 8.36 mV / count
+// THAT 2-POINT FIT GAVE 0.008358 AND WAS 1.1% LOW -- not because the fit was
+// bad, but because the METER was: the DT9205A used for it has a measured ~1.11%
+// DCV gain error, and 0.008358 x 1.0111 lands 0.03% from the 2026-08-18 M1
+// re-measurement against a UT89X. The fit residual was never the problem.
+//   full scale  = 4095 * 0.008448 = 34.60 V bus   (B-SPI-01 / J01, M1 2026-08-18)
+//   resolution  = 8.45 mV / count
+// Both figures are PER BOARD. B-ABZ-01 / J02 measures 0.008516 -> 34.87 V full
+// scale, 8.52 mV/count: 0.80% apart, measured, not estimated.
+// LEFT AT 0.008516 AFTER 2026-08-20, DELIBERATELY. A later session read the
+// banner at 12.29 against a UT89X 12.27 -- 0.02 V, 0.16%, against that meter's
+// own +-(0.5%+2) = +-0.064 V at 12.3 V. The disagreement is a QUARTER of the
+// resolving power of the instrument being used to judge it. Chasing it would
+// move R_eff, U0, Ke and L by less than their own uncertainties on evidence the
+// meter cannot supply. It is folded into M2's error budget instead.
 //   6S at 25.2 V = 3015 counts = 74% of range -> NO PB10 / 48V_EN change needed.
 // Re-calibrate if PB10 (48V_EN) is ever driven: it switches the divider range.
 //
 // THE SCALE ITSELF IS PER-BOARD AND COMES FROM joint_cal.h. It used to be a
-// literal here, which made it look like a fleet constant. It is not: it is a
-// resistor divider, so ~2% board to board, and R_eff, U0 and Ke all scale
-// linearly with it -- that 2% would land straight on every torque command. A
-// literal here would also have silently overridden whatever a future row said.
-// M1 (multimeter, two bus voltages) is mandatory per board.
+// literal here, which made it look like a fleet constant. It is not: two boards
+// have now been MEASURED 0.80% apart (0.008448 / 0.008516, M1 2026-08-18), and
+// R_eff, U0 and Ke all scale linearly with it -- so that 0.80% lands straight on
+// every torque command. A literal here would also have silently overridden
+// whatever a future row said. M1 (multimeter, two bus voltages) is mandatory per
+// board, and it is the FIRST thing run on a new board, before AUTOCALIB.
 //
 // vbus_scale = 0 in the row disables this entire feature. Behaviour then is
 // byte-identical to a hardcoded divisor, which keeps rollback a one-field edit.
@@ -672,6 +685,7 @@ void printHelp() {
   SerialUART.println(F("--- logger: l=fast L=slow k=kick j=zero-kick d=dump a=stats ---"));
   SerialUART.println(F("--- V:verify stored ZEA | Y:autocalib menu  1..6:phases  7:report  0:reset ---"));
   SerialUART.println(F("--- manual: N=M2 bus-power ladder  B/b=M4 breakaway ramp +/- ---"));
+  SerialUART.println(F("--- '-' then '5' (within 0.8s): phase 5 runs REVERSE first, not forward ---"));
 }
 
 void startMotor() {
@@ -766,14 +780,28 @@ void adjustTarget(float dir) {
 
 #include "autocalib.h"          // immediately above void handleSerial()
 
+// Chord tracking for '-' then '5' (swapped-order phase 5, see ac_p5_swap_next
+// in autocalib.h). Deliberately narrow: only a '5' arriving within
+// AC_CHORD_WINDOW_MS of a '-'/'_' arms the swap, so a '-' typed minutes
+// earlier for ordinary target jogging can never silently swap a later,
+// unrelated phase-5 run -- the exact stale-flag mislabeling class the belt
+// banner bug already cost this project twice.
+static char     ac_last_key    = 0;
+static uint32_t ac_last_key_ms = 0;
+static const uint32_t AC_CHORD_WINDOW_MS = 800;
+
 void handleSerial() {
   while (SerialUART.available()) {
     char c = (char)SerialUART.read();
+    if (c == '5' && (ac_last_key == '-' || ac_last_key == '_') &&
+        (millis() - ac_last_key_ms < AC_CHORD_WINDOW_MS)) {
+      ac_p5_swap_next = true;
+    }
     switch (c) {
       case 'g': case 'G': startMotor(); break;
       case 'x': case 'X': case 's': case 'S': stopMotor("user"); break;
       case '+': case '=': adjustTarget(+1); break;
-      case '-': case '_': adjustTarget(-1); break;
+      case '-': case '_': adjustTarget(-1); break;   // also arms swap if '5' follows -- see chord above
       case 'o': case 'O': setMode(MODE_OPENLOOP); break;
       case 't': case 'T': setMode(MODE_TORQUE); break;
       case 'c': case 'C': setMode(MODE_TORQUE_CURRENT); break;
@@ -798,7 +826,7 @@ void handleSerial() {
       case '2': acPhase(2); break;                     // ALIGN
       case '3': acPhase(3); break;                     // R/U0
       case '4': acPhase(4); break;                     // L
-      case '5': acPhase(5); break;                     // FREE-SPIN
+      case '5': acPhase(5); break;                     // FREE-SPIN ('-' then '5': reverse first)
       case '6': acPhase(6); break;                     // T/INL
       case '7': acPhase(7); break;                     // REPORT
       case 'q': case 'Q':
@@ -830,6 +858,7 @@ void handleSerial() {
       case '?': printHelp(); break;
       default: break;
     }
+    ac_last_key = c; ac_last_key_ms = millis();
   }
 }
 
@@ -847,6 +876,23 @@ void setup() {
   // it afterwards (see the |I|/Iq gate in the verification procedure).
   analogReadResolution(12);                  // default is 10-bit; 2 bits for free
   pinMode(PIN_VBUS, INPUT_ANALOG);           // detach digital buffer, unload divider
+  // THE SEED IS ALREADY AVERAGED, AND THAT MATTERS FOR HOW ITS SCATTER IS READ.
+  // 64 samples with the first conversion discarded. So when 5 back-to-back power
+  // cycles on J02 (2026-08-20) gave four boots at 12.29 V and ONE at 12.34 --
+  // 5.9 counts, 0.05 V -- that outlier CANNOT be per-sample ADC noise: white
+  // noise is suppressed 8x by this mean, and 5.9 counts of it would need a
+  // per-sample sd of ~47 counts, which nothing here shows. The "unaveraged seed"
+  // explanation offered for it is therefore WRONG, and README section 24.14 has
+  // been corrected. Whatever moves it -- pack recovery between power cycles is
+  // the leading candidate, since the pack is unplugged each time -- is a real
+  // per-boot offset common to all 64 samples, and averaging harder cannot touch
+  // it.
+  // WHY IT IS NOT COSMETIC: this value IS driver.voltage_power_supply, which is
+  // the divisor velocityOpenloop() uses, so it lands 1:1 on M2's g. A boot at
+  // 12.34 instead of 12.19 would have biased J02's g by +1.23% -- larger than
+  // J01's entire error budget, with NO symptom in the data. The mitigation is
+  // procedural and it is in CALIBRATION.md's M2 row: compare the banner against
+  // the meter at session start, and REBOOT if they differ by more than 0.03 V.
   {
     uint32_t acc = 0;
     (void)analogRead(PIN_VBUS);   // discard: first conversion carries residue
@@ -970,7 +1016,11 @@ void setup() {
   SerialUART.print(F(" Ilim="));      SerialUART.print(motor.current_limit, 2);
   // Echo every load-bearing default: a library default is a decision nobody made.
   SerialUART.print(F(" v_align="));   SerialUART.print(motor.voltage_sensor_align, 2);
-  SerialUART.print(F(" (I_align="));  SerialUART.print(motor.voltage_sensor_align / CAL.R_eff, 1);
+  // R_eff is 0.0f on every UNBUILT row (= NOT MEASURED, see joint_cal.h), so the
+  // alignment current is genuinely unknown there. Print "?" rather than an inf.
+  SerialUART.print(F(" (I_align="));
+  if (CAL.R_eff > 0.0f) SerialUART.print(motor.voltage_sensor_align / CAL.R_eff, 1);
+  else                  SerialUART.print(F("? R_eff NOT MEASURED"));
   SerialUART.print(F("A) spi_nops=")); SerialUART.print(SPI_HALF_NOPS);
   SerialUART.print(F(" jump_guard=")); SerialUART.println(SPI_JUMP_GUARD ? 1 : 0);
 
