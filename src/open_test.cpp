@@ -431,14 +431,28 @@ const int   DIR_STORED = CAL.dir;
 const uint32_t PIN_VBUS   = PA0;
 const float VBUS_SCALE    = CAL.vbus_scale;   // V per ADC count -- PER BOARD, M1
 // SEED-ONLY. Arduino analogRead() returns 0 on any pin of this ADC once
-// currentSense.init() has armed the injected-conversion group -- confirmed
-// 2026-__-__ by vraw=0 from an isolated call in the print block, while the
-// pre-init setup read works every time. Not a contention-between-two-calls
-// issue: ONE call fails. HAL_ADC_Start returns BUSY because the peripheral is
-// never in the READY state again.
-// Live tracking requires a register-level REGULAR-group conversion on PA0.
-// Regular and injected groups coexist by design: injected preempts, regular
-// resumes. No pausing, no blind interval in the current loop.
+// currentSense.init() has run -- confirmed 2026-__-__ by vraw=0 from an
+// isolated call in the print block, while the pre-init setup read works every
+// time. Not a contention-between-two-calls issue: ONE call fails.
+//
+// MECHANISM CORRECTED 2026-08-21 by the v1 'p' probe dump on J02. This block
+// previously said the current sense owned the INJECTED group, and that regular
+// and injected coexist by design (injected preempts, regular resumes). BOTH ARE
+// RETRACTED -- the dump shows JSQR = 0 and JADSTART = 0 on both instances, so
+// there is no injected group at all, and ADSTART = 1 on both, so the sense runs
+// on the REGULAR group. HAL_ADC_Start therefore returns BUSY because the
+// REGULAR group is already started. Same symptom, different owner.
+//
+// *** AFTER currentSense.init(), analogRead() IS FORBIDDEN ON THIS BOARD. ***
+// It fails safe TODAY (returns 0) only because ADSTART is already 1. It fails
+// by contending for the very sequence the current sense owns: a core or HAL
+// version that stops the ADC first would let it through, rewrite SQR1/SMPR and
+// destroy current sensing with no error and no symptom beyond garbage |I|/Iq.
+//
+// What live tracking actually requires is now OPEN, not settled: if PA0 is
+// already a rank of that regular sequence and already landing in the DMA
+// buffer, it needs no ADC configuration whatsoever. UNCONFIRMED -- that is what
+// the VBUS ADC PROBE v3 below is for.
 // Deferred -- the bench has no sag to track. See README 8.3.
 const bool  VBUS_LIVE     = false;
 const float VBUS_TF       = 0.020f;     // 20 ms. Noise here becomes motor current.
@@ -452,6 +466,640 @@ bool  vbus_valid          = false;
 // would then hold its last good value rather than reporting the fault. That is
 // the correct behaviour for a divisor, but it means this window is not, and must
 // not be mistaken for, overvoltage protection.
+
+// DIAGNOSTIC ONLY, added 2026-08-21 for the 62-count DMA-vs-seed offset.
+// PB14 and PB12 are ranks 4 and 3 of ADC1's regular sequence, so post-init they
+// are readable from the DMA buffer -- which makes the PAIR the discriminator
+// between an ADC-wide offset and a channel-1-specific one. Nothing in the
+// control path reads these. DELETE THE WHOLE DIAGNOSTIC once the gap is named.
+float seed_ch5       = 0.0f;   // PB14 = Temp_ADC,    ADC1_IN5
+float seed_ch11      = 0.0f;   // PB12 = SpeedBT_ADC, ADC1_IN11
+bool  seed_aux_valid = false;
+
+// ===========================================================================
+// VBUS ADC PROBE v3 -- 'p'.  PURE READ. No peripheral register is written.
+//
+// PREMISE CORRECTION (2026-08-21, from the v1 dump on J02):
+//   This board does NOT use the ADC injected group. JSQR = 0 and JADSTART = 0
+//   on BOTH instances; ADSTART = 1 on both. SimpleFOC's b_g431 path runs the
+//   current sense on the REGULAR group with circular DMA. The "regular and
+//   injected coexist" note in the SEED-ONLY block above is RETRACTED, and so is
+//   the claim that analogRead() fails on an injected-BUSY peripheral -- it
+//   fails because the REGULAR group is permanently started.
+//
+// WHAT THIS LOOKS FOR: ADC1 SQR1 shows a 5-conversion sequence (ranks 12,3,11,5)
+// and SMPR1 sets 47.5 cycles on channel 1 -- which is ADC1_IN1 = PA0 and is NOT
+// in ranks 1-4. If PA0 is rank 5, live Vbus needs no ADC configuration at all.
+//
+// v1's adcBringUp() and adcReadCh() are DELETED, not commented out: their
+// premise is dead, and adcReadCh's read-modify-write on CR was the one real
+// hazard in v1. Nothing here writes a peripheral register.
+// ===========================================================================
+// RM0440 ADC_SMPR sample times, in TENTHS of an ADC clock cycle so the .5s stay
+// exact in integer arithmetic. Index is the raw 3-bit SMP field.
+static const uint16_t SMP_CYC_X10[8] = { 25, 65, 125, 245, 475, 925, 2475, 6405 };
+// Successive-approximation time by ADC_CFGR.RES (12/10/8/6-bit), same units.
+static const uint16_t RES_CYC_X10[4] = { 125, 105, 85, 65 };
+
+static uint8_t adcGetSmp(ADC_TypeDef* a, uint8_t ch) {
+  return (ch <= 9) ? ((a->SMPR1 >> (3u*ch)) & 0x7u)
+                   : ((a->SMPR2 >> (3u*(ch-10u))) & 0x7u);
+}
+static void adcSetSmp(ADC_TypeDef* a, uint8_t ch, uint8_t smp) {
+  if (ch <= 9) MODIFY_REG(a->SMPR1, 0x7u << (3u*ch),      (uint32_t)smp << (3u*ch));
+  else         MODIFY_REG(a->SMPR2, 0x7u << (3u*(ch-10u)),(uint32_t)smp << (3u*(ch-10u)));
+}
+
+// Kept from v1 and still CALLED: this is the only thing that prints CFGR, SMPR
+// and JSQR, and two of v2's failure branches ask for exactly those. The
+// JADSTART / JSQR fields now read as evidence that the injected group is empty
+// rather than as a description of how the sense works.
+static void adcDump(const __FlashStringHelper* nm, ADC_TypeDef* a) {
+  SerialUART.print(nm);
+  SerialUART.print(F(" ADEN="));    SerialUART.print((a->CR & ADC_CR_ADEN)     ? 1:0);
+  SerialUART.print(F(" ADSTART=")); SerialUART.print((a->CR & ADC_CR_ADSTART)  ? 1:0);
+  SerialUART.print(F(" JADSTART="));SerialUART.print((a->CR & ADC_CR_JADSTART) ? 1:0);
+  SerialUART.print(F(" DEEPPWD=")); SerialUART.print((a->CR & ADC_CR_DEEPPWD)  ? 1:0);
+  SerialUART.print(F(" CFGR=0x"));  SerialUART.print(a->CFGR, HEX);
+  SerialUART.print(F(" SQR1=0x"));  SerialUART.print(a->SQR1, HEX);
+  SerialUART.print(F(" JSQR=0x"));  SerialUART.print(a->JSQR, HEX);
+  SerialUART.print(F(" SMPR=0x"));  SerialUART.print(a->SMPR1, HEX);
+  SerialUART.print('/');            SerialUART.print(a->SMPR2, HEX);
+  uint8_t jl = (uint8_t)((a->JSQR & 0x3u) + 1u);
+  SerialUART.print(F("  JL=")); SerialUART.print(jl); SerialUART.print(F(" JSQ="));
+  for (uint8_t k = 0; k < jl; k++) {
+    uint8_t sh = (uint8_t)(ADC_JSQR_JSQ1_Pos + 6u*k);
+    uint8_t ch = (uint8_t)((a->JSQR >> sh) & 0x1Fu);
+    SerialUART.print(ch); SerialUART.print(k+1 < jl ? ',' : ' ');
+    SerialUART.print(F("(smp")); SerialUART.print(adcGetSmp(a, ch)); SerialUART.print(')');
+  }
+  SerialUART.println();
+}
+
+static uint8_t adcSeqCh(ADC_TypeDef* a, uint8_t rank) {          // rank 1..9
+  if (rank <= 4) return (uint8_t)((a->SQR1 >> (6u + 6u*(rank-1u))) & 0x1Fu);
+  return             (uint8_t)((a->SQR2 >> (6u*(rank-5u)))        & 0x1Fu);
+}
+
+// Whole-sequence conversion time in tenths of an ADC cycle, summed from the
+// registers rather than written down: sum over ranks of (sample + SAR time).
+// Derived, not hardcoded, because §3's hazard is precisely that this total
+// changes silently when someone edits SQR1 or SMPR.
+static uint32_t adcSeqCycX10(ADC_TypeDef* a) {
+  const uint8_t L   = (uint8_t)((a->SQR1 & 0xFu) + 1u);
+  const uint8_t res = (uint8_t)((a->CFGR & ADC_CFGR_RES_Msk) >> ADC_CFGR_RES_Pos);
+  uint32_t tot = 0;
+  for (uint8_t r = 1; r <= L && r <= 9; r++)
+    tot += (uint32_t)SMP_CYC_X10[adcGetSmp(a, adcSeqCh(a, r))] + RES_CYC_X10[res];
+  return tot;
+}
+
+static bool addrIsRam(uint32_t p) {
+  return (p >= 0x20000000u && p < 0x20008000u)      // SRAM1/2
+      || (p >= 0x10000000u && p < 0x10003000u);     // CCM SRAM
+}
+
+static void adcSeqDump(const __FlashStringHelper* nm, ADC_TypeDef* a) {
+  uint8_t L = (uint8_t)((a->SQR1 & 0xFu) + 1u);
+  SerialUART.print(nm);
+  SerialUART.print(F(" ADSTART=")); SerialUART.print((a->CR & ADC_CR_ADSTART) ? 1 : 0);
+  SerialUART.print(F(" SQR2=0x")); SerialUART.print(a->SQR2, HEX);
+  SerialUART.print(F(" L=")); SerialUART.print(L);
+  SerialUART.print(F(" seq="));
+  for (uint8_t r = 1; r <= L && r <= 9; r++) {
+    uint8_t ch = adcSeqCh(a, r);
+    SerialUART.print(ch);
+    SerialUART.print(F("(smp")); SerialUART.print(adcGetSmp(a, ch)); SerialUART.print(')');
+    if (r < L) SerialUART.print(',');
+  }
+  SerialUART.print(F("  DR=")); SerialUART.println(a->DR);
+}
+
+// Walk every DMA channel; a channel whose CPAR points at this ADC's DR is the
+// one filling the sequence buffer. CMAR is then the buffer address.
+// G431 has DMA1_Channel1..6 and DMA2_Channel1..6 only -- channels 7/8 exist on
+// larger G4 parts, so the #ifdefs are what keep this source portable across the
+// family rather than dead branches.
+static DMA_Channel_TypeDef* const PROBE_DMA[] = {
+  DMA1_Channel1, DMA1_Channel2, DMA1_Channel3, DMA1_Channel4,
+  DMA1_Channel5, DMA1_Channel6,
+#ifdef DMA1_Channel7
+  DMA1_Channel7,
+#endif
+#ifdef DMA1_Channel8
+  DMA1_Channel8,
+#endif
+  DMA2_Channel1, DMA2_Channel2, DMA2_Channel3, DMA2_Channel4,
+  DMA2_Channel5, DMA2_Channel6,
+#ifdef DMA2_Channel7
+  DMA2_Channel7,
+#endif
+#ifdef DMA2_Channel8
+  DMA2_Channel8,
+#endif
+};
+
+// Index into PROBE_DMA of the channel feeding this ADC, or -1. Split out of
+// probeAdcDma so setup()'s seed-vs-DMA comparison can find the same buffer
+// without duplicating the walk -- one definition of "where the buffer is".
+static int adcDmaIdx(ADC_TypeDef* a) {
+  const uint32_t dr = (uint32_t)&a->DR;
+  for (uint8_t i = 0; i < (uint8_t)(sizeof(PROBE_DMA)/sizeof(PROBE_DMA[0])); i++)
+    if (PROBE_DMA[i]->CPAR == dr) return (int)i;
+  return -1;
+}
+
+// The live conversion buffer, or nullptr if there is no DMA channel or CMAR is
+// not RAM. Never dereference without checking -- a wild CMAR would fault.
+static volatile const uint16_t* adcDmaBuf(ADC_TypeDef* a) {
+  const int i = adcDmaIdx(a);
+  if (i < 0) return nullptr;
+  const uint32_t cmar = PROBE_DMA[i]->CMAR;
+  return addrIsRam(cmar) ? (volatile const uint16_t*)cmar : nullptr;
+}
+
+// 0-based buffer slot holding this channel, or -1. Looked up through the
+// sequence registers rather than written down: HARDWARE.md section 3's hazard
+// is exactly that these slot numbers move when someone edits SQR1.
+static int adcSlotOfCh(ADC_TypeDef* a, uint8_t ch) {
+  const uint8_t L = (uint8_t)((a->SQR1 & 0xFu) + 1u);
+  for (uint8_t r = 1; r <= L && r <= 9; r++)
+    if (adcSeqCh(a, r) == ch) return (int)(r - 1u);
+  return -1;
+}
+
+// ---------------------------------------------------------------------------
+// Vdma -- the bus voltage as the DMA path sees it. RAW: one sample, no filter,
+// no plausibility window, NOT driver.voltage_power_supply. It exists to be
+// compared against Vb (the calibrated seed) while a run is putting real current
+// through the board, which is the ONLY thing that tests H7: a reference shift
+// that scales with return current. Flat Vdma-Vb from 0.2 A to 3.0 A bounds H7
+// at bench scale; growth is disqualifying and is a board-layout finding.
+//
+// NAN, not 0, when the buffer is unreachable -- a zero would read as a real
+// measurement of a collapsed bus, and Print emits "nan" which parses as NaN
+// offline. DIAGNOSTIC -- delete with the rest of the DMA-offset work.
+// ---------------------------------------------------------------------------
+// ---- ADC PRE-CALIBRATION rev 2 (diagnostic, 2026-08-21) -------------------
+// MECHANISM CONFIRMED. CALFACT = 0 on BOTH ADCs after currentSense.init(),
+// measured by 'p': SimpleFOC's b_g431 init brings the converter up and never
+// calibrates it, while the Arduino core runs HAL_ADCEx_Calibration_Start()
+// inside EVERY analogRead(). Seed = calibrated converter, DMA = uncalibrated.
+// Rev 1 proved it: two instances, two independent factors, and each moved its
+// own reading by exactly CALFACT counts (ADC1 CF=117 -> +116.3, ADC2 CF=113 ->
+// +114), uniformly across all three channels, with the seed unchanged
+// (1436.3 -> 1436.2). The 60-count gap was an uncalibrated ADC.
+//
+// AND REV 1 WAS CALIBRATED AT THE WRONG CLOCK. +116.3 delivered where +59.4 was
+// needed -- 1.97x over -- with CALFACT1 = 117 of a 7-bit 127, i.e. 92% of range.
+// A trim code at the rail is a bad calibration, not a big offset. Cause:
+// HAL_ADC_DeInit (inside every analogRead) clears ADC12_COMMON->CCR, so at this
+// call site CKMODE = 00 and PRESC = 0000 -> f_adc is the async source UNDIVIDED.
+// The clock dump gives that source as PLL'P' = 170 MHz, ~2.8x the part maximum,
+// where the SAR comparator cannot settle. currentSense.init() later sets
+// PRESC = /16 -> 10.625 MHz, so rev 1 measured the offset at one clock and
+// applied it at another.
+//
+// So rev 2 calibrates TWICE -- once at the clock as found, once at the operating
+// clock -- and prints both factors. The hypothesis is then MEASURED in the same
+// boot that fixes it: if CCR_found is already the operating value, the clock was
+// never wrong and pass1 == pass2 says so in one line. Pass 2 is the one that
+// stands.
+//
+// SAFE BY CONSTRUCTION: runs while both ADCs are idle and DISABLED (analogRead
+// has DeInit'd them), touches no sequence register, and if HAL_ADC_Init later
+// cycles deep power-down the factor is simply lost -- CALFACT reads 0 again and
+// nothing changes. currentSense.init() re-measures its own zero offsets AFTER
+// this either way, which is why the phase currents are predicted not to move.
+//
+// *** ADC_PRECAL MUST BE false FOR ANY RUN OF RECORD until pass 2 is validated
+// on the bench. *** A knowingly-wrong CALFACT is on both instances until then;
+// the current path is probably immune (offsets re-measured after, no gain term
+// in an offset trim) but "probably" is not the standard for a constant. The CFG
+// banner prints the flag state so no capture can be misread later.
+static const bool ADC_PRECAL = true;   // one-flag rollback
+
+// The operating common-clock config, READ OFF THE RUNNING BOARD by the 'p' dump
+// -- not a datasheet default. PRESC = 0b0111 (/16), CKMODE = 00 (asynchronous).
+// If SimpleFOC's init ever sets something else, the calibration would silently
+// revert to being taken at the wrong clock, so adcClockDump() compares the live
+// CCR against this and says so loudly rather than letting it pass.
+static const uint32_t ADC_CCR_OPERATING = 0x001C0000u;
+
+static bool adcCalibrate(ADC_TypeDef* a) {
+  RCC->AHB2ENR |= RCC_AHB2ENR_ADC12EN;
+  // ADDIS and ADCAL both require ADSTART = 0 AND JADSTART = 0. The spec checked
+  // only ADSTART; JADSTART is 0 on this board because nothing uses the injected
+  // group, but the register write is illegal if it ever isn't, so check both.
+  if (a->CR & (ADC_CR_ADSTART | ADC_CR_JADSTART)) return false;
+  if (a->CR & ADC_CR_ADEN) {
+    a->CR |= ADC_CR_ADDIS;
+    uint32_t t = micros();
+    while (a->CR & ADC_CR_ADEN) if ((uint32_t)(micros()-t) > 10000) return false;
+  }
+  a->CR &= ~ADC_CR_DEEPPWD;
+  a->CR |=  ADC_CR_ADVREGEN;
+  delayMicroseconds(30);                               // T_ADCVREG_STUP = 20 us
+  a->CR &= ~ADC_CR_ADCALDIF;                           // single-ended
+  a->CR |=  ADC_CR_ADCAL;
+  uint32_t t0 = micros();
+  while (a->CR & ADC_CR_ADCAL) if ((uint32_t)(micros()-t0) > 20000) return false;
+  return true;
+}
+
+static float vbusDmaRaw() {
+  volatile const uint16_t* b = adcDmaBuf(ADC1);
+  const int s = adcSlotOfCh(ADC1, 1);            // ADC1_IN1 = PA0 = VBUS_ADC
+  return (b && s >= 0) ? (float)b[s] * VBUS_SCALE : (float)NAN;
+}
+static void printVdma() {
+  SerialUART.print(F(" Vdma="));
+  const float v = vbusDmaRaw();
+  if (isnan(v)) SerialUART.print(F("--"));
+  else          SerialUART.print(v, 3);
+}
+
+static void probeAdcDma(const __FlashStringHelper* nm, ADC_TypeDef* a, uint16_t seed_cnt) {
+  const uint8_t  L  = (uint8_t)((a->SQR1 & 0xFu) + 1u);
+  const int      ix = adcDmaIdx(a);
+  if (ix >= 0) {
+    DMA_Channel_TypeDef* d = PROBE_DMA[ix];
+    const uint8_t i = (uint8_t)ix;
+    SerialUART.print(nm); SerialUART.print(F(" <- DMA idx ")); SerialUART.print(i);
+    SerialUART.print(F("  CCR=0x")); SerialUART.print(d->CCR, HEX);
+    SerialUART.print(F(" EN=")); SerialUART.print(d->CCR & 1u);
+    SerialUART.print(F(" CIRC=")); SerialUART.print((d->CCR >> 5) & 1u);
+    SerialUART.print(F(" MSIZE=")); SerialUART.print((d->CCR >> 10) & 3u);
+    SerialUART.print(F(" CNDTR=")); SerialUART.print(d->CNDTR);
+    SerialUART.print(F(" CMAR=0x")); SerialUART.println(d->CMAR, HEX);
+    if (!addrIsRam(d->CMAR)) { SerialUART.println(F("  !! CMAR not in RAM -- not reading")); return; }
+
+    volatile const uint16_t* buf = (volatile const uint16_t*)d->CMAR;
+    // Three dumps 5 ms apart. The current-sense slots MUST jitter; a frozen
+    // buffer means the DMA is not running and nothing below is usable.
+    for (uint8_t pass = 0; pass < 3; pass++) {
+      SerialUART.print(F("  buf["));
+      for (uint8_t k = 0; k < L; k++) { SerialUART.print(buf[k]); if (k+1 < L) SerialUART.print(' '); }
+      SerialUART.println(']');
+      delay(5);
+    }
+    // Where VBUS actually is, from the sequence registers. AUTHORITATIVE -- the
+    // nearest-seed line below is a heuristic and stopped being reliable the
+    // moment ADC_PRECAL flipped the offset's sign (2026-08-21: ch1 read +51
+    // while ch5 read -44, so "nearest" picked ch5). Read this line, not that one.
+    if (a == ADC1) {
+      const int s1 = adcSlotOfCh(ADC1, 1);
+      SerialUART.print(F("  ch1 (PA0/VBUS) is slot ")); SerialUART.print(s1);
+      SerialUART.print(F(" per SQR -> "));
+      if (s1 >= 0) SerialUART.println(buf[s1] * VBUS_SCALE, 4);
+      else         SerialUART.println(F("NOT IN SEQUENCE"));
+    }
+    // Flag the slot nearest the seed, at both possible alignments. HEURISTIC.
+    int bestK = -1; int32_t bestE = 0x7FFFFFFF; bool left = false;
+    for (uint8_t k = 0; k < L; k++) {
+      int32_t r = (int32_t)buf[k] - (int32_t)seed_cnt;              if (r < 0) r = -r;
+      int32_t s = (int32_t)(buf[k] >> 4) - (int32_t)seed_cnt;       if (s < 0) s = -s;
+      if (r < bestE) { bestE = r; bestK = k; left = false; }
+      if (s < bestE) { bestE = s; bestK = k; left = true;  }
+    }
+    SerialUART.print(F("  [heuristic] nearest seed: slot ")); SerialUART.print(bestK);
+    SerialUART.print(left ? F(" (>>4, LEFT-ALIGNED)") : F(" (right-aligned)"));
+    SerialUART.print(F("  |err|=")); SerialUART.print(bestE);
+    SerialUART.print(F(" counts = ")); SerialUART.print(bestE * VBUS_SCALE, 4);
+    SerialUART.println(F(" V"));
+    SerialUART.print(F("  rank ")); SerialUART.print(bestK + 1);
+    SerialUART.print(F(" is channel ")); SerialUART.println(adcSeqCh(a, (uint8_t)(bestK + 1)));
+    return;
+  }
+  SerialUART.print(nm); SerialUART.println(F(": no DMA channel targets its DR"));
+}
+
+// ===========================================================================
+// PROBE v3 REGISTER BLOCK -- hunting the 62-count DMA-vs-seed subtraction.
+//
+// Measured 2026-08-21, two bus voltages: buf[4] sits 62.3 +/- 3.0 counts BELOW
+// the pre-init analogRead() seed, gain 1.006 (unity within meter resolution),
+// thermally inert. H1 (charge sharing from rank 4) is dead -- PB14 swung 60.7
+// counts at a fixed bus while PA0 moved 1.0, a coupling of 0.017 against the
+// 0.474 required. What is left is a FIXED SUBTRACTION, and three mechanisms can
+// produce one:
+//   H6  ADC1->OFRn programmed on channel 1. The register's literal function is
+//       DR = raw - OFFSET. Exact signature match. <- adcOffsetDump()
+//   H5  ADC-wide offset from a bad CALFACT (calibrated with the opamps live).
+//       62 LSB is ~12x the datasheet offset error, so this is a stretch.
+//   H4  PA0's divider node is physically loaded after init. The seed is the ONLY
+//       reading taken pre-driver.init(), and the seed block's own comment
+//       ("detach digital buffer, unload divider") predicts exactly this.
+//       <- gpioPinDump(): if PA0's MODER left 0b11, H4 moves to a physical probe
+// All pure reads. Nothing here writes a peripheral register.
+// ===========================================================================
+static void adcOffsetDump(const __FlashStringHelper* nm, ADC_TypeDef* a) {
+  const __IO uint32_t* ofr[4] = { &a->OFR1, &a->OFR2, &a->OFR3, &a->OFR4 };
+  SerialUART.print(nm); SerialUART.print(F(" OFR"));
+  bool any = false;
+  for (uint8_t i = 0; i < 4; i++) {
+    const uint32_t v = *ofr[i];
+    SerialUART.print(' '); SerialUART.print(i + 1); SerialUART.print('=');
+    SerialUART.print(v, HEX);
+    if (v & ADC_OFR1_OFFSET1_EN_Msk) {
+      any = true;
+      SerialUART.print(F("[EN ch"));
+      SerialUART.print((v & ADC_OFR1_OFFSET1_CH_Msk) >> ADC_OFR1_OFFSET1_CH_Pos);
+      SerialUART.print(F(" off="));
+      SerialUART.print(v & ADC_OFR1_OFFSET1_Msk);
+      SerialUART.print((v & ADC_OFR1_OFFSETPOS_Msk) ? F(" POS") : F(" NEG"));
+      SerialUART.print((v & ADC_OFR1_SATEN_Msk)     ? F(" SAT]") : F("]"));
+    }
+  }
+  SerialUART.println(any ? F("   <<< AN OFFSET IS ENABLED -- H6")
+                         : F("   (none enabled -- H6 dead on this instance)"));
+
+  const uint32_t cf = a->CALFACT, c2 = a->CFGR2;
+  SerialUART.print(nm);
+  SerialUART.print(F(" CALFACT=0x")); SerialUART.print(cf, HEX);
+  SerialUART.print(F(" S="));  SerialUART.print((cf & ADC_CALFACT_CALFACT_S_Msk) >> ADC_CALFACT_CALFACT_S_Pos);
+  SerialUART.print(F(" D="));  SerialUART.print((cf & ADC_CALFACT_CALFACT_D_Msk) >> ADC_CALFACT_CALFACT_D_Pos);
+  SerialUART.print(F("  DIFSEL=0x")); SerialUART.print(a->DIFSEL, HEX);
+  SerialUART.print(F("  CFGR2=0x")); SerialUART.print(c2, HEX);
+  // Oversampling would divide the result and read as a gain, not an offset --
+  // ruled in or out here rather than assumed.
+  SerialUART.print(F(" ROVSE=")); SerialUART.print((c2 & ADC_CFGR2_ROVSE_Msk) ? 1 : 0);
+  SerialUART.print(F(" JOVSE=")); SerialUART.print((c2 & ADC_CFGR2_JOVSE_Msk) ? 1 : 0);
+  SerialUART.print(F(" OVSR="));  SerialUART.print((c2 & ADC_CFGR2_OVSR_Msk) >> ADC_CFGR2_OVSR_Pos);
+  SerialUART.print(F(" OVSS="));  SerialUART.print((c2 & ADC_CFGR2_OVSS_Msk) >> ADC_CFGR2_OVSS_Pos);
+  SerialUART.print(F(" GCOMP=")); SerialUART.println((c2 & ADC_CFGR2_GCOMP_Msk) ? 1 : 0);
+}
+
+// MODER 11 = analog, which is what the pre-init pinMode(INPUT_ANALOG) sets and
+// what H4 says something later undoes. PUPDR must be 00: a pull on a divider
+// node IS the loading mechanism, and it would be a fixed, bus-independent shift.
+static void gpioPinDump(const __FlashStringHelper* nm, GPIO_TypeDef* g, uint8_t pin) {
+  const uint8_t m = (uint8_t)((g->MODER >> (2u*pin)) & 0x3u);
+  const uint8_t p = (uint8_t)((g->PUPDR >> (2u*pin)) & 0x3u);
+  SerialUART.print(' '); SerialUART.print(nm); SerialUART.print(F(":MODER="));
+  SerialUART.print(m);
+  SerialUART.print(m == 3 ? F("(analog)") : m == 0 ? F("(IN!)")
+                 : m == 1 ? F("(OUT!)")   : F("(AF!)"));
+  SerialUART.print(F(" PUPDR=")); SerialUART.print(p);
+  SerialUART.print(p == 0 ? F("(none)") : p == 1 ? F("(PULLUP!)") : F("(PULLDN!)"));
+}
+
+// ADC KERNEL CLOCK, as a register fact rather than arithmetic. Three registers
+// decide it and no two of them live in the same peripheral:
+//   RCC->CCIPR.ADC12SEL  picks the asynchronous SOURCE (none / PLL"P" / SYSCLK)
+//   ADC_CCR.CKMODE       picks async-with-PRESC (00) vs HCLK/1,2,4 (01/10/11)
+//   ADC_CCR.PRESC        divides, and ONLY applies when CKMODE == 00
+// Printing the decode matters because the whole SMP time budget hangs off it.
+// The sequence length is summed from the registers by adcSeqCycX10(), so the
+// microseconds printed here are a register fact too -- and whether the answer is
+// ~20 us or ~1 us decides whether raising SMP on channel 1 is even arguable.
+// The source frequency comes from the HAL's own RCC walk, not from a constant.
+static void adcClockDump() {
+  static const uint16_t PRESC_DIV[16] =                 // RM0440 ADC_CCR.PRESC
+    { 1,2,4,6,8,10,12,16,32,64,128,256,0,0,0,0 };       // 12..15 reserved -> 0
+  const uint32_t ccipr  = RCC->CCIPR;
+  const uint32_t ccr    = ADC12_COMMON->CCR;
+  const uint8_t  sel    = (uint8_t)((ccipr & RCC_CCIPR_ADC12SEL_Msk) >> RCC_CCIPR_ADC12SEL_Pos);
+  const uint8_t  ckmode = (uint8_t)((ccr & ADC_CCR_CKMODE_Msk) >> ADC_CCR_CKMODE_Pos);
+  const uint8_t  presc  = (uint8_t)((ccr & ADC_CCR_PRESC_Msk)  >> ADC_CCR_PRESC_Pos);
+  const uint32_t fsrc   = HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_ADC12);
+
+  SerialUART.print(F("CLK CCIPR=0x")); SerialUART.print(ccipr, HEX);
+  SerialUART.print(F(" ADC12SEL=")); SerialUART.print(sel);
+  SerialUART.print(sel == 0 ? F("(NONE!)") : sel == 1 ? F("(PLL'P')")
+                 : sel == 2 ? F("(SYSCLK)") : F("(reserved)"));
+  SerialUART.print(F(" src=")); SerialUART.print(fsrc); SerialUART.print(F(" Hz"));
+  SerialUART.print(F(" | CCR=0x")); SerialUART.print(ccr, HEX);
+  SerialUART.print(F(" CKMODE=")); SerialUART.print(ckmode);
+  SerialUART.print(ckmode == 0 ? F("(async)") : F("(HCLK)"));
+  SerialUART.print(F(" PRESC=")); SerialUART.print(presc);
+  SerialUART.print(F("(/")); SerialUART.print(PRESC_DIV[presc]); SerialUART.print(')');
+
+  // CKMODE != 0 takes the clock from HCLK and IGNORES PRESC entirely.
+  uint32_t f_adc = 0;
+  if (ckmode == 0) { if (PRESC_DIV[presc]) f_adc = fsrc / PRESC_DIV[presc]; }
+  else             { f_adc = SystemCoreClock >> (ckmode - 1u); }
+  SerialUART.print(F(" -> f_adc=")); SerialUART.print(f_adc); SerialUART.print(F(" Hz"));
+  if (f_adc) {
+    const uint32_t cx10 = adcSeqCycX10(ADC1);
+    SerialUART.print(F("  1cyc=")); SerialUART.print(1e9f / (float)f_adc, 1);
+    SerialUART.print(F(" ns  ADC1 seq=")); SerialUART.print(cx10 / 10.0f, 1);
+    SerialUART.print(F(" cyc = "));
+    SerialUART.print((float)cx10 * 1e5f / (float)f_adc, 2); SerialUART.print(F(" us"));
+  } else {
+    SerialUART.print(F("  !! cannot resolve -- reserved field or no clock"));
+  }
+  SerialUART.println();
+  // ADC_PRECAL calibrates at ADC_CCR_OPERATING on the strength of this register
+  // reading back the same clock fields afterwards. If SimpleFOC's init ever sets
+  // something else, that assumption fails SILENTLY and the trim reverts to being
+  // measured at the wrong clock -- so compare, and say so.
+  const uint32_t live = ccr  & (ADC_CCR_CKMODE_Msk | ADC_CCR_PRESC_Msk);
+  const uint32_t want = ADC_CCR_OPERATING & (ADC_CCR_CKMODE_Msk | ADC_CCR_PRESC_Msk);
+  if (live != want) {
+    SerialUART.print(F("!! CCR clock fields 0x")); SerialUART.print(live, HEX);
+    SerialUART.print(F(" != ADC_CCR_OPERATING 0x")); SerialUART.print(want, HEX);
+    SerialUART.println(F(" -- ADC_PRECAL calibrated at the WRONG CLOCK. Fix the constant."));
+  }
+}
+
+static void vbusProbe() {
+  // Nothing below writes a peripheral register, so this gate is no longer a
+  // safety requirement -- it is kept to preserve the "probes run disarmed"
+  // habit. motor.enabled is SimpleFOC's own int8_t and is a strict superset of
+  // this harness's `running` flag, which is declared further down the file.
+  if (motor.enabled) { SerialUART.println(F("p: disable the motor first")); return; }
+
+  const uint16_t seed_cnt = (VBUS_SCALE > 0.0f)
+                          ? (uint16_t)(vbus_filt / VBUS_SCALE + 0.5f) : 0;
+  SerialUART.println(F("\n---- VBUS ADC PROBE v3 (pure read) ----"));
+  SerialUART.print(F("seed Vb=")); SerialUART.print(vbus_filt, 4);
+  SerialUART.print(F(" V  scale=")); SerialUART.print(VBUS_SCALE, 6);
+  SerialUART.print(F(" -> seed_cnt=")); SerialUART.println(seed_cnt);
+  adcClockDump();                      // kernel clock + sequence time, from regs
+  adcDump(F("ADC1"), ADC1);            // CFGR / SMPR / JSQR -- the v1 evidence
+  adcDump(F("ADC2"), ADC2);            //   lines, so the two runs stay comparable
+  adcSeqDump(F("ADC1"), ADC1);
+  adcSeqDump(F("ADC2"), ADC2);
+  adcOffsetDump(F("ADC1"), ADC1);      // H6 / H5 -- offset registers, CALFACT
+  adcOffsetDump(F("ADC2"), ADC2);
+  SerialUART.print(F("GPIO"));         // H4 -- is PA0 still an analog input?
+  gpioPinDump(F("PA0"),  GPIOA, 0);
+  gpioPinDump(F("PB12"), GPIOB, 12);
+  gpioPinDump(F("PB14"), GPIOB, 14);
+  SerialUART.println();
+  probeAdcDma(F("ADC1"), ADC1, seed_cnt);
+  probeAdcDma(F("ADC2"), ADC2, seed_cnt);
+  SerialUART.println(F("---- end probe v3 ----\n"));
+}
+
+// ---------------------------------------------------------------------------
+// SEED (pre-init analogRead) vs DMA (post-init) on all three slow channels,
+// captured in ONE boot, seconds apart. The timing IS the experiment: PB14 drifts
+// ~60 counts over 2 minutes of warm-up, the same size as the 62-count effect
+// being measured, so this comparison cannot be made by pressing 'p' later.
+//
+// Both sides are 64-sample means. Comparing a 64-average seed against a single
+// DMA sample would put the buffer's per-sample noise straight into the delta.
+// The DMA reads are spaced 50 us apart so they land in different PWM periods.
+//
+//   all three deltas equal (+/-3)  -> ADC-wide offset: CALFACT (H5)
+//   only ch1 shifted               -> PA0-specific: an OFR on ch1 (H6), or the
+//                                     divider node loaded post-init (H4)
+//   all three shifted, unequal     -> loading on all three analog inputs; that
+//                                     is a hardware finding, not a firmware one
+// DIAGNOSTIC ONLY -- delete with seed_ch5 / seed_ch11 once the gap is named.
+// ---------------------------------------------------------------------------
+static void seedVsDmaDump() {
+  SerialUART.println(F("---- SEED vs DMA, one boot, 3 channels (diagnostic) ----"));
+  volatile const uint16_t* buf = adcDmaBuf(ADC1);
+  if (!buf) { SerialUART.println(F("  !! no ADC1 DMA buffer -- cannot compare")); return; }
+  if (!vbus_valid || !seed_aux_valid)
+    SerialUART.println(F("  !! a pre-init seed is invalid -- deltas are NOT usable"));
+
+  const uint8_t ch[3] = { 1u, 5u, 11u };            // PA0, PB14, PB12
+  const float   sd[3] = { (VBUS_SCALE > 0.0f) ? vbus_filt / VBUS_SCALE : 0.0f,
+                          seed_ch5, seed_ch11 };
+  int   slot[3];
+  float dma[3] = { 0.0f, 0.0f, 0.0f };
+  for (uint8_t i = 0; i < 3; i++) slot[i] = adcSlotOfCh(ADC1, ch[i]);
+
+  uint32_t acc[3] = { 0, 0, 0 };
+  for (uint8_t n = 0; n < 64; n++) {
+    for (uint8_t i = 0; i < 3; i++) if (slot[i] >= 0) acc[i] += buf[slot[i]];
+    delayMicroseconds(50);                          // straddle PWM periods
+  }
+  for (uint8_t i = 0; i < 3; i++) dma[i] = acc[i] / 64.0f;
+
+  SerialUART.print(F("  SEED(pre-init) "));
+  for (uint8_t i = 0; i < 3; i++) {
+    SerialUART.print(F(" ch")); SerialUART.print(ch[i]); SerialUART.print('=');
+    SerialUART.print(sd[i], 1); SerialUART.print('\t');
+  }
+  SerialUART.println();
+  SerialUART.print(F("  DMA(post-init) "));
+  for (uint8_t i = 0; i < 3; i++) {
+    SerialUART.print(F(" ch")); SerialUART.print(ch[i]); SerialUART.print('=');
+    if (slot[i] < 0) SerialUART.print(F("NOT-IN-SEQ"));
+    else             SerialUART.print(dma[i], 1);
+    SerialUART.print('\t');
+  }
+  SerialUART.println();
+  SerialUART.print(F("  DELTA          "));
+  for (uint8_t i = 0; i < 3; i++) {
+    SerialUART.print(F(" ch")); SerialUART.print(ch[i]); SerialUART.print('=');
+    if (slot[i] < 0) SerialUART.print('?');
+    else             SerialUART.print(dma[i] - sd[i], 1);
+    SerialUART.print('\t');
+  }
+  SerialUART.println();
+  SerialUART.print(F("  (slots "));
+  for (uint8_t i = 0; i < 3; i++) { SerialUART.print(slot[i]); SerialUART.print(i < 2 ? ',' : ')'); }
+  SerialUART.println(F("  ch1 delta in volts is delta*vbus_scale"));
+}
+
+// ---------------------------------------------------------------------------
+// 'P' : DMA offset vs GATE-DRIVE LOAD.  H5 (ADC-internal) vs H7 (rail/ground).
+//
+// WHY THIS IS A SAFETY QUESTION AND NOT BOOKKEEPING: under H5 the -60 count
+// offset is silicon calibration, fixed at init, and one constant corrects it.
+// Under H7 it is a reference shift set by BOARD CURRENT -- 48 mV at ~0.2 A
+// implies ~240 mOhm of return impedance, and duty = Ua / V_belief means a
+// falling belief RAISES duty, which raises current, which deepens the shift.
+// That is positive feedback into the one quantity that sets phase voltage.
+// No offset correction may be adopted until these two are separated.
+//
+// *** ORDERING CORRECTED FROM THE SPEC, AND IT INVERTED THE ANSWER. ***
+// The spec read the as-found state as the gate-drivers-ON pass. It is not:
+// setup() ends with motor.disable(), and BLDCMotor::disable() calls
+// driver->disable(), so a disarmed board sits with all six FETs OFF. Taking the
+// as-found pass as ON, then calling driver.disable() (a no-op), would have made
+// both passes identical -- a delta of ~0, read straight off the outcome table as
+// "H5 confirmed". A false H5 is the worst available outcome here, because H5 is
+// the branch that says a single correction constant is safe.
+// So: enable explicitly for ON, disable for OFF, and restore to DISABLED --
+// the state setup() leaves and the state the harness's flags describe.
+//
+// WHAT "ON" PHYSICALLY IS: this driver has no enable_pin, so enable() means
+// setPhaseState(PHASE_ON) with dc = 0 -- high sides off, all three LOW sides
+// conducting. The phases are shorted to ground. Static, not switching, and
+// harmless on a stationary rotor; it is a BRAKE on a spinning one. Do not press
+// P with the shaft turning.
+// ---------------------------------------------------------------------------
+static void vbusLoadTest() {
+  if (motor.enabled) { SerialUART.println(F("P: disarm first")); return; }
+  volatile const uint16_t* buf = adcDmaBuf(ADC1);
+  if (!buf) { SerialUART.println(F("P: no ADC1 DMA buffer")); return; }
+  const int ix = adcDmaIdx(ADC1);
+  uint8_t L = (uint8_t)((ADC1->SQR1 & 0xFu) + 1u);
+  if (L > 9) L = 9;                      // adcSeqCh and the arrays stop at 9
+
+  SerialUART.println(F("---- DMA offset vs gate-drive load ----"));
+  SerialUART.println(F("  enabling gate drivers (low sides ON, phases shorted)."
+                       " Rotor must be STOPPED."));
+
+  uint32_t on[9] = {0}, off[9] = {0};
+  uint16_t j_on_lo = 0xFFFF, j_on_hi = 0, j_off_lo = 0xFFFF, j_off_hi = 0;
+  // CNDTR liveness, counted over EVERY sample rather than three points. A 3-point
+  // check was wrong and produced a false VOID on 2026-08-21: CNDTR reloads to L
+  // when the sequence completes and then SITS there through the idle gap. At
+  // 19.76 us of conversion in a 40 us period it reads L for ~54% of the time, so
+  // two consecutive equal reads have a ~29% prior -- a coin flip reported as a
+  // hardware fault. Counting distinct values across 128 samples makes a genuinely
+  // stopped channel (nd_seen == 1) the only way to fail.
+  uint32_t nd_prev = (ix >= 0) ? PROBE_DMA[ix]->CNDTR : 0;
+  uint16_t nd_changes = 0;
+
+  driver.enable();  delay(50);           // ON: let the rails settle first
+  for (int n = 0; n < 64; n++) {
+    for (uint8_t k = 0; k < L; k++) on[k] += buf[k];
+    if (buf[0] < j_on_lo) j_on_lo = buf[0];
+    if (buf[0] > j_on_hi) j_on_hi = buf[0];
+    if (ix >= 0) { const uint32_t c = PROBE_DMA[ix]->CNDTR;
+                   if (c != nd_prev) { nd_changes++; nd_prev = c; } }
+    delayMicroseconds(50);
+  }
+  const uint16_t nd_on = nd_changes;
+  driver.disable(); delay(50);           // OFF: all six FETs off, phases float
+  for (int n = 0; n < 64; n++) {
+    for (uint8_t k = 0; k < L; k++) off[k] += buf[k];
+    if (buf[0] < j_off_lo) j_off_lo = buf[0];
+    if (buf[0] > j_off_hi) j_off_hi = buf[0];
+    if (ix >= 0) { const uint32_t c = PROBE_DMA[ix]->CNDTR;
+                   if (c != nd_prev) { nd_changes++; nd_prev = c; } }
+    delayMicroseconds(50);
+  }
+  driver.disable();                      // RESTORE as-found: setup() leaves it so
+
+  for (uint8_t k = 0; k < L; k++) {
+    SerialUART.print(F("  slot "));      SerialUART.print(k);
+    SerialUART.print(F(" ch"));          SerialUART.print(adcSeqCh(ADC1, (uint8_t)(k+1)));
+    SerialUART.print(F("  ON(drv en)="));  SerialUART.print(on[k]/64.0f, 1);
+    SerialUART.print(F("  OFF(drv dis)=")); SerialUART.print(off[k]/64.0f, 1);
+    SerialUART.print(F("  d="));         SerialUART.println((float)((int32_t)off[k] - (int32_t)on[k])/64.0f, 1);
+  }
+  // VALIDITY GATE 1: if the DMA stopped when the driver was disabled, the OFF
+  // column is a frozen snapshot and every delta above is meaningless.
+  SerialUART.print(F("  slot0 spread  ON=")); SerialUART.print(j_on_hi - j_on_lo);
+  SerialUART.print(F("  OFF="));              SerialUART.println(j_off_hi - j_off_lo);
+  // VALIDITY GATE 2, corrected: count CNDTR transitions over all 128 samples.
+  SerialUART.print(F("  CNDTR transitions=")); SerialUART.print(nd_changes);
+  SerialUART.print(F(" (ON=")); SerialUART.print(nd_on);
+  SerialUART.print(F(" OFF=")); SerialUART.print((uint16_t)(nd_changes - nd_on));
+  SerialUART.println(nd_changes ? F(")  DMA live")
+                                : F(")  !! DMA NEVER ADVANCED -- TEST VOID"));
+  SerialUART.println(F("  also VOID if either slot0 spread == 0"));
+  SerialUART.println(F("  driver left DISABLED. POWER-CYCLE before any calibration run."));
+  // The result above is NOT an H5/H7 discriminator, and the outcome table must
+  // not be read against it. ON differs from OFF by gate-drive QUIESCENT current
+  // only: PHASE_ON with dc = 0 is static, phase current is ~0, so this compares
+  // no-load against no-load. What it does prove is that statically enabling the
+  // gate drivers does not move the reference. H7 needs real current, which is
+  // what Vdma in the telemetry line is for -- run phase 3 or the M2 ladder and
+  // watch Vdma - Vb across 0.2 A to 3.0 A.
+  SerialUART.println(F("  NOTE: quiescent only -- d~0 does NOT confirm H5."
+                       " H7 needs current: watch Vdma-Vb during phase 3 / M2."));
+}
 
 enum Mode { MODE_OPENLOOP, MODE_TORQUE, MODE_TORQUE_CURRENT, MODE_VELOCITY };
 Mode mode = MODE_OPENLOOP;
@@ -684,6 +1332,8 @@ void printHelp() {
   SerialUART.println(F("--- f:initFOC(stored)  F:force align  e:encoder self-test  q:print interval ---"));
   SerialUART.println(F("--- logger: l=fast L=slow k=kick j=zero-kick d=dump a=stats ---"));
   SerialUART.println(F("--- V:verify stored ZEA | Y:autocalib menu  1..6:phases  7:report  0:reset ---"));
+  SerialUART.println(F("--- p: VBUS ADC probe (read-only, motor disabled) -- stage 1 of live Vbus ---"));
+  SerialUART.println(F("--- P: DMA offset vs gate-drive load (H5/H7) -- ENABLES the drivers, rotor STOPPED ---"));
   SerialUART.println(F("--- manual: N=M2 bus-power ladder  B/b=M4 breakaway ramp +/- ---"));
   SerialUART.println(F("--- '-' then '5' (within 0.8s): phase 5 runs REVERSE first, not forward ---"));
 }
@@ -810,6 +1460,8 @@ void handleSerial() {
       case 'f': runInitFOC(false); break;   // uses STORED ZEA when available
       case 'F': runInitFOC(true);  break;   // force a fresh alignment
       case 'e': case 'E': encoderSelfTest(); break;
+      case 'p': vbusProbe(); break;    // VBUS ADC probe -- read-only, motor disabled
+      case 'P': vbusLoadTest(); break; // DMA offset vs gate-drive load: H5 vs H7
       case 'l': logStart(1); break;                     // fast capture (~65 ms)
       case 'L': logStart(8); break;                     // slow capture (~520 ms)
       case 'd': case 'D': logDump(); break;
@@ -904,6 +1556,56 @@ void setup() {
       vbus_filt = VBUS_FALLBACK;  vbus_valid = false;
       SerialUART.println(F("!! VBUS read implausible -- using fallback"));
     }
+  }
+  // DIAGNOSTIC ONLY -- pre-init reference for the DMA-path offset (2026-08-21).
+  // Placed AFTER the PA0 seed and touching nothing inside it: that block is the
+  // number every constant is calibrated against and must stay byte-identical.
+  // Same method as the PA0 seed -- discard one conversion, average 64. These are
+  // ranks 3 and 4 of ADC1's regular sequence, so the same two channels come back
+  // out of the DMA buffer after init and the pair separates an ADC-wide offset
+  // from a channel-1-specific one. Delete once the 62-count gap is explained.
+  {
+    uint32_t a5 = 0, a11 = 0;
+    pinMode(PB14, INPUT_ANALOG); (void)analogRead(PB14);
+    for (int k = 0; k < 64; k++) a5  += analogRead(PB14);
+    pinMode(PB12, INPUT_ANALOG); (void)analogRead(PB12);
+    for (int k = 0; k < 64; k++) a11 += analogRead(PB12);
+    seed_ch5  = a5  / 64.0f;
+    seed_ch11 = a11 / 64.0f;
+    seed_aux_valid = true;
+  }
+  // ---- ADC PRE-CALIBRATION. After the three seeds, BEFORE driver.init(). The
+  // ADC is idle here: analogRead() DeInit'd it and currentSense.init() has not
+  // run. CALFACT is printed twice on purpose -- once now, to see whether the
+  // calibration TOOK, and again in the 'p' dump, to see whether it SURVIVED
+  // currentSense.init(). Those are different questions and the second one
+  // decides whether this is a fix or a dead end.
+  if (ADC_PRECAL) {
+    // CCR_found is the whole clock hypothesis in one field. 0x0 means DeInit
+    // cleared it and pass 1 ran at the undivided source; anything already equal
+    // to ADC_CCR_OPERATING kills the hypothesis on the spot.
+    SerialUART.print(F("ADC precal CCR_found=0x"));
+    SerialUART.print(ADC12_COMMON->CCR, HEX);
+
+    const bool p1a = adcCalibrate(ADC1), p1b = adcCalibrate(ADC2);   // DIAGNOSTIC
+    SerialUART.print(F("  pass1 CF1=")); SerialUART.print(ADC1->CALFACT & 0x7Fu);
+    SerialUART.print(F(" CF2="));        SerialUART.print(ADC2->CALFACT & 0x7Fu);
+
+    // Legal here: ADEN = 0 on both instances (analogRead DeInit'd them and
+    // adcCalibrate never enables), and CKMODE/PRESC are only write-protected
+    // while an ADC is enabled. currentSense.init() rewrites this register
+    // afterwards, so nothing of ours persists past it.
+    ADC12_COMMON->CCR = ADC_CCR_OPERATING;
+
+    const bool p2a = adcCalibrate(ADC1), p2b = adcCalibrate(ADC2);   // THIS STANDS
+    SerialUART.print(F("  CCR_set=0x"));  SerialUART.print(ADC12_COMMON->CCR, HEX);
+    SerialUART.print(F("  pass2 CF1=")); SerialUART.print(ADC1->CALFACT & 0x7Fu);
+    SerialUART.print(F(" CF2="));        SerialUART.print(ADC2->CALFACT & 0x7Fu);
+    SerialUART.print(F("  ok="));
+    SerialUART.println((p1a && p1b && p2a && p2b) ? 1 : 0);
+    SerialUART.println(F("!! ADC_PRECAL=1 -- DIAGNOSTIC BUILD. Not for any run of record."));
+  } else {
+    SerialUART.println(F("ADC precal DISABLED (ADC_PRECAL=false)"));
   }
   driver.voltage_power_supply = vbus_filt;
   // driver.voltage_limit is NOT a safety limit -- it is the SVPWM MODULATION
@@ -1022,7 +1724,10 @@ void setup() {
   if (CAL.R_eff > 0.0f) SerialUART.print(motor.voltage_sensor_align / CAL.R_eff, 1);
   else                  SerialUART.print(F("? R_eff NOT MEASURED"));
   SerialUART.print(F("A) spi_nops=")); SerialUART.print(SPI_HALF_NOPS);
-  SerialUART.print(F(" jump_guard=")); SerialUART.println(SPI_JUMP_GUARD ? 1 : 0);
+  SerialUART.print(F(" jump_guard=")); SerialUART.print(SPI_JUMP_GUARD ? 1 : 0);
+  // "Note which config is flashed." A run of record taken with a knowingly-wrong
+  // CALFACT on both instances must be identifiable as such from its own log.
+  SerialUART.print(F(" adc_precal=")); SerialUART.println(ADC_PRECAL ? 1 : 0);
 
   // DIRECTION IS NOT PRESET ON THIS BOARD. The ABZ build hardcoded CCW because
   // the TIM4 count convention had been confirmed; the MT6816 SPI angle runs on
@@ -1036,6 +1741,9 @@ void setup() {
   foc_ready = false;
   SerialUART.print(F("ALIGN src="));
   SerialUART.println((ZEA_STORED >= 0.0f && DIR_STORED != 0) ? F("STORED") : F("measure with f"));
+
+  // DIAGNOSTIC -- must run HERE, not on a later keypress: see seedVsDmaDump().
+  seedVsDmaDump();
 
   SerialUART.println(F("Motor DISABLED. Run 'e' (encoder self-test) BEFORE 'f'."));
   printHelp();
@@ -1209,6 +1917,11 @@ void loop() {
     // 'seed' not 'vok': with VBUS_LIVE=false, Vb is the boot measurement and is
     // NOT tracking. Printed so no capture can be read as if it were live.
     SerialUART.print(F(" Vb_src=")); SerialUART.print(VBUS_LIVE ? F("live") : F("seed"));
+    // DIAGNOSTIC -- the DMA path's raw view of the same pin, so every routine
+    // that already runs (phase 3, M2, free spin, burst captures) carries the
+    // H7 load test for free. Vdma-Vb flat across current bounds H7; growth
+    // disqualifies live Vbus. Delete with the rest of the DMA-offset work.
+    printVdma();
     // SPI link health. perr is CUMULATIVE since boot: any nonzero value means
     // frames are being corrupted and the angle was stale for that many cycles.
     // nmg=1 means the magnet field is below the AMR saturation threshold and the

@@ -1750,6 +1750,7 @@ static void acM2Assist() {
 
     uint32_t t0 = millis(), tp = millis();
     double acc = 0; uint32_t n = 0;
+    double vd_acc = 0; uint32_t vd_n = 0;        // DIAGNOSTIC -- Vdma, see below
     while ((millis() - t0) < AC_M2_MAX_MS && !ac_abort) {
       acService();
       // A key here means ADVANCE, not abort -- but ONLY if no guard also fired
@@ -1761,6 +1762,12 @@ static void acM2Assist() {
         break;
       }
       acc += ac_i_amp; n++;
+      // Vdma accumulated in the SAME loop as I_reported, for the same reason:
+      // two separate grabs at emit time disagreed by a count (12.646 vs 12.638
+      // on points 3 and 4, 2026-08-21), and a number sampled twice cannot be
+      // used in a fit. One mean per point, printed twice. NaN-safe: the sum is
+      // only advanced while the buffer is reachable.
+      { const float vd = vbusDmaRaw(); if (!isnan(vd)) { vd_acc += vd; vd_n++; } }
       if ((millis() - tp) > AC_M2_TICK_MS) {
         tp = millis();
         // Safe to print inside the loop ONLY because the rotor is locked: the
@@ -1772,14 +1779,25 @@ static void acM2Assist() {
     }
     int32_t moved = acCntDelta(c0, encoder.raw);
     // Same split as M4: a clean CSV line, then a sentence.
-    //     M2,<Uq>,<I_reported>,<n>,<drift_cnt>
+    //     M2,<Uq>,<I_reported>,<n>,<drift_cnt>,<Vdma_mean>,<Vdma_n>
+    // Vdma APPENDED 2026-08-21 as trailing columns, so column-indexed offline
+    // fits of older M2 data keep working. It is the DMA path's bus reading,
+    // MEANED over the same dwell as I_reported, and it is here because this
+    // ladder is the one routine that already puts 0.66-2.97 A through the board
+    // with a meter on the terminals -- which makes it the H7 test.
+    // Vdma_n = 0 (and a nan mean) means the DMA buffer was never reachable, not
+    // 0 V. DIAGNOSTIC -- remove when the DMA offset has a named cause.
+    const float vd_mean = vd_n ? (float)(vd_acc / vd_n) : (float)NAN;
     SerialUART.print(F("M2,")); SerialUART.print(AC_M2_V[k], 3);
     SerialUART.print(',');      SerialUART.print(n ? (float)(acc / n) : 0.0f, 4);
     SerialUART.print(',');      SerialUART.print(n);
-    SerialUART.print(',');      SerialUART.println(moved);
+    SerialUART.print(',');      SerialUART.print(moved);
+    SerialUART.print(',');      SerialUART.print(vd_mean, 4);
+    SerialUART.print(',');      SerialUART.println(vd_n);
     SerialUART.print(F("    Uq=")); SerialUART.print(AC_M2_V[k], 3);
     SerialUART.print(F(" I_reported=")); SerialUART.print(n ? (float)(acc / n) : 0.0f, 4);
-    SerialUART.print(F(" A, drift ")); SerialUART.print(moved);
+    SerialUART.print(F(" A, Vdma=")); SerialUART.print(vd_mean, 4);
+    SerialUART.print(F(", drift ")); SerialUART.print(moved);
     SerialUART.println(F(" cnt   <- write Vbus and Ibus against THIS line"));
     if (acAbs32(moved) > AC_R_STILL_CNT)
       SerialUART.println(F("    !! rotor MOVED -- this point is invalid, redo it"));
