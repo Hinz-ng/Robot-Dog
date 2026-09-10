@@ -1,4 +1,5 @@
 #pragma once
+#include "actuator_hw.h"   // motor -- the objects this acts on
 // ============================================================================
 // safety.h -- THE SINGLE DISABLE PATH.
 // ============================================================================
