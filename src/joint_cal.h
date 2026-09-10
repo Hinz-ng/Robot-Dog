@@ -68,6 +68,33 @@ struct JointCal {
                            //   measured it. The stored values are the 0.46 V
                            //   ladder. M2 is immune: it uses its own
                            //   range-matched R_M2 from the same session
+                           //
+                           //   QUANTIFIED 2026-08-30 on J02, two independent
+                           //   phase-3 runs. A quadratic fits the ladder at
+                           //   1.1 mV rms against the straight line's 3.6:
+                           //       U = -0.00439*I^2 + 0.23600*I + 0.01514
+                           //       (repeat run -0.00451 / 0.23683 / 0.01434)
+                           //   The I^2 term reproduces to 2.7% across runs, so
+                           //   it is a real term. Local slope 0.2316 ohm at
+                           //   0.5 A -> 0.2097 at 3.0 A: R_eff falls ~9.5%
+                           //   across the ladder's own range, and the effect on
+                           //   J02 is -2.35% between ladder tops, LARGER than
+                           //   the -1.59% recorded above.
+                           //   TWO CONSEQUENCES:
+                           //   * A straight-line fit's U0 absorbs the curvature.
+                           //     The quadratic's intercept (0.01514 / 0.01434)
+                           //     lands on the stored U0 = 0.014937; the 9-point
+                           //     linear fit inflates it to 0.023. Neither stored
+                           //     constant was ever wrong.
+                           //   * DO NOT EXTRAPOLATE. The fit spans 0.28-2.98 A.
+                           //     The design point is 30 A, ten times beyond it.
+                           //   Mechanism NOT established -- static nonlinearity
+                           //   (dead time / sense INL) and a self-heating
+                           //   transient in the descending ladder's first, and
+                           //   largest, point both predict this shape. The test
+                           //   that separates them is repeating AC_R_V[0] at the
+                           //   END of the ladder. Deliberately not run: it moves
+                           //   no constant today.
 
   // ---- BOARD ----
   float  U0;               // V dead-time offset. Scales with Vbus AND vbus_scale.
@@ -454,8 +481,14 @@ const JointCal JOINTS[] = {
   //    compromise across the range. That biases g HIGH -- true g is likely
   //    slightly FURTHER below unity, not closer to it. Does not threaten either
   //    verdict.
+  // ⚠ R_eff IS A CHORD SLOPE, NOT A CONSTANT -- see the R_eff field note above.
+  //   0.22810 is the fit over 0.28-1.96 A (the AC_R_V[0] = 0.46 V ladder in
+  //   force on 2026-08-08). The ladder now tops out at 2.98 A and returns
+  //   0.2219 on the SAME hardware, twice. Both are right; different chords.
+  //   A phase 3 reading ~0.222 today is NOT a fault and NOT a reason to edit
+  //   this row -- that was chased once already (CHANGELOG section 0).
   { "J02", "___", "___", "2026-08-08", "OFF",
-     0.3482f, +1, 0.22810f,        // zea, dir, R_eff      M1-rescaled x1.018904
+     0.3482f, +1, 0.22810f,        // zea, dir, R_eff  @ 0.28-1.96 A  M1-rescaled x1.018904
      0.014937f,                    // U0   M1-rescaled -- weak, see the U0 note below
      0.018097f, 46.25e-6f,         // Ke, L   (Kt = calKt() = 0.027145)  M1-rescaled
      0.008516f, 0.9690f,           // vbus_scale (M1 2026-08-18, UT89X -- see the
