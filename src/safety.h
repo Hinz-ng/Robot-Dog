@@ -32,6 +32,18 @@
 // prints and shifts timing inside characterisation phases -- a BEHAVIOUR change,
 // so it is a separate commit with its own bench verification, not this one.
 //
+// ---------------------------------------------------------------------------
+// TWO UPWARD DEPENDENCIES REMAIN, DELIBERATELY. Tier-0 must resolve them.
+// ---------------------------------------------------------------------------
+// stopMotor() still reads SerialUART and writes `running`, both of which live in
+// open_test.cpp. actuator_hw.h had the same problem and it was fixed there by
+// passing Print& and using references -- NOT done here, on purpose: changing this
+// function's signature is a change to the DISABLE PATH, and claude.md section 9
+// requires design review for that. It is also unverifiable without the bench.
+// The verbatim extraction was worth taking on its own because it was provably a
+// no-op; closing these two is a separate, reviewed, bench-verified change.
+// A Tier-0 consumer must supply a `running` flag and an output stream.
+//
 // Layer: above actuator_hw.h (it owns disable, which is how the single-path rule
 // survives Tier-0). Includes nothing upward.
 // ============================================================================

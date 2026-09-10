@@ -1017,37 +1017,6 @@ void setMode(Mode m) {
   SerialUART.print(F(" target=")); SerialUART.println(target);
 }
 
-void runInitFOC(bool force_align) {
-  if (running) { SerialUART.println(F("stop first (x)")); return; }
-  bool use_stored = (!force_align && ZEA_STORED >= 0.0f && DIR_STORED != 0);
-  if (use_stored) {
-    // Absolute sensor: ZEA is a constant, not a per-session measurement.
-    motor.zero_electric_angle = ZEA_STORED;
-    motor.sensor_direction    = (DIR_STORED > 0) ? Direction::CW : Direction::CCW;
-    SerialUART.println(F("initFOC: STORED ZEA -- no alignment, no twitch."));
-  } else {
-    motor.zero_electric_angle = NOT_SET;
-    // Direction must be DETECTED on this board: the SPI angle convention is not
-    // the TIM4 count convention. Pin it only once DIR_STORED has been measured.
-    motor.sensor_direction = (DIR_STORED > 0) ? Direction::CW
-                           : (DIR_STORED < 0) ? Direction::CCW
-                                              : Direction::UNKNOWN;
-    SerialUART.println(F("initFOC: aligning (expect a small twitch)."));
-  }
-  motor.enable();
-  int ok = motor.initFOC();
-  motor.disable();
-  target = 0.0f;
-  if (ok) {
-    foc_ready = true;
-    SerialUART.println(F("initFOC SUCCESS"));
-    SerialUART.print(F("zero_electric_angle=")); SerialUART.println(motor.zero_electric_angle, 4);
-    SerialUART.print(F("sensor_direction=")); SerialUART.println(motor.sensor_direction == Direction::CW ? F("CW") : F("CCW"));
-  } else {
-    foc_ready = false;
-    SerialUART.println(F("initFOC FAILED"));
-  }
-}
 
 void adjustTarget(float dir) {
   if (mode == MODE_TORQUE)              target = constrain(target + dir*TORQUE_STEP, -TORQUE_MAX, TORQUE_MAX);
@@ -1085,8 +1054,8 @@ void handleSerial() {
       case 'c': case 'C': setMode(MODE_TORQUE_CURRENT); break;
       case 'v': setMode(MODE_VELOCITY); break;   // 'V' is NO LONGER velocity:
       case 'V': acVerifyZea();          break;   //   it verifies the stored ZEA
-      case 'f': runInitFOC(false); break;   // uses STORED ZEA when available
-      case 'F': runInitFOC(true);  break;   // force a fresh alignment
+      case 'f': runInitFOC(false, running, foc_ready, target, SerialUART); break;   // uses STORED ZEA when available
+      case 'F': runInitFOC(true,  running, foc_ready, target, SerialUART);  break;   // force a fresh alignment
       case 'e': case 'E': encoderSelfTest(); break;
       case 'p': vbusProbe(); break;    // VBUS ADC probe -- read-only, motor disabled
       case 'l': logStart(1); break;                     // fast capture (~65 ms)
@@ -1152,90 +1121,18 @@ void setup() {
   SerialUART.println(F("=== actuator + current mode + MT6816 SPI (bit-banged) ==="));
   printJointCal(SerialUART);
 
-  // ---- BUS VOLTAGE: seed BEFORE driver.init() and BEFORE currentSense.init().
-  // Ordering is deliberate: currentSense.init() reconfigures the ADC, so any
-  // Arduino-API analogRead() must either happen before it or be verified against
-  // it afterwards (see the |I|/Iq gate in the verification procedure).
-  analogReadResolution(12);                  // default is 10-bit; 2 bits for free
-  pinMode(PIN_VBUS, INPUT_ANALOG);           // detach digital buffer, unload divider
-  // THE SEED IS ALREADY AVERAGED, AND THAT MATTERS FOR HOW ITS SCATTER IS READ.
-  // 64 samples with the first conversion discarded. So when 5 back-to-back power
-  // cycles on J02 (2026-08-20) gave four boots at 12.29 V and ONE at 12.34 --
-  // 5.9 counts, 0.05 V -- that outlier CANNOT be per-sample ADC noise: white
-  // noise is suppressed 8x by this mean, and 5.9 counts of it would need a
-  // per-sample sd of ~47 counts, which nothing here shows. The "unaveraged seed"
-  // explanation offered for it is therefore WRONG, and README section 24.14 has
-  // been corrected. Whatever moves it -- pack recovery between power cycles is
-  // the leading candidate, since the pack is unplugged each time -- is a real
-  // per-boot offset common to all 64 samples, and averaging harder cannot touch
-  // it.
-  // WHY IT IS NOT COSMETIC: this value IS driver.voltage_power_supply, which is
-  // the divisor velocityOpenloop() uses, so it lands 1:1 on M2's g. A boot at
-  // 12.34 instead of 12.19 would have biased J02's g by +1.23% -- larger than
-  // J01's entire error budget, with NO symptom in the data. The mitigation is
-  // procedural and it is in CALIBRATION.md's M2 row: compare the banner against
-  // the meter at session start, and REBOOT if they differ by more than 0.03 V.
-  {
-    uint32_t acc = 0;
-    (void)analogRead(PIN_VBUS);   // discard: first conversion carries residue
-    for (int k = 0; k < 64; k++) acc += analogRead(PIN_VBUS);   // average 64
-    float v = (acc / 64.0f) * VBUS_SCALE;
-    if (VBUS_SCALE > 0.0f && v > VBUS_MIN && v < VBUS_MAX) {
-      vbus_filt = v;  vbus_valid = true;
-    } else {
-      vbus_filt = VBUS_FALLBACK;  vbus_valid = false;
-      SerialUART.println(F("!! VBUS read implausible -- using fallback"));
-    }
-  }
-  driver.voltage_power_supply = vbus_filt;
-  // driver.voltage_limit is NOT a safety limit -- it is the SVPWM MODULATION
-  // REFERENCE. setPhaseVoltage() normalises Ud/Uq against it and (with the
-  // library default modulation_centered = 1) centres the modulation at
-  // driver.voltage_limit/2. So this one number sets BOTH the achievable phase
-  // voltage, rail/sqrt(3) = 3.46 V, AND the common-mode duty centre,
-  // 6.0/12.46 = 24% rather than 50%.
-  //
-  // WHAT RAISING IT WOULD AND WOULD NOT INVALIDATE (an earlier note here said
-  // "it invalidates R_eff and U0" -- the R_eff half of that was WRONG):
-  //   R_eff, Ke  IMMUNE. Ua = Ta*driver_vl while Ta ~ Uout = Uq/driver_vl, so
-  //              the factor cancels: the DIFFERENTIAL phase voltage depends on
-  //              commanded Uq alone. The star point floats, so only the
-  //              differential drives current. Both were fit against commanded
-  //              Uq, so both survive unchanged.
-  //   U0         AFFECTED. It is the dead-time / body-diode intercept, and
-  //              moving the duty centre 24% -> 50% changes the regime it was
-  //              measured in. Re-run phase 3 (which re-checks R_eff too, and
-  //              so tests the cancellation argument above rather than assuming
-  //              it).
-  //   LOW-SIDE   AFFECTED, and this is the one to watch. LowsideCurrentSense
-  //   SENSING    samples while the low-side FETs conduct. At a 24% centre the
-  //              low side is on ~76% of the time -- a comfortable window. At a
-  //              50% centre with high modulation that window shrinks, which is
-  //              a known failure mode on this board family. Confirm phase 1 and
-  //              the phase-5 |I| ratio after any change.
-  driver.voltage_limit = DRIVER_VOLT_LIMIT;
-  driver.dead_zone     = DEAD_ZONE;
-  // Assigned explicitly so the CFG banner prints a NUMBER. Left unset it stays
-  // at NOT_SET and the banner printed -12345 -- a sentinel that reads like data.
-  // The STM32 HAL substitutes exactly 25000 when unset, so this changes nothing
-  // but the banner. "A library default is a decision nobody made."
-  driver.pwm_frequency = (long)PWM_FREQ_HZ;
-  driver_ok = driver.init();
-  SerialUART.println(driver_ok ? F("driver OK") : F("driver FAILED"));
+  // ---- HARDWARE BRING-UP, PHASE 1 -- the order lives in actuator_hw.h ----
+  // The bench envelope is passed IN rather than read out of this file, so the
+  // header carries no harness policy and Tier-0 can supply its own.
+  const ActuatorHwCfg hw_cfg = {
+    DRIVER_VOLT_LIMIT, DEAD_ZONE, (long)PWM_FREQ_HZ,
+    PIN_VBUS, VBUS_SCALE, VBUS_MIN, VBUS_MAX, VBUS_FALLBACK
+  };
+  driver_ok = actuatorInitHw(hw_cfg, SerialUART);
 
-  motor.linkDriver(&driver);
-  currentSense.linkDriver(&driver);
-
-  SerialUART.println(F("initialising MT6816 SPI encoder..."));
-  encoder.init();                            // bit-banged: consults no pin map
-  motor.linkSensor(&encoder);
-  SerialUART.print(F("MT6816 raw=")); SerialUART.print(encoder.rawCount());
-  SerialUART.print(F(" / ")); SerialUART.print(ENC_CPR);
-  SerialUART.print(F("  parity_err=")); SerialUART.print(encoder.spi_err);
-  SerialUART.print(F(" no_mag=")); SerialUART.println(encoder.no_mag);
-  if (encoder.spi_err) SerialUART.println(F("!! SPI parity errors at boot -- check CSN and HVPP->VDD"));
-  if (encoder.no_mag)  SerialUART.println(F("!! No_Mag_Warning at boot -- magnet weak/far. Fix before running."));
-
+  // ---- MOTOR POLICY -- THE HARNESS'S OWN. Tier-0 replaces this block. ----
+  // It sits BETWEEN the two init phases because motor.init() consumes
+  // voltage_limit; see the init-order note in actuator_hw.h. Do not move it.
   motor.controller = MotionControlType::velocity_openloop;
   motor.voltage_limit  = VOLT_LIMIT;
   motor.velocity_limit = VEL_MAX;
@@ -1264,47 +1161,11 @@ void setup() {
   motor.PID_current_d.limit = VOLT_LIMIT;
 
   motor.voltage_sensor_align = 1.0f;
-  motor.init();
 
-  cs_ok = currentSense.init();
-  SerialUART.println(cs_ok ? F("currentSense OK") : F("currentSense FAILED"));
-  if (cs_ok) {
-    motor.linkCurrentSense(&currentSense);
-    cs_linked = true;
-    SerialUART.println(F("currentSense LINKED"));
-  }
+  // ---- HARDWARE BRING-UP, PHASE 2 ----
+  cs_ok = actuatorInitMotor(SerialUART, cs_linked);
 
-  motor.disable();
-
-  // "Note which config is actually flashed." A measurement is only comparable to
-  // others taken under the SAME four values. On STM32 6-PWM, dead_zone is
-  // converted to a timer dead-time register value at driver.init() and quantised,
-  // so this echoes what was REQUESTED -- the measured U0 intercept is what the
-  // hardware actually does.
-  SerialUART.print(F("CFG modulation="));
-  SerialUART.print(motor.foc_modulation == FOCModulationType::SpaceVectorPWM ? F("SVPWM") : F("SinePWM"));
-  SerialUART.print(F(" dead_zone=")); SerialUART.print(driver.dead_zone, 4);
-  SerialUART.print(F(" pwm_Hz="));    SerialUART.print(driver.pwm_frequency);
-  SerialUART.print(F(" Vbus="));      SerialUART.print(driver.voltage_power_supply, 2);
-  SerialUART.print(F(" vok="));       SerialUART.print(vbus_valid ? 1 : 0);
-  // The limits that actually bind, echoed because "a limit that does not bind is
-  // not protection" and "a clamp in the wrong units is not a clamp". Uq_max is
-  // what motor.move() constrains voltage.q to; Uq_ceil is what the modulator can
-  // physically synthesise. Uq_max > Uq_ceil would be a limit that does not exist.
-  SerialUART.print(F(" Uq_max="));    SerialUART.print(motor.voltage_limit, 2);
-  SerialUART.print(F(" Uq_ceil="));   SerialUART.print(
-      ((DRIVER_VOLT_LIMIT < driver.voltage_power_supply)
-         ? DRIVER_VOLT_LIMIT : driver.voltage_power_supply) * 0.57735f, 2);
-  SerialUART.print(F(" Ilim="));      SerialUART.print(motor.current_limit, 2);
-  // Echo every load-bearing default: a library default is a decision nobody made.
-  SerialUART.print(F(" v_align="));   SerialUART.print(motor.voltage_sensor_align, 2);
-  // R_eff is 0.0f on every UNBUILT row (= NOT MEASURED, see joint_cal.h), so the
-  // alignment current is genuinely unknown there. Print "?" rather than an inf.
-  SerialUART.print(F(" (I_align="));
-  if (CAL.R_eff > 0.0f) SerialUART.print(motor.voltage_sensor_align / CAL.R_eff, 1);
-  else                  SerialUART.print(F("? R_eff NOT MEASURED"));
-  SerialUART.print(F("A) spi_nops=")); SerialUART.print(SPI_HALF_NOPS);
-  SerialUART.print(F(" jump_guard=")); SerialUART.println(SPI_JUMP_GUARD ? 1 : 0);
+  printCfgBanner(SerialUART, DRIVER_VOLT_LIMIT);
 
   // DIRECTION IS NOT PRESET ON THIS BOARD. The ABZ build hardcoded CCW because
   // the TIM4 count convention had been confirmed; the MT6816 SPI angle runs on
