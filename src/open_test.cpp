@@ -999,10 +999,7 @@ void startMotor() {
   SerialUART.print(F(" target=")); SerialUART.println(target);
 }
 
-void stopMotor(const char* reason) {
-  motor.disable(); running = false;
-  SerialUART.print(F("STOPPED (")); SerialUART.print(reason); SerialUART.println(F(")"));
-}
+#include "safety.h"   // stopMotor() -- the single disable path, extracted verbatim
 
 void setMode(Mode m) {
   if (running) { SerialUART.println(F("stop first (x)")); return; }
