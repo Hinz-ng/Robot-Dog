@@ -132,16 +132,6 @@ HardwareSerial SerialUART(PB4, PB3);
 
 // ---------------------------------------------------------------------------
 
-BLDCMotor motor = BLDCMotor(MOTOR_POLE_PAIRS);
-BLDCDriver6PWM driver = BLDCDriver6PWM(
-    A_PHASE_UH, A_PHASE_UL,
-    A_PHASE_VH, A_PHASE_VL,
-    A_PHASE_WH, A_PHASE_WL
-);
-// Clone sense chain is gain-compensated -> genuine constants. Do not change.
-LowsideCurrentSense currentSense = LowsideCurrentSense(0.003f, -64.0f/7.0f, A_OP1_OUT, A_OP2_OUT, A_OP3_OUT);
-
-MT6816SPI encoder = MT6816SPI();           // ENC_BITS-bit absolute, ENC_CPR counts/rev
 
 // ---- safety / tuning constants ----
 // THIS SKETCH'S bench envelope. Not fleet (fleet_config.h) and not per-unit
@@ -323,8 +313,7 @@ const float VBUS_TF       = 0.020f;     // 20 ms. Noise here becomes motor curre
 const float VBUS_MIN      = 8.0f;       // PLAUSIBILITY window only -- NOT a
 const float VBUS_MAX      = 30.0f;      //   low-voltage cutoff. See note below.
 const float VBUS_FALLBACK = 11.30f;     // measured bench pack, used if read fails
-float vbus_filt           = VBUS_FALLBACK;
-bool  vbus_valid          = false;
+#include "actuator_hw.h"   // motor/driver/currentSense/encoder + Vbus state
 // NOTE ON VBUS_MAX: the ADC saturates at 34.2 V, so a genuine overvoltage above
 // that would read as exactly 34.2 and be REJECTED by this window -- the filter
 // would then hold its last good value rather than reporting the fault. That is
