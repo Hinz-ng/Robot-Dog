@@ -1999,3 +1999,257 @@ void acPhase(uint8_t n) {
     default: acStatus(); break;
   }
 }
+
+// ===========================================================================
+// SWING LADDER -- key 'w'.  Manual-assist, NOT part of the 1..7 chain.
+// ===========================================================================
+// Separates the GEOMETRIC term (slack + mesh lost motion) from the ELASTIC term
+// by measuring swing at three currents instead of one:
+//
+//     swing(I) = [slack + lost motion] + 2*F(I)/k_beltline
+//
+// The intercept is the geometric term with the elastic part removed RIGOROUSLY,
+// instead of by subtracting a fixed count using a stiffness measured at some
+// other operating point -- which is what the single-current swing has had to do
+// (51 counts at the ring-derived 370 kN/m, 2026-09-17). The slope is the
+// belt-line stiffness at the swing's own operating point.
+//
+// WHY THIS IS A FIRMWARE COMMAND AND NOT A KEYSTROKE PROCEDURE. The manual
+// version is: c, g, +x15, read, -x30, read, +x15. Three currents triples that to
+// ~90 keystrokes, each one a chance to mis-count a jog, and the 5 s settle has to
+// be timed by hand on all six legs. The failure it prevents is not hypothetical:
+// this campaign has already archived four ring captures believing two of them
+// were negative-going, and four dumps of which only three were unique.
+//
+// PRECONDITIONS, and they are not optional:
+//   * OUTPUT LOCKED (clamped or bonded). A free output measures nothing.
+//   * Valid alignment. This is FOC current; a wrong ZEA invalidates the torque.
+//   * Idlers in whatever state is being characterised -- RECORD IT. The number
+//     describes the plant actually fitted, not the one in the row.
+//
+// THERMAL: six legs x AC_SW_SETTLE_MS stalled, the 3 A pair costing ~2.9 W.
+// ~30 J total. Do not extend the settle without re-reading section 16.
+// ---------------------------------------------------------------------------
+const uint8_t  AC_SW_N            = 4;
+// LADDER CURRENTS -- lowered 1/2/3 -> 0.6/1.0/1.4 on 2026-09-19 by measurement,
+// not by caution. J02, slicer+boss pulley, NO IDLERS:
+//     1.0 A = 7.1 N of belt force  -> held clean, return error 13 counts
+//     2.0 A = 14.2 N               -> RATCHETED CONTINUOUSLY through the mesh,
+//                                     |Iq| sagging to 1.7-1.9 A on back-EMF,
+//                                     ending one tooth displaced
+// So the skip threshold is between 7.1 and 14.2 N with 3.1 teeth in mesh and a
+// slack belt. The top point is set at 1.4 A = 9.9 N, 30% below the current that
+// demonstrably skips. THIS CEILING IS PLANT-SPECIFIC: it will rise once idlers
+// are fitted and the belt is tensioned, and this array should be re-raised then
+// -- a wider span is strictly better for the slope (see below).
+// The bottom is 0.6 A = 2x J02's 0.2983 A breakaway, so the traverse is not
+// fighting stiction; going lower biases the swing short.
+// 1.6 A ADDED 2026-09-19 as a FOURTH point, not as a new top of three. 1.6 A =
+// 11.4 N, 80% of the 14.2 N that skipped -- thinner margin than the rest of the
+// ladder, so it is placed where losing it costs least: the ladder stops on skip,
+// so if 1.6 goes the three proven-clean points below it survive and the run is
+// still usable. Four points also buy 2 dof, which is what makes the curvature
+// visible in the residuals testable rather than merely apparent (the 3-point
+// runs of 2026-09-19 showed a reproducible +9/-18/+9, i.e. SOFTENING with load,
+// consistent with the ring test -- but with 1 dof that pattern is unfalsifiable).
+const float    AC_SW_I[AC_SW_N]   = { 0.6f, 1.0f, 1.4f, 1.6f };   // REPORTED amps
+// 5 s, not 1 s. ~10 counts of creep (15 um of belt) appear over the first ~4 s
+// at 2 A and then converge -- measured 2026-09-05. Reading early reads the creep.
+const uint16_t AC_SW_SETTLE_MS    = 5000;
+const uint16_t AC_SW_TICK_MS      = 1000;   // settling heartbeat, so creep is visible
+// Repeatability tolerance, applied to the two MINUS limits (legs 2 and 4).
+const int32_t  AC_SW_RETURN_CNT   = 25;
+
+// ---------------------------------------------------------------------------
+// FOUR LEGS, AND THE FIRST ONE IS THROWN AWAY. Corrected 2026-09-19.
+// ---------------------------------------------------------------------------
+// The 3-leg version (+, -, +ret) reported NOT REPEATABLE on 5 of 6 points across
+// two runs -- and it was right to, but the fault was here, not in the plant.
+// Each point takes its reference wherever the PREVIOUS point left the plant,
+// which is at that point's PLUS limit. So the first + leg of every point after
+// the first barely moves and never completes a traverse:
+//
+//     point        first + leg moved      return error
+//     0.6 A        359 / 179 counts       +6  / +9      <- real traverse
+//     1.0 A         28 /  28              +30 / +31     <- no traverse
+//     1.4 A         24 /  25              +37 / +37     <- no traverse
+//
+// The two runs agreed to +-1 count on those errors, so this was systematic, not
+// noise. A swing is the peak-to-peak of a HYSTERESIS LOOP: both limits have to
+// be reached by a full traverse or they are not the same loop. The old
+// swing = |cp - cm| was therefore biased LOW, and progressively so with current,
+// which drags the slope down and pushes the intercept up (287/576 measured,
+// against 324/564 from the matched pair).
+//
+// So: leg 1 CONDITIONS the plant and is discarded; legs 2, 3, 4 are all full
+// traverses and are the measurement. Two independent swings come out of them,
+// and their disagreement is a real repeatability figure instead of an artefact.
+// Cost: 5 s per point. Worth it -- once the idlers go in and the swing collapses
+// to lost motion alone (150-400 counts predicted), a 37-count bias would be
+// 10-25% of the entire signal.
+// ---------------------------------------------------------------------------
+
+// Re-reading the same leg is what turns "it moved" into "it skipped". A return
+// error near a multiple of one pinion tooth is a skip; anything else is drift.
+// Returns true if the error is tooth-scale, i.e. a skip rather than drift.
+static bool acSwTeeth(int32_t err) {
+  const float teeth = (float)acAbs32(err) / ENC_CNT_PER_TOOTH;
+  if (teeth < 0.5f) return false;
+  SerialUART.print(F("    !! ~")); SerialUART.print(teeth, 2);
+  SerialUART.println(F(" PINION TEETH -- suspected SKIP. DISCARD this point."));
+  return true;
+}
+
+// One leg: command a current, hold it, report the settled count. Returns the
+// wrap-safe count relative to this point's own reference.
+static int32_t acSwLeg(float amps, uint16_t ref, const __FlashStringHelper* tag) {
+  target = amps;
+  uint32_t t0 = millis(), tp = millis();
+  int32_t last = acCntDelta(ref, encoder.raw);
+  while ((millis() - t0) < AC_SW_SETTLE_MS && !ac_abort) {
+    acService();
+    if ((millis() - tp) > AC_SW_TICK_MS) {
+      tp = millis();
+      const int32_t now = acCntDelta(ref, encoder.raw);
+      SerialUART.print(F("      ")); SerialUART.print(tag);
+      SerialUART.print(' ');                 SerialUART.print(amps, 2);
+      SerialUART.print(F(" A  cnt_rel="));   SerialUART.print(now);
+      SerialUART.print(F("  d="));           SerialUART.print(now - last);
+      SerialUART.print(F("  Iq="));          SerialUART.println(motor.current.q, 3);
+      last = now;
+    }
+  }
+  return acCntDelta(ref, encoder.raw);
+}
+
+static void acSwingLadder() {
+  if (!acReady()) return;
+  if (!foc_ready) {
+    SerialUART.println(F("refused: no valid alignment. Press 'f' or 'V' (stored ZEA), or run"));
+    SerialUART.println(F("         phase 2. The swing is FOC current -- a wrong ZEA invalidates it."));
+    return;
+  }
+  SerialUART.println(F("[SWING] ladder 1/2/3 A. OUTPUT MUST BE LOCKED (clamped or bonded)."));
+  SerialUART.print(F("        belt row says ")); SerialUART.print(CAL.belt);
+  SerialUART.println(F(" -- the reading describes what is ACTUALLY fitted. Tag it."));
+  SerialUART.print(F("        1 cnt = ")); SerialUART.print(BELT_MM_PER_COUNT * 1000.0f, 4);
+  SerialUART.print(F(" um of belt,  1 tooth = ")); SerialUART.print(ENC_CNT_PER_TOOTH, 1);
+  SerialUART.println(F(" cnt"));
+
+  acEnter();
+  mode = MODE_TORQUE_CURRENT;                       // 'c' mode -- FOC current
+  motor.torque_controller = TorqueControlType::foc_current;
+  motor.controller        = MotionControlType::torque;
+  motor.PID_current_q.reset(); motor.PID_current_d.reset();
+  target = 0.0f;
+  motor.enable(); running = true; run_started = millis();
+
+  // Keep the current WITH its swing. Compacting only the swings while indexing
+  // the fit off AC_SW_I would silently pair point 3 with 2 A if point 2 failed.
+  float sw_y[AC_SW_N], sw_x[AC_SW_N];
+  uint8_t n_ok = 0;
+
+  for (uint8_t k = 0; k < AC_SW_N && !ac_abort; k++) {
+    const float amps = AC_SW_I[k];
+    SerialUART.print(F("\n  point ")); SerialUART.print(k + 1);
+    SerialUART.print('/');             SerialUART.print(AC_SW_N);
+    SerialUART.print(F("   +-"));      SerialUART.print(amps, 2);
+    SerialUART.println(F(" A"));
+    const uint16_t ref = encoder.raw;               // per-point reference
+
+    // Leg 1 CONDITIONS only -- it starts from wherever the last point left the
+    // plant, so it is not a full traverse and is not a limit. Discarded.
+    (void)acSwLeg(+amps, ref, F("+cond (discarded)"));
+    const int32_t m1 = acSwLeg(-amps, ref, F("-"));
+    const int32_t p1 = acSwLeg(+amps, ref, F("+"));
+    const int32_t m2 = acSwLeg(-amps, ref, F("-rpt"));
+    if (ac_abort) break;
+
+    // Two swings from three fully-traversed limits. They share p1, so they are
+    // not independent -- but their difference is |m2 - m1|, which IS the honest
+    // repeatability of a limit, and that is the number worth gating on.
+    const int32_t sa    = acAbs32(p1 - m1);
+    const int32_t sb    = acAbs32(p1 - m2);
+    const int32_t swing = (sa + sb) / 2;
+    const int32_t rep   = m2 - m1;            // 0 = the plant came back exactly
+    const bool    good  = (acAbs32(rep) <= AC_SW_RETURN_CNT);
+    // Machine-readable, alone on its line and fully comma-delimited, so a whole
+    // session pastes straight into docs/cal/*.csv. SCHEMA CHANGED 2026-09-19 --
+    // the old 7-field row carried a conditioning leg as if it were a limit:
+    //     SW,<amps>,<minus1>,<plus>,<minus2>,<swing_a>,<swing_b>,<swing>,<repeat>
+    SerialUART.print(F("SW,")); SerialUART.print(amps, 2);
+    SerialUART.print(',');      SerialUART.print(m1);
+    SerialUART.print(',');      SerialUART.print(p1);
+    SerialUART.print(',');      SerialUART.print(m2);
+    SerialUART.print(',');      SerialUART.print(sa);
+    SerialUART.print(',');      SerialUART.print(sb);
+    SerialUART.print(',');      SerialUART.print(swing);
+    SerialUART.print(',');      SerialUART.println(rep);
+    SerialUART.print(F("    swing=")); SerialUART.print(swing);
+    SerialUART.print(F(" cnt = "));    SerialUART.print(swing * BELT_MM_PER_COUNT, 4);
+    SerialUART.print(F(" mm   repeat=")); SerialUART.print(rep);
+    SerialUART.println(good ? F("  OK") : F("  !! NOT REPEATABLE"));
+    const bool skipped = acSwTeeth(rep);
+    if (good) { sw_x[n_ok] = amps; sw_y[n_ok] = (float)swing; n_ok++; }
+    // STOP CLIMBING once the mesh has let go. Every higher point would skip too,
+    // and worse, the plant has MOVED -- the belt is now sitting one tooth over,
+    // so the remaining points would not even be measuring the same assembly.
+    // Found the hard way 2026-09-19: the 2 A point ratcheted and the 3 A point
+    // had to be aborted by hand while the shaft was still spinning at 72 rad/s.
+    if (skipped) {
+      // Blank line as its own println: a "\n" inside F() has now been mangled
+      // three times by the edit path (claude.md, the standing grep rule). Not
+      // worth re-escaping something that can just be a separate call.
+      SerialUART.println();
+      SerialUART.print(F("  LADDER STOPPED at ")); SerialUART.print(amps, 2);
+      SerialUART.println(F(" A -- the mesh let go. Higher points are not measurable"));
+      SerialUART.println(F("  on this plant, and the belt has moved one tooth. Re-seat before re-running."));
+      break;
+    }
+  }
+
+  target = 0.0f;
+  acExit(true);
+  if (ac_abort) { SerialUART.println(F("  aborted -- discard the last point")); return; }
+
+  // Straight-line fit over the points that passed their own return check.
+  // Printed as a CONVENIENCE: the SW, rows above are the measurement, and an
+  // offline refit is what should feed any constant.
+  if (n_ok < 2) {
+    SerialUART.println(F("\n  < 2 repeatable points -- no fit. Fix the seating and re-run."));
+    return;
+  }
+  float sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (uint8_t k = 0; k < n_ok; k++) {
+    sx  += sw_x[k];            sy  += sw_y[k];
+    sxx += sw_x[k] * sw_x[k];  sxy += sw_x[k] * sw_y[k];
+  }
+  const float den = (float)n_ok * sxx - sx * sx;
+  if (fabsf(den) < 1e-6f) { SerialUART.println(F("\n  degenerate fit -- points not distinct")); return; }
+  const float slope = ((float)n_ok * sxy - sx * sy) / den;   // counts per amp
+  const float icpt  = (sxx * sy - sx * sxy) / den;           // counts at I = 0
+
+  SerialUART.print(F("\n  FIT over ")); SerialUART.print(n_ok);
+  SerialUART.println(F(" pts:   swing = intercept + slope*I"));
+  SerialUART.print(F("    intercept = ")); SerialUART.print(icpt, 1);
+  SerialUART.print(F(" cnt = "));          SerialUART.print(icpt * BELT_MM_PER_COUNT, 4);
+  SerialUART.println(F(" mm    <- GEOMETRIC: slack + mesh lost motion"));
+  SerialUART.print(F("    slope     = ")); SerialUART.print(slope, 1);
+  SerialUART.print(F(" cnt/A = "));        SerialUART.print(slope * BELT_MM_PER_COUNT, 4);
+  SerialUART.println(F(" mm/A  <- ELASTIC"));
+  // k_beltline from the slope: swing_mm = geom + 2*F/k, with F = Kt*I/r_pinion.
+  // Kt is DERIVED (calKt), never stored -- see joint_cal.h. REPORTED amps, so
+  // this inherits the i_scale caveat in fleet_config.h.
+  const float F_per_A = calKt(CAL) / (R_PINION_MM * 1e-3f);        // N per reported A
+  const float slope_m = slope * BELT_MM_PER_COUNT * 1e-3f;         // m per A
+  if (slope_m > 1e-9f) {
+    SerialUART.print(F("    k_beltline = "));
+    SerialUART.print(2.0f * F_per_A / slope_m / 1000.0f, 1);
+    SerialUART.print(F(" kN/m  (Kt=")); SerialUART.print(calKt(CAL), 6);
+    SerialUART.println(F(" derived, REPORTED amps)"));
+  } else {
+    SerialUART.println(F("    k_beltline: slope <= 0, not computable. Check the lock."));
+  }
+  SerialUART.println(F("  NOTE: the SW, rows are the measurement. This fit is a convenience --"));
+  SerialUART.println(F("        refit offline before any constant moves."));
+}

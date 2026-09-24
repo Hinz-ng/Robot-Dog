@@ -58,6 +58,20 @@ static inline void spiHalf() {
 // error rate from 'e' is known to be zero.
 const bool  SPI_JUMP_GUARD  = false;
 const float SPI_MAX_JUMP    = 1.0f;    // rad mechanical between consecutive reads
+// *** THE GUARD COULD LATCH, AND THAT IS WHY IT IS STILL OFF. Found 2026-09-20. ***
+// On rejection last_ok_rad was NOT updated, so once the shaft parked further than
+// SPI_MAX_JUMP from the last accepted sample, EVERY later sample was more than
+// SPI_MAX_JUMP away too and the angle froze until reboot. Not hypothetical: the
+// wrap keeps |d| <= PI, so any rest position >1.0 rad from last_ok is a permanent
+// lockout. A 600 ms logDump() with the shaft at 96 rad/s is enough to enter it.
+// A frozen angle with the motor ARMED is the §12 frozen-vector case -- the field
+// stops tracking the rotor and back-EMF comes into anti-phase. That is the worst
+// outcome available here, and the guard would have caused it.
+//
+// So the guard now FORCE-ACCEPTS after this many consecutive rejections. Worst
+// case a corrupted sample is held for SPI_JUMP_MAX_RUN loops (~0.2 ms) instead
+// of forever, and the mechanism cannot latch.
+const uint8_t SPI_JUMP_MAX_RUN = 3;
 
 class MT6816SPI : public Sensor {
 public:
@@ -141,7 +155,13 @@ public:
       float d = a - last_ok_rad;
       while (d >  _PI) d -= _2PI;                    // wrap to +-PI
       while (d < -_PI) d += _2PI;
-      if (fabsf(d) > SPI_MAX_JUMP) { spi_jump++; return last_ok_rad; }
+      if (fabsf(d) > SPI_MAX_JUMP && jump_run < SPI_JUMP_MAX_RUN) {
+        jump_run++; spi_jump++; return last_ok_rad;
+      }
+      // Either the step was plausible, or it has repeated SPI_JUMP_MAX_RUN times
+      // and is therefore where the shaft actually IS. Re-seed and carry on --
+      // never hold a reference the plant has left behind.
+      jump_run = 0;
     }
     last_ok_rad = a;
     return a;
@@ -165,5 +185,6 @@ public:
   uint32_t spi_jump   = 0;
 
 private:
-  float last_ok_rad = 0.0f;
+  float   last_ok_rad = 0.0f;
+  uint8_t jump_run    = 0;      // consecutive jump rejections; bounds the guard
 };

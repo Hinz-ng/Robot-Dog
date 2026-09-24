@@ -153,6 +153,22 @@ static inline float tDelayAt(float f_loop_hz) {
 // and deliberately does not live here -- see M14.
 static constexpr float GEAR_RATIO = 9.0f;    // 12T alu pinion -> 108T pulley
 
+// BELT-LINE GEOMETRY. Fleet by construction -- same pinion, same 2 mm GT2 pitch
+// on every joint. The PITCH is the primary quantity and the radius is derived
+// from it, not the other way round: 12 teeth x 2.000 mm = 24.000 mm of belt per
+// motor revolution, EXACTLY, which is why R_PINION_MM lands on 3.8197 and not on
+// a round number. Closed form confirmed against the CAD span to 3 um (README 8.2).
+static constexpr float BELT_PITCH_MM         = 2.0f;     // GT2
+static constexpr uint8_t PINION_TEETH        = 12;
+static constexpr float BELT_MM_PER_MOTOR_REV = BELT_PITCH_MM * (float)PINION_TEETH;  // 24.000
+static constexpr float R_PINION_MM           = BELT_MM_PER_MOTOR_REV / 6.28318531f;  // 3.8197
+// The encoder as a belt-travel gauge. This is what makes a swing test a LENGTH
+// measurement rather than an angle one.
+static constexpr float BELT_MM_PER_COUNT     = BELT_MM_PER_MOTOR_REV / (float)ENC_CPR;  // 1.4648 um
+// One pinion tooth, at the encoder. A swing or return reading that moves by this
+// -- or a multiple of it -- is a TOOTH SKIP, not compliance. 16384/12 = 1365.33.
+static constexpr float ENC_CNT_PER_TOOTH     = (float)ENC_CPR / (float)PINION_TEETH;
+
 // ---------------------------------------------------------------------------
 // ROTOR INERTIA -- measured 2026-08-08, belt off (M6a)
 // ---------------------------------------------------------------------------

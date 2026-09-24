@@ -189,7 +189,7 @@ static bool actuatorInitMotor(Print& out, bool& cs_linked) {
 // The CFG banner. driver_volt_limit is a PARAMETER, not a global: it is the
 // caller's bench policy, and reading it from open_test.cpp would make this
 // header depend upward on the file that includes it.
-static void printCfgBanner(Print& out, float driver_volt_limit) {
+static void printCfgBanner(Print& out, float driver_volt_limit, float curr_max) {
   // "Note which config is actually flashed." A measurement is only comparable to
   // others taken under the SAME four values. On STM32 6-PWM, dead_zone is
   // converted to a timer dead-time register value at driver.init() and quantised,
@@ -209,6 +209,13 @@ static void printCfgBanner(Print& out, float driver_volt_limit) {
   out.print(F(" Uq_ceil="));   out.print(
       ((driver_volt_limit < driver.voltage_power_supply)
          ? driver_volt_limit : driver.voltage_power_supply) * 0.57735f, 2);
+  // TWO current limits, and they bind in DIFFERENT modes -- printing only one
+  // was misleading the moment CURR_MAX and CURR_LIMIT stopped being equal
+  // (2026-09-17). Imax is the TORQUE(I) target clamp and is the one that binds
+  // there; Ilim is motor.current_limit, which 2.3.1 applies only through
+  // PID_velocity.limit, i.e. VELOCITY mode. In TORQUE(I) move() assigns
+  // current_sp = target with no constrain, so Ilim is inert.
+  out.print(F(" Imax="));      out.print(curr_max, 2);
   out.print(F(" Ilim="));      out.print(motor.current_limit, 2);
   // Echo every load-bearing default: a library default is a decision nobody made.
   out.print(F(" v_align="));   out.print(motor.voltage_sensor_align, 2);

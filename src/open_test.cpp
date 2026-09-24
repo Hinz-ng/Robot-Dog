@@ -177,8 +177,32 @@ const unsigned long AUTO_STOP_MS = 20000;
 const unsigned long OVERSPEED_GRACE_MS = 300;   // ignore overspeed right after arming
 
 const float CURR_STEP   = 0.1f;
-const float CURR_MAX    = 2.0f;
-const float CURR_LIMIT  = 2.0f;
+// TORQUE(I) TARGET CLAMP. Raised 2.0 -> 3.0 on 2026-09-17 for the swing ladder
+// (section 22.3): swing(I) = [slack + lost motion] + 2*F(I)/k needs three well
+// separated currents to separate the intercept from the slope, and 1/2/3 A is
+// the widest span the plant allows.
+//
+// *** THIS IS THE LIMIT THAT ACTUALLY BINDS IN TORQUE(I), NOT CURR_LIMIT. ***
+// Verified in the library, not assumed: BLDCMotor::move() case
+// MotionControlType::torque with foc_current is a bare `current_sp = target;`
+// with NO constrain against current_limit. So CURR_LIMIT/motor.current_limit is
+// inert here and binds only in VELOCITY mode, via PID_velocity.limit.
+// CURR_LIMIT IS DELIBERATELY LEFT AT 2.0 -- raising it would widen the velocity
+// envelope, which no test asked for.
+//
+// WHAT 3.0 A COSTS, checked before raising it:
+//   thermal   P_cu = 1.5*R*I^2 = 1.5*0.2168*9 = 2.9 W stalled, no airflow. The
+//             ladder dwells ~10 s at 3 A, so ~30 J. Section 16's concern starts
+//             at 4.5 A / 6.6 W sustained. Fine for a 15-minute test, NOT for a
+//             standing hold -- do not leave a 3 A target parked.
+//   headroom  Uq needed at stall = 3.0*0.2168 + U0 = 0.67 V against
+//             VOLT_LIMIT 2.0 and Uq_ceil 3.46. Not clipped.
+//   belt      3 A = 0.081 N.m at the pinion = 21 N of belt force with 3.1 teeth
+//             in mesh and no idlers. THIS IS THE REAL RISK -- watch for skip.
+//             acSwingLadder() detects it from the return leg (ENC_CNT_PER_TOOTH).
+//   guards    AC_IMAX_ABORT is 6.0 A (reported); untouched and still 2x above.
+const float CURR_MAX    = 3.0f;
+const float CURR_LIMIT  = 2.0f;   // VELOCITY mode only -- see above. Unchanged.
 
 // DEAD ZONE, PWM FREQUENCY: moved to fleet_config.h. Both are properties of the
 // EG2124A/B-G431B-ESC1 board family, identical on all twelve joints, and both are
@@ -930,7 +954,19 @@ bool isTorqueMode(Mode m){ return (m == MODE_TORQUE || m == MODE_TORQUE_CURRENT)
 // ---------------------------------------------------------------------------
 void encoderSelfTest() {
   if (running) { SerialUART.println(F("stop first (x)")); return; }
-  const uint16_t N = 2000;
+  // N RAISED 2000 -> 20000 on 2026-09-20, and the verdict now includes span.
+  // 'e' was reporting "ENC PASS: link clean" on an assembly that 'E' showed
+  // failing in bursts, and both halves of that were its own fault:
+  //   SAMPLE SIZE. 2000 reads is ~13 ms. The observed fault is BURSTY -- clean
+  //   for tens of seconds, then thousands of errors inside one 250 ms window.
+  //   A 13 ms probe usually lands in the quiet. At the 2026-09-20 "clean" run's
+  //   own rate (2 errors in 1,441,635 reads) 'e' expects 0.003 errors per press,
+  //   so it reads PASS about 99.7% of the time REGARDLESS of the link.
+  //   VERDICT. span was printed but was NOT in the pass condition, so a run with
+  //   a visibly corrupted angle could still print "link clean".
+  // 20000 reads is ~133 ms -- still instant to a human, 10x the detection floor.
+  // It is still a SNAPSHOT: for a bursty fault use 'E' and let it soak.
+  const uint16_t N = 20000;
   uint32_t err0 = encoder.spi_err, ok0 = encoder.spi_ok;
   uint16_t lo = 0xFFFF, hi = 0;
   uint8_t  nmg = 0;
@@ -954,18 +990,100 @@ void encoderSelfTest() {
   SerialUART.print(F(" span="));        SerialUART.print(hi - lo);
   SerialUART.print(F(" no_mag="));      SerialUART.print(nmg);
   SerialUART.print(F(" over_speed="));  SerialUART.println(encoder.over_speed);
-  if (errs == 0 && oks == N) SerialUART.println(F("ENC PASS: link clean"));
-  else                       SerialUART.println(F("ENC FAIL: check wiring / slow SPI_HALF_NOPS down"));
+  // span is in the verdict now. On a STATIONARY shaft raw must not move, and a
+  // nonzero span is a corrupted frame that PASSED parity -- the failure parity
+  // structurally cannot see. Reporting it and then ignoring it was worse than
+  // not measuring it, because it made a bad link print the word "clean".
+  const uint16_t span = (hi > lo) ? (uint16_t)(hi - lo) : 0;
+  if (errs == 0 && oks == N && span == 0) {
+    SerialUART.println(F("ENC PASS: link clean (SNAPSHOT -- blind to a bursty fault, use E to soak)"));
+  } else {
+    SerialUART.println(F("ENC FAIL: check wiring / slow SPI_HALF_NOPS down"));
+    if (span) SerialUART.println(F("  span != 0 on a still shaft = corruption that PASSED parity"));
+  }
   if (nmg) SerialUART.println(F("!! No_Mag_Warning -- magnet too weak or too far. Angle is GARBAGE."));
+}
+
+// ---------------------------------------------------------------------------
+// 'E' -- CONTINUOUS HARNESS MONITOR. The instrument for the wiggle test.
+// ---------------------------------------------------------------------------
+// 'e' is one-shot: 2000 reads, ~13 ms, print, done. Useless for flexing a
+// conductor, because you cannot press a key and wiggle a wire at the same time
+// and the answer arrives after you have stopped. This repeats until a key is
+// pressed, so both hands are free and the console is a live readout.
+//
+// TWO DETECTORS, and the second one is the point:
+//   perr   PARITY. One bit over a 16-bit word, so it catches an ODD number of
+//          flipped bits and MISSES AN EVEN NUMBER -- roughly half of all
+//          multi-bit corruptions sail through it looking perfect.
+//   span   STATIONARY-SHAFT ANGLE SPAN. With the shaft held still, `raw` must
+//          not move. Any span at all is a corrupted frame that PASSED parity.
+//          This is the detector parity cannot be, and nothing in the firmware
+//          was watching it -- SPI_JUMP_GUARD is false (mt6816.h), so spi_jump
+//          is never incremented and `jrej` never prints.
+//
+// ⚠ no_mag is only written on a SUCCESSFUL read (mt6816.h, after the parity
+// check). During an error burst it holds its last good value, so nmg = 0 across
+// a fault does NOT exclude a field problem. Stated because that inference has
+// already been drawn once from the session logs.
+// ---------------------------------------------------------------------------
+void encoderMonitor() {
+  if (running) { SerialUART.println(F("stop first (x)")); return; }
+  SerialUART.println(F("ENC MONITOR -- shaft STATIONARY. Flex ONE conductor at a time,"));
+  SerialUART.println(F("  near the connector then at the breakout: PB5 CSN, PB6 MOSI, PB7 MISO,"));
+  SerialUART.println(F("  PB8 SCK, then VCC and GND. Any key stops."));
+  const uint16_t WIN_MS = 250;
+  const uint32_t e0_all = encoder.spi_err;
+  uint32_t n_all = 0, win = 0, worst_err = 0;
+  uint16_t worst_span = 0;
+  while (!SerialUART.available()) {
+    const uint32_t e0 = encoder.spi_err;
+    uint32_t n = 0;
+    uint16_t lo = 0xFFFF, hi = 0;
+    uint8_t  nmg = 0;
+    const uint32_t t_end = millis() + WIN_MS;
+    while (millis() < t_end) {
+      if (encoder.readAngleRaw()) {
+        if (encoder.raw < lo) lo = encoder.raw;
+        if (encoder.raw > hi) hi = encoder.raw;
+        nmg |= encoder.no_mag;
+      }
+      n++;
+    }
+    const uint32_t errs = encoder.spi_err - e0;
+    // raw is only written on a SUCCESSFUL read, so a corrupt-but-parity-passing
+    // frame shows up as one outlier inside the window and the next good read
+    // pulls it back -- which is exactly what this span sees.
+    const uint16_t span = (uint16_t)((hi > lo) ? (hi - lo) : 0);
+    n_all += n; win++;
+    if (errs > worst_err)  worst_err  = errs;
+    if (span > worst_span) worst_span = span;
+    SerialUART.print(F("ENC ")); SerialUART.print(win);
+    SerialUART.print(F("  n="));      SerialUART.print(n);
+    SerialUART.print(F(" perr="));    SerialUART.print(errs);
+    SerialUART.print(F(" span="));    SerialUART.print(span);
+    SerialUART.print(F(" nmg="));     SerialUART.print(nmg);
+    // Loud, because you are looking at the wire and not at the screen.
+    if (errs || span) SerialUART.println(F("   <<<<<< HIT"));
+    else              SerialUART.println();
+  }
+  while (SerialUART.available()) (void)SerialUART.read();
+  SerialUART.print(F("ENC MONITOR end: windows=")); SerialUART.print(win);
+  SerialUART.print(F(" reads="));       SerialUART.print(n_all);
+  SerialUART.print(F(" perr_total="));  SerialUART.print(encoder.spi_err - e0_all);
+  SerialUART.print(F(" worst_window=")); SerialUART.print(worst_err);
+  SerialUART.print(F(" worst_span="));  SerialUART.println(worst_span);
+  SerialUART.println(F("  span > 0 on a stationary shaft = corruption that PASSED parity."));
 }
 
 void printHelp() {
   SerialUART.println(F("--- g:go  x/s:stop  +/-:target | modes: o=open t=torque(V) c=torque(I) v=vel ---"));
-  SerialUART.println(F("--- f:initFOC(stored)  F:force align  e:encoder self-test  q:print interval ---"));
+  SerialUART.println(F("--- f:initFOC(stored)  F:force align  e:enc self-test  E:enc MONITOR (wiggle)  q:print int ---"));
   SerialUART.println(F("--- logger: l=fast L=slow  k=kick(+) K=kick(-)  j=zero-kick d=dump a=stats ---"));
   SerialUART.println(F("--- V:verify stored ZEA | Y:autocalib menu  1..6:phases  7:report  0:reset ---"));
   SerialUART.println(F("--- p: VBUS/ADC register dump (read-only, motor disabled) ---"));
   SerialUART.println(F("--- manual: N=M2 bus-power ladder  B/b=M4 breakaway ramp +/- ---"));
+  SerialUART.println(F("--- w: SWING LADDER 0.6/1.0/1.4/1.6 A -- OUTPUT LOCKED, ~80 s, stops on tooth skip ---"));
   SerialUART.println(F("--- '-' then '5' (within 0.8s): phase 5 runs REVERSE first, not forward ---"));
 }
 
@@ -1056,7 +1174,8 @@ void handleSerial() {
       case 'V': acVerifyZea();          break;   //   it verifies the stored ZEA
       case 'f': runInitFOC(false, running, foc_ready, target, SerialUART); break;   // uses STORED ZEA when available
       case 'F': runInitFOC(true,  running, foc_ready, target, SerialUART);  break;   // force a fresh alignment
-      case 'e': case 'E': encoderSelfTest(); break;
+      case 'e': encoderSelfTest(); break;              // one-shot, 2000 reads
+      case 'E': encoderMonitor();  break;              // continuous -- harness wiggle test
       case 'p': vbusProbe(); break;    // VBUS ADC probe -- read-only, motor disabled
       case 'l': logStart(1); break;                     // fast capture (~65 ms)
       case 'L': logStart(8); break;                     // slow capture (~520 ms)
@@ -1067,6 +1186,7 @@ void handleSerial() {
       // 'F' is force-align and 'G' is go -- binding either would have shadowed
       // an existing command silently.
       case 'N': case 'n': acM2Assist(); break;         // M2 bus-power ladder
+      case 'w': case 'W': acSwingLadder(); break;   // swing ladder 1/2/3 A, output LOCKED
       case 'B': acM4Breakaway(+1.0f);   break;         // M4 breakaway, forward
       case 'b': acM4Breakaway(-1.0f);   break;         // M4 breakaway, reverse
       case '0': acPhase(0); break;                     // reset results
@@ -1165,7 +1285,7 @@ void setup() {
   // ---- HARDWARE BRING-UP, PHASE 2 ----
   cs_ok = actuatorInitMotor(SerialUART, cs_linked);
 
-  printCfgBanner(SerialUART, DRIVER_VOLT_LIMIT);
+  printCfgBanner(SerialUART, DRIVER_VOLT_LIMIT, CURR_MAX);
 
   // DIRECTION IS NOT PRESET ON THIS BOARD. The ABZ build hardcoded CCW because
   // the TIM4 count convention had been confirmed; the MT6816 SPI angle runs on
