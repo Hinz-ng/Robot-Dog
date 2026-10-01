@@ -31,10 +31,20 @@
 // was actively misleading once M2 got deferred past the belt build:
 //     FREE SHAFT REQUIRED : 2 (the alignment must settle unloaded)
 //                           5, 6 (free spin)
-//     BELT-AGNOSTIC       : 1, 3, 4 and the M2 ladder -- all locked-rotor, the
-//                           rotor never turns, so the belt is not in the loop.
+//     BELT-AGNOSTIC       : 1, 3 and the M2 ladder -- locked-rotor, the rotor
+//                           never turns, so the belt is not in the loop.
 //                           The one thing that DOES matter there is that the
 //                           rotor must not creep: watch the drift column.
+//     BELT-OFF ONLY       : 4. It was listed as belt-agnostic until 2026-09-30,
+//                           by argument; the measurement says otherwise. Its
+//                           32-step train cycles the self-lock 0.8 <-> 3.2 A, and
+//                           belt friction (~0.3 A) plus belt wind-up let the rotor
+//                           sit off-axis at the weak hold and get pulled in at the
+//                           strong one, so it RATCHETS: J01 belt-on drifted -169
+//                           counts (WARN). Phase 3 is immune because it sweeps
+//                           strongest-first, and then friction holds it (drift 0
+//                           in the same session). L is a motor property: carry
+//                           the belt-off value, do not re-run 4 belt-on.
 //     BOTH, DELIBERATELY  : M4. Belt-off is the baseline; belt-on at M5 is the
 //                           number that decides impedance quality. Its banner
 //                           REPORTS the state instead of demanding one.
@@ -72,8 +82,10 @@
 //
 // EXCLUDED ON PURPOSE -- each would be WORSE automated than done by hand:
 //   J_rotor       geometric, ~1% between units, and needs friction subtraction
-//   breakaway     needs slow +-0.5 rad/s ramps through zero; different regime.
-//                 Has a HOME though -- JointCal.breakaway_A, filled by hand (M4)
+//   breakaway     needs a slow current ramp from REST at several hand-set rotor
+//                 positions (0.5 rad/s is only the "it moved" threshold). Manual-
+//                 assist 'B'/'b' (M4 belt-off, B4 belt-on); the mean is entered
+//                 by hand into JointCal.breakaway_A
 //   hot/cold R    needs a thermal soak, minutes not seconds
 //   cogging map   not used by any planned controller
 //   force-per-amp needs a load cell and the assembled leg
@@ -853,6 +865,11 @@ static void acP3() {
 // Only samples in the 0.15-0.85 band are fitted: below that the lag dominates,
 // above it the noise on a small (Iinf - i) does.
 // R converts tau to L, so this phase needs phase 3 -- but only for that scaling.
+// BELT-OFF ONLY (see the BELT STATE note at the top). The whole phase takes
+// under a second -- the 600 ms lock "twitch" IS the run, not a failure to start.
+// Belt-on it completes but the lock ratchets (J01 2026-09-30: drift -169, WARN,
+// L 44.7 uH -- +2.1% vs the belt-off 43.77, the same +2.1% seen belt-on on
+// 2026-08-12). Nothing belt-on needs L re-measured.
 // ===========================================================================
 static void acP4() {
   if (!acNeed(3)) return;
@@ -1162,8 +1179,10 @@ static void acP5() {
     SerialUART.println(F(" mA"));
   }
   SerialUART.print(F("    ")); SerialUART.println(acVs(ac_v_drag));
-  SerialUART.println(F("    DYNAMIC drag only. The STATIC breakaway threshold is larger and"));
-  SerialUART.println(F("    is not measurable here -- run M4 by hand and fill breakaway_A."));
+  // Was "larger ... run M4 by hand": M4 has been the firmware 'B'/'b' ramp since
+  // it was written, and belt-ON J01 breakaway came out EQUAL to drag_c (R16).
+  SerialUART.println(F("    DYNAMIC drag only. STATIC breakaway is a separate number (belt-off"));
+  SerialUART.println(F("    far larger, belt-on ~equal) -- press B / b (M4/B4), fill breakaway_A."));
   ac_done[5] = (ac_v_Ke != AC_FAIL);
   if (ac_done[5]) SerialUART.println(F("    next: 6"));
 }
@@ -1817,8 +1836,12 @@ static void acM2Assist() {
 //
 // The current at which a STATIONARY rotor first moves. This is NOT phase 5's
 // drag_c: that is friction while ALREADY MOVING (0.075 A on J01). Breakaway is
-// the threshold to GET moving, it is always higher, and it varies around the
-// revolution because cogging adds and subtracts. It is the term that decides
+// the threshold to GET moving, and it varies around the revolution because
+// cogging adds and subtracts. Belt-OFF it is far higher (J01 0.2923 vs 0.075 A).
+// Belt-ON it is NOT reliably higher: J01, -0.12 pulley, 2026-09-28, the MEAN of
+// 5x2 equalled drag_c (0.288 vs 0.291 A) with single readings 0.085-0.49 A
+// (BELT_DRIVE.md 22.5). An earlier version of this comment said "always
+// higher"; the belt-on measurement overrode it. It is the term that decides
 // whether impedance control feels alive or dead near zero commanded force --
 // belt-on it was 46% of standing leg load on A1, five times every other loss
 // combined.
@@ -1969,13 +1992,19 @@ static void acStatus() {
     SerialUART.println();
   }
   SerialUART.println(F("  Any key aborts a running phase."));
-  SerialUART.println(F("  FREE SHAFT + BELT OFF is needed by 2, 5 and 6 only."));
-  SerialUART.println(F("  1, 3, 4 are LOCKED-ROTOR and belt-agnostic. Leg links off throughout."));
+  // Belt-on use of 5 is B3 (drag only); 6's T/T_loop is invalid belt-on
+  // (BELT_DRIVE.md 22.1 Findings 2-3). The old line said 5 needed BELT OFF.
+  SerialUART.println(F("  FREE SHAFT is needed by 2, 5 and 6. Belt ON: 5 = drag only (Ke is"));
+  SerialUART.println(F("      contaminated, never carry it); 6's T/T_loop is invalid."));
+  SerialUART.println(F("  1, 3 are LOCKED-ROTOR and belt-agnostic. Leg links off throughout."));
+  SerialUART.println(F("  4 is BELT-OFF ONLY: belt friction makes its step train ratchet the lock"));
+  SerialUART.println(F("      (drift WARN). L is a motor constant -- carry the belt-off value."));
   SerialUART.println(F("  --- manual-assist, NOT part of the 1..7 chain ---"));
   SerialUART.println(F("  N = M2 bus-power ladder. BELT-AGNOSTIC (locked rotor). Needs 2 and an"));
   SerialUART.println(F("      external METER; bracket it with 3. Rotor must not creep -- watch drift."));
-  SerialUART.println(F("  B / b = M4 breakaway ramp, + / - . Needs a valid alignment. Run it"));
-  SerialUART.println(F("      BELT-OFF for the baseline and again BELT-ON at M5; tag which."));
+  SerialUART.println(F("  B / b = M4 breakaway ramp, + / - . Needs a valid alignment. Output FREE."));
+  SerialUART.println(F("      Belt-off = M4, belt-on = B4; tag which. 5 positions x 2 dirs."));
+  SerialUART.println(F("  w = swing ladder (B6a). Needs a valid alignment. Output LOCKED. ~80 s."));
   SerialUART.print(F("  stored: ZEA=")); SerialUART.print(ZEA_STORED, 4);
   SerialUART.print(F(" DIR=")); SerialUART.print(DIR_STORED);
   SerialUART.println(F("   ('V' verifies them against a fresh alignment)"));
@@ -2129,7 +2158,15 @@ static void acSwingLadder() {
     SerialUART.println(F("         phase 2. The swing is FOC current -- a wrong ZEA invalidates it."));
     return;
   }
-  SerialUART.println(F("[SWING] ladder 1/2/3 A. OUTPUT MUST BE LOCKED (clamped or bonded)."));
+  // Printed FROM AC_SW_I, not typed: a literal "1/2/3 A" here survived the
+  // 2026-09-19 change to 0.6/1.0/1.4/1.6 A and put the wrong currents in every
+  // ladder log until 2026-09-28.
+  SerialUART.print(F("[SWING] ladder"));
+  for (uint8_t k = 0; k < AC_SW_N; k++) {
+    SerialUART.print(k ? '/' : ' ');
+    SerialUART.print(AC_SW_I[k], 1);
+  }
+  SerialUART.println(F(" A. OUTPUT MUST BE LOCKED (clamped or bonded)."));
   SerialUART.print(F("        belt row says ")); SerialUART.print(CAL.belt);
   SerialUART.println(F(" -- the reading describes what is ACTUALLY fitted. Tag it."));
   SerialUART.print(F("        1 cnt = ")); SerialUART.print(BELT_MM_PER_COUNT * 1000.0f, 4);

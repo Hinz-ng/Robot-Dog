@@ -1186,7 +1186,7 @@ void handleSerial() {
       // 'F' is force-align and 'G' is go -- binding either would have shadowed
       // an existing command silently.
       case 'N': case 'n': acM2Assist(); break;         // M2 bus-power ladder
-      case 'w': case 'W': acSwingLadder(); break;   // swing ladder 1/2/3 A, output LOCKED
+      case 'w': case 'W': acSwingLadder(); break;   // swing ladder, currents AC_SW_I, output LOCKED
       case 'B': acM4Breakaway(+1.0f);   break;         // M4 breakaway, forward
       case 'b': acM4Breakaway(-1.0f);   break;         // M4 breakaway, reverse
       case '0': acPhase(0); break;                     // reset results

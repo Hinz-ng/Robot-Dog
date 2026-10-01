@@ -9,7 +9,7 @@
 // platformio.ini, so the constants are never hand-edited before a flash -- you
 // pick an ENVIRONMENT, not a number:
 //
-//     pio run -e J02 -t upload
+//     pio run -e J01 -t upload
 //
 // WHY HAND-ENTERED AND NOT AUTO-SAVED
 //   AUTOCALIB prints a pasteable row; YOU paste it. Deliberately manual:
@@ -131,7 +131,9 @@ struct JointCal {
                            //              and a single mean field discarded it
   float  breakaway_A;      // A  M4, STATIC threshold. Mean over rotor positions;
                            //    min/max and the direction split go in the row
-                           //    comment. Expect > drag_c, which is DYNAMIC
+                           //    comment. Belt-OFF expect > drag_c, which is
+                           //    DYNAMIC. Belt-ON it need not be: J01's mean
+                           //    equalled drag_c (BELT_DRIVE.md 22.5, R16)
 };
 
 // !!! vbus_scale IS NOT A FLEET CONSTANT -- NOW MEASURED, NOT ESTIMATED !!!
@@ -290,14 +292,72 @@ const JointCal JOINTS[] = {
   //    still (12.24 -> 12.34 moves g by 0.0004), because a uniform voltage-scale
   //    error cancels exactly -- which is also why the 0.02 V banner-vs-meter gap
   //    does NOT justify touching vbus_scale.
-  { "J01", "B-SPI-01", "M-SPI-01", "2026-08-07", "OFF",
-     6.0542f, +1, 0.22346f,        // zea, dir, R_eff      M1-rescaled, see below
-     0.01037f,                     // U0                   M1-rescaled
-     0.017941f, 43.77e-6f,         // Ke, L   (Kt = calKt() = 0.026912)  M1-rescaled
-     0.008448f, 0.9621f,           // vbus_scale (M1 2026-08-18), i_scale (M2 2026-08-20)
-     0.0750f, 0.0816f,             // drag_c fwd, rev      unchanged (reported A)
-     9.33e-4f, 7.27e-4f,           // drag_v fwd, rev      unchanged (reported A)
-     0.292f },                     // breakaway_A          unchanged (reported A)
+  //
+  // ==== B11: J01 BELT-ON. THIS is what -e J01 flashes. Written 2026-09-28, ====
+  // ==== updated 2026-09-30 for pulley RECIPE B (BELT_DRIVE.md 22.6).       ====
+  //    The belt-OFF row that the comments above describe used to sit here. It is NOT
+  //    edited or deleted -- it is a baseline that can never be re-measured -- it
+  //    MOVED, verbatim, to the END of this table (index 13, after A1) so that no
+  //    other row's JOINT_ID shifts. The DRAG and BREAKAWAY paragraphs above
+  //    describe THAT row; everything electrical above describes BOTH.
+  //
+  //    PLANT (BELT_DRIVE.md 22.6 -- the pulley of record):
+  //      belt   10 mm GT2 116T, caliper jig 104.85 (104.9 at 0.1 mm). Same
+  //             plate assembly and belt as 2026-09-28 -- only the pulley changed
+  //             (owner-confirmed 2026-09-30), so the A -> B comparison is clean.
+  //      output pulley 108T J01-P12B, RECIPE B: slicer X-Y contour comp -0.12 mm
+  //             + precise wall, sliced under the 0.4 nozzle machine profile.
+  //             Boss CAD 15.26, printed 14.95. Identity = G-code md5 (V22).
+  //             Recipe A (same settings under the 0.6 nozzle profile -- every
+  //             pulley printed before this one) read G 31-48 counts and is
+  //             SUPERSEDED.
+  //      idlers 2x 3x9x5 ZZ per side, fixed holes (1.72, +-10.00) mm
+  //      pinion top screw/support OFF. Leg links OFF.
+  //    Every field below except the last five is CARRIED from the belt-off row:
+  //      zea/dir   B1 on this plant: 1.98 deg (09-28), 0.62 deg elec (09-30, recipe
+  //                B), gate 8 deg
+  //      R_eff     B2 on this plant: 0.21883 (09-28), 0.22404 ohm (09-30); gate
+  //                0.215-0.230. Different chords of the same curved R, NOT a
+  //                reason to edit (see the R_eff field note and the J02 R_eff note)
+  //      Ke        belt-on Ke is DRAG-CONTAMINATED (BELT_DRIVE 22.1 Finding 3):
+  //                never carry it. The belt-off value stays.
+  //      U0, L, vbus_scale, i_scale   motor/board properties, belt-independent
+  //    DRAG (recipe B, B3 2026-09-30, BELT_DRIVE.md 22.6.6): phase 5 run twice,
+  //    forward-first and reverse-first ('-' then '5'), firmware 5-point fits:
+  //        run 1 (fwd first)   fwd 0.2265 + 0.004009*|w|   rev 0.3576 + 0.002597*|w|
+  //        run 2 (rev first)   rev 0.3084 + 0.002730*|w|   fwd 0.4072 + 0.002466*|w|
+  //    In BOTH runs the direction run SECOND reads 0.10-0.13 A higher: an ORDER
+  //    effect, larger than the direction effect (5% after pooling). Stored values
+  //    are each direction POOLED ACROSS BOTH ORDERS, which cancels it (the J02
+  //    convention, BELT_DRIVE 22.4.8). CONVENTION CHANGE vs the recipe-A row,
+  //    which stored the FIRST run only (0.291). On that basis recipe B's first
+  //    run reads 0.292 -- unchanged. Pooled it is 0.325 (J01 band 0.30-0.40 OK).
+  //    Pooled is stored because the robot runs warm and reverses constantly.
+  //    Ke from these runs (0.018064 / 0.018070, +0.7% on belt-off) is
+  //    DRAG-CONTAMINATED and not carried; R 0.22404 (+0.26%) and U0 0.01462 in
+  //    the same session are tripwires only.
+  //    BREAKAWAY (recipe B, 2026-09-30, docs/cal/pulley acceptance/): B4, 10
+  //    positions x 2 directions over ~1 motor rev, mean 0.295 A, SEM 0.027,
+  //    range 0.080-0.475; + 0.314 / - 0.277 (difference not significant).
+  //    Position dominates (pair means 0.12-0.42, sd 0.095). One reading
+  //    (raw 8411, -, 0.475, travel -240) is over the 200-count creep flag;
+  //    without it the mean is 0.286 -- stored value keeps all 20.
+  //    Recipe A was 0.288 (5x2). Belt-on, breakaway sits ~= drag_c (R16):
+  //    0.295 vs first-run 0.292 / pooled 0.325 -- it is NOT larger here.
+  //    BACKLASH (not a field): G 5.8 counts (3 ladders, 2 boots, I_f 0.295)
+  //    = 0.014 deg at the output. B6a <= 20 gate PASSED. The recipe-A gate
+  //    exception (G 31-48) is CLOSED.
+  //    STIFFNESS (not a field): ladder k 64.7 kN/m at its clamp (2x M3x10
+  //    countersunk into the top plate, perpendicular); clamp-dependent ~+-10%.
+  //    Ring f_d 65.0 Hz, f_n 69.8, zeta 0.36.
+  { "J01", "B-SPI-01", "M-SPI-01", "2026-09-30", "10mm-9:1",
+     6.0542f, +1, 0.22346f,        // zea, dir, R_eff      CARRIED (B1, B2 pass)
+     0.01037f,                     // U0                   CARRIED
+     0.017941f, 43.77e-6f,         // Ke, L                CARRIED -- belt-on Ke never
+     0.008448f, 0.9621f,           // vbus_scale, i_scale  CARRIED
+     0.3169f, 0.3330f,             // drag_c fwd, rev      RECIPE B, B3 pooled over both orders
+     3.24e-3f, 2.66e-3f,           // drag_v fwd, rev      RECIPE B, B3 pooled over both orders
+     0.295f },                     // breakaway_A          RECIPE B, B4 n=20 (reported A)
 
   // -- J02 -- WAS A1, the legacy ABZ assembly. Same motor and same board: the
   //    lost-count fault was diagnosed as mechanical jitter from a RUBBING encoder
@@ -609,6 +669,22 @@ const JointCal JOINTS[] = {
      1.05f, 1.05f,                 // drag_c fwd, rev   -- belt ON, not split
      0.0f, 0.0f,                   // drag_v fwd, rev   -- not fitted
      0.0f },                       // breakaway_A       -- band 0.34-1.34 A, no mean
+
+  // -- J01, BELT OFF -- HISTORICAL BASELINE, index 13 (JOINT_ID 14). MOVED here
+  //    VERBATIM from index 0 by B11 on 2026-09-28; not one field changed. It is
+  //    the belt-off baseline that cannot be re-measured once the belt is on, and
+  //    every belt-on figure in BELT_DRIVE.md is a DIFFERENCE against it. Its full
+  //    commentary (M1 rescale, U0, Ke, drag asymmetry, breakaway, M2) stays at
+  //    the top of the table, above the belt-on J01 row. No platformio.ini env
+  //    points here: add one with -D JOINT_ID=14 only to re-read this plant.
+  { "J01", "B-SPI-01", "M-SPI-01", "2026-08-07", "OFF",
+     6.0542f, +1, 0.22346f,        // zea, dir, R_eff      M1-rescaled, see below
+     0.01037f,                     // U0                   M1-rescaled
+     0.017941f, 43.77e-6f,         // Ke, L   (Kt = calKt() = 0.026912)  M1-rescaled
+     0.008448f, 0.9621f,           // vbus_scale (M1 2026-08-18), i_scale (M2 2026-08-20)
+     0.0750f, 0.0816f,             // drag_c fwd, rev      unchanged (reported A)
+     9.33e-4f, 7.27e-4f,           // drag_v fwd, rev      unchanged (reported A)
+     0.292f },                     // breakaway_A          unchanged (reported A)
 };
 
 static constexpr uint8_t JOINT_COUNT = (uint8_t)(sizeof(JOINTS) / sizeof(JOINTS[0]));
