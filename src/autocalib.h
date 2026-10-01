@@ -261,11 +261,11 @@ const float    AC_T_AGREE     = 0.25f;    // the two T estimates must agree
 
 const float    AC_RAMP_V      = 0.05f;
 const uint8_t  AC_RAMP_MS     = 10;
-// *** REPORTED AMPS, NOT TRUE AMPS. *** M2 2026-08-20 measured the sense
-// UNDER-reading by 3.9% (J01) / 3.2% (J02), so this trips at ~6.24 / 6.19 A of
-// real current. Every current limit in this project is in the same units -- see
-// the i_scale block in fleet_config.h. Not dangerous at these margins; it has
-// to be stated before anything ships a torque limit.
+// *** REPORTED AMPS, NOT TRUE AMPS -- AND CORRECTLY SO. *** M2 2026-08-20
+// measured the sense UNDER-reading by 3.9% (J01) / 3.2% (J02), so this trips at
+// ~6.24 / 6.19 A of real current. Under the 2026-10-01 unit rule (fleet_config.h)
+// a limit lives in the unit of its SOURCE: this one is a bench threshold on the
+// sensed current, so it stays A_rep and is never converted.
 const float    AC_IMAX_ABORT_A_rep  = 6.0f;     // A amplitude: hard abort (REPORTED A)
 const float    AC_COAST_RADS  = 5.0f;
 // F1 -- the |I|/Iq gate. |I| = sqrt(ia^2+ib^2+ic^2) is ALWAYS POSITIVE, so
@@ -2274,18 +2274,26 @@ static void acSwingLadder() {
   SerialUART.print(F("    slope     = ")); SerialUART.print(slope, 1);
   SerialUART.print(F(" cnt/A = "));        SerialUART.print(slope * BELT_MM_PER_COUNT, 4);
   SerialUART.println(F(" mm/A  <- ELASTIC"));
-  // k_beltline from the slope: swing_mm = geom + 2*F/k, with F = Kt*I/r_pinion.
-  // Kt is DERIVED (calKt), never stored -- see joint_cal.h. REPORTED amps, so
-  // this inherits the i_scale caveat in fleet_config.h.
-  const float F_per_A = calKt(CAL) / (R_PINION_MM * 1e-3f);        // N per reported A
-  const float slope_m = slope * BELT_MM_PER_COUNT * 1e-3f;         // m per A
-  if (slope_m > 1e-9f) {
-    SerialUART.print(F("    k_beltline = "));
-    SerialUART.print(2.0f * F_per_A / slope_m / 1000.0f, 1);
-    SerialUART.print(F(" kN/m  (Kt=")); SerialUART.print(calKt(CAL), 6);
-    SerialUART.println(F(" derived, REPORTED amps)"));
+  // k_beltline from the slope: swing_mm = geom + 2*F/k, with F = tau_motor/r_pinion.
+  // A FEEDBACK-direction crossing of the torque boundary (measured A_rep -> force),
+  // so it goes through irepToTorqueOut() like any other -- joint_cal.h.
+  //
+  // TWO numbers, on purpose. Every k archived before 2026-10-01 (BELT_DRIVE
+  // 22.5 / 22.6, e.g. recipe B's 64.7) was computed as calKt() * I_reported,
+  // which is the true value TIMES i_scale (3.9% low on J01). Printing only the
+  // true k would make the same plant read 3.9% stiffer than its own archive.
+  // Compare against the archive with the "archive conv." figure; quote physics
+  // with the true one.
+  const float F_per_A = irepToTorqueOut(1.0f) / GEAR_RATIO
+                        / (R_PINION_MM * 1e-3f);                   // N (true) per A_rep
+  const float slope_m = slope * BELT_MM_PER_COUNT * 1e-3f;         // m per A_rep
+  if (slope_m > 1e-9f && F_per_A > 0.0f) {
+    const float k_true_kNm = 2.0f * F_per_A / slope_m / 1000.0f;
+    SerialUART.print(F("    k_beltline = ")); SerialUART.print(k_true_kNm, 1);
+    SerialUART.print(F(" kN/m true   (")); SerialUART.print(k_true_kNm * CAL.i_scale, 1);
+    SerialUART.println(F(" in the pre-2026-10-01 archive conv., Kt x I_rep)"));
   } else {
-    SerialUART.println(F("    k_beltline: slope <= 0, not computable. Check the lock."));
+    SerialUART.println(F("    k_beltline: not computable -- slope <= 0 (check the lock) or Ke = 0 (uncalibrated row)."));
   }
   SerialUART.println(F("  NOTE: the SW, rows are the measurement. This fit is a convenience --"));
   SerialUART.println(F("        refit offline before any constant moves."));

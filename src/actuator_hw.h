@@ -9,9 +9,11 @@
 // ============================================================================
 // EXTRACTED VERBATIM from open_test.cpp (2026-09-10) as stage 3a: a pure
 // RELOCATION, gated on identical section sizes and an unchanged symbol table.
-// The init ORDER, the boot Vbus seed and the CFG banner are still inline in
-// open_test.cpp's setup() and arrive here in stage 3b, which is a restructure
-// and carries a bench gate instead.
+// Stage 3b then moved the init ORDER, the boot Vbus seed and the CFG banner
+// here (actuatorInitHw / actuatorInitMotor / printCfgBanner / runInitFOC). That
+// was a restructure, so its gate was the bench, not a hash: BENCH-ACCEPTED on
+// J01, 2026-10-01 -- CFG fields all match, parity 0/20000 at 6.65 us, V 2.51
+// deg elec, locked |I|/Iq 1.222 at 1.0 A, auto-stop at 20 s (README 15).
 //
 // Include point is DERIVED, not chosen: it must sit AFTER VBUS_FALLBACK (which
 // vbus_filt is initialised from) and BEFORE vbusProbe(), which uses `motor`.
@@ -19,12 +21,13 @@
 // ---------------------------------------------------------------------------
 // *** UNIT RISK -- EVERY CURRENT THAT CROSSES THIS BOUNDARY IS REPORTED AMPS. ***
 // ---------------------------------------------------------------------------
-// i_scale (J01 0.9621, J02 0.9690) is NOT applied anywhere in this harness.
-// joint_cal.h::calKtCmd() exists to convert a desired torque into a COMMAND
-// current and currently HAS NO CALLER. Tier-0 is the first consumer, so this is
-// the exact place a silent 3-4% torque error would enter the robot. Every limit
-// below -- current_limit, the PI limits, CURR_MAX_A_rep -- is in reported amps until
-// something calls calKtCmd().
+// And that is the permanent rule, not a pending fix (fleet_config.h, decided
+// 2026-10-01). Every limit below -- current_limit, the PI limits, the Imax
+// passed to printCfgBanner() -- is A_rep and is never converted. i_scale
+// (J01 0.9621, J02 0.9690) enters ONLY through joint_cal.h's torque boundary,
+// torqueOutToIrep() / irepToTorqueOut(), and tauOutCmdToIq() for commands. A
+// torque in N.m must never reach motor.target or current_limit by any other
+// route: that is the exact place a silent 3-4% error would enter the robot.
 //
 // ---------------------------------------------------------------------------
 // ODR -- READ BEFORE INCLUDING THIS FROM A SECOND TRANSLATION UNIT.
@@ -189,7 +192,7 @@ static bool actuatorInitMotor(Print& out, bool& cs_linked) {
 // The CFG banner. driver_volt_limit is a PARAMETER, not a global: it is the
 // caller's bench policy, and reading it from open_test.cpp would make this
 // header depend upward on the file that includes it.
-static void printCfgBanner(Print& out, float driver_volt_limit, float curr_max) {
+static void printCfgBanner(Print& out, float driver_volt_limit, float curr_max_A_rep) {
   // "Note which config is actually flashed." A measurement is only comparable to
   // others taken under the SAME four values. On STM32 6-PWM, dead_zone is
   // converted to a timer dead-time register value at driver.init() and quantised,
@@ -215,7 +218,7 @@ static void printCfgBanner(Print& out, float driver_volt_limit, float curr_max) 
   // there; Ilim is motor.current_limit, which 2.3.1 applies only through
   // PID_velocity.limit, i.e. VELOCITY mode. In TORQUE(I) move() assigns
   // current_sp = target with no constrain, so Ilim is inert.
-  out.print(F(" Imax="));      out.print(curr_max, 2);
+  out.print(F(" Imax="));      out.print(curr_max_A_rep, 2);
   out.print(F(" Ilim="));      out.print(motor.current_limit, 2);
   // Echo every load-bearing default: a library default is a decision nobody made.
   out.print(F(" v_align="));   out.print(motor.voltage_sensor_align, 2);

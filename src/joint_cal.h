@@ -115,7 +115,8 @@ struct JointCal {
                            //   the stored R_eff or L, and you must NOT rescale
                            //   them or the current-loop gains -- see the calKtCmd()
                            //   note below for why. It is applied in exactly ONE
-                           //   place: the torque -> current conversion.
+                           //   place: the torque boundary pair
+                           //   torqueOutToIrep() / irepToTorqueOut(), both ways.
                            //   The DIFFERENT case, easily confused with it: if
                            //   the sense gain is corrected AT SOURCE (in the
                            //   LowsideCurrentSense constructor) then the
@@ -705,8 +706,23 @@ static const JointCal& CAL = JOINTS[JOINT_ID - 1];
 static inline float calKt() { return calKt(CAL); }
 
 // ---------------------------------------------------------------------------
-// THE ONE PLACE i_scale IS ALLOWED TO BE APPLIED
+// THE TORQUE BOUNDARY -- THE ONE PLACE i_scale IS ALLOWED TO BE APPLIED
 // ---------------------------------------------------------------------------
+// UNIT RULE, decided 2026-10-01 (option A; fleet_config.h has the decision and
+// what would reopen it). Two units exist and they meet ONLY here:
+//   A_rep   the REPORTED amp -- what the current sense says. The firmware's
+//           current unit, permanently. Every MEASURED constant (R_eff, L, drag,
+//           breakaway, the PI gains) and every bench-DEMONSTRATED limit is in
+//           A_rep and is never converted.
+//   N.m     PHYSICAL torque at the OUTPUT, tau = GEAR_RATIO * Kt * I_true.
+//           DRIVETRAIN_ETA is EXCLUDED (back-solved, circular, M14) and friction
+//           is NOT subtracted. That is the contract's definition of tau; keeping
+//           eta out keeps it fixed while M14 refines a separate estimate.
+// torqueOutToIrep() / irepToTorqueOut() are the only crossing, and BOTH
+// directions use it: commands AND feedback. If only the command path converted,
+// a commanded tau and a measured tau would disagree by g for no physical reason
+// -- and the RL observation would learn that disagreement.
+//
 // i_scale = g = I_reported / I_true, from M2.
 //
 // The current LOOP needs no correction and must not be given one. R_eff and L
@@ -716,27 +732,91 @@ static inline float calKt() { return calKt(CAL); }
 // right, and the PI gains were tuned in those same units. Dividing R_eff, L or
 // the gains by i_scale would DOUBLE-count g and detune a loop that is correct.
 //
-// g leaks in exactly one place: the torque command. Real torque is Kt * I_true
-// = Kt * I_reported / g, and Kt itself is clean (Ke is fit from voltage and
-// speed, so it is independent of current-sense gain -- which is why the +0.38%
-// Kt-vs-KV agreement confirms the VOLTAGE scale and says nothing about this).
-// To actually deliver tau you must therefore ask for g*tau/Kt reported-amps:
+// g leaks wherever a current becomes a torque or a torque becomes a current --
+// command AND feedback. Real torque is Kt * I_true = Kt * I_reported / g, and Kt
+// itself is clean (Ke is fit from voltage and speed, so it is independent of
+// current-sense gain -- which is why the +0.38% Kt-vs-KV agreement confirms the
+// VOLTAGE scale and says nothing about this). So, at the motor shaft:
 //
-//     I_command [reported A] = tau_desired / calKtCmd()
+//     Iq [A_rep] = tau_motor / calKtCmd()     tau_motor = Iq [A_rep] * calKtCmd()
+//
+// and torqueOutToIrep() / irepToTorqueOut() below are exactly these, with
+// GEAR_RATIO applied so the caller works in the contract's output frame.
 //
 // i_scale = 1.0 makes this identical to calKt(). *** IT IS NO LONGER INERT: ***
 // M2 ran 2026-08-20 and both built rows carry g ~ 0.962-0.969, so calKtCmd()
 // now differs from calKt() by ~3-4% on J01 and J02.
 //
-// AND IT CURRENTLY HAS NO CONSUMER. Nothing in open_test.cpp converts a torque
-// to a current -- the bench harness commands voltage or reported amps directly,
-// so storing i_scale changes NOTHING at runtime today except the boot banner.
-// State it plainly rather than let a stored constant imply a correction that is
-// not being applied: TIER-0 IS THE FIRST CONSUMER, and the day it computes
-// I_command it must divide by calKtCmd(), not calKt(). That is the whole reason
-// this function exists ahead of its caller.
+// CONSUMERS TODAY: the boot banner, and acSwingLadder()'s k_beltline print (a
+// FEEDBACK-direction conversion: measured reported amps -> belt force). No
+// torque COMMAND exists in this harness yet -- the bench commands volts or
+// reported amps directly. B12a's MIT law is the first command-side caller, and
+// it goes through tauOutCmdToIq() below, never through calKtCmd() directly.
+//
+// calKtCmd() is the implementation of the pair and the banner's print. Do not
+// call it from control code: a bare "/ calKtCmd()" silently drops GEAR_RATIO.
+// Units: N.m of MOTOR torque (true) per A_rep.
 static inline float calKtCmd() {
   return (CAL.i_scale > 0.0f) ? (calKt() / CAL.i_scale) : calKt();
+}
+
+// Output torque [N.m] <-> Iq [A_rep]. An unbuilt row has Ke = 0, so Kt_cmd = 0:
+// the pair returns 0 (no torque on an uncalibrated joint) rather than inf/NaN,
+// and tauOutCmdToIq() flags it. Sign: a belt does not reverse direction, so
+// positive motor Iq = positive output torque. Any per-joint MOUNTING sign
+// (mirrored legs) is a contract question for the leg, not applied here.
+static inline float torqueOutToIrep(float tau_out_Nm) {
+  const float nm_per_A_rep = GEAR_RATIO * calKtCmd();
+  return (nm_per_A_rep > 0.0f) ? (tau_out_Nm / nm_per_A_rep) : 0.0f;
+}
+static inline float irepToTorqueOut(float iq_A_rep) {
+  return iq_A_rep * GEAR_RATIO * calKtCmd();
+}
+
+// THE COMMAND CLAMP CHAIN. Every torque command reaches the current loop through
+// this and nothing else:
+//
+//   tau_out_Nm --[non-finite, bad limit or uncalibrated -> 0]
+//              --> clamp |tau| <= tau_max_Nm        (OUTER: the contract, N.m)
+//              --> torqueOutToIrep()
+//              --> clamp |Iq|  <= iq_cap_A_rep      (INNER: the demonstrated envelope)
+//              --> current loop
+//
+// The inner clamp is in the unit the envelope was DEMONSTRATED in: D3's 1.6 A
+// was proven by the swing ladder in reported amps (BELT_DRIVE 22.4.14). It sits
+// LAST so that a wrong Kt, i_scale or gear ratio can never command beyond what
+// the bench has actually survived. Set tau_max so the OUTER clamp binds first;
+// then an inner hit (IQ_CLAMP_IQ) means the conversion and the envelope
+// disagree, which is a finding, not a saturation -- log it as such.
+//
+// A COMMAND LIMIT, NOT A STOP. It never disarms and it adds no e-stop call
+// site: faults still go through safety.h's stopMotor() and nowhere else.
+// Limits are passed, never defaulted -- the bench harness and Tier-0 each own
+// their envelope. A limit that is not finite and > 0 yields zero torque.
+enum IqClamp : uint8_t {
+  IQ_CLAMP_NONE   = 0,
+  IQ_CLAMP_TAU    = 1,   // outer clamp bound (expected under saturation)
+  IQ_CLAMP_IQ     = 2,   // inner clamp bound (conversion vs envelope -- a finding)
+  IQ_CLAMP_REJECT = 3,   // non-finite command, bad limit, or Kt_cmd = 0 -> 0 A_rep
+};
+struct IqCmd {
+  float   iq_A_rep;
+  IqClamp clamp;
+};
+static inline IqCmd tauOutCmdToIq(float tau_out_Nm, float tau_max_Nm, float iq_cap_A_rep) {
+  IqCmd r = { 0.0f, IQ_CLAMP_REJECT };
+  // `!(x > 0)` is deliberate: it is also true for NaN.
+  if (!isfinite(tau_out_Nm) || !isfinite(tau_max_Nm) || !isfinite(iq_cap_A_rep)
+      || !(tau_max_Nm > 0.0f) || !(iq_cap_A_rep > 0.0f) || !(calKtCmd() > 0.0f))
+    return r;
+  r.clamp = IQ_CLAMP_NONE;
+  if      (tau_out_Nm >  tau_max_Nm) { tau_out_Nm =  tau_max_Nm; r.clamp = IQ_CLAMP_TAU; }
+  else if (tau_out_Nm < -tau_max_Nm) { tau_out_Nm = -tau_max_Nm; r.clamp = IQ_CLAMP_TAU; }
+  float iq = torqueOutToIrep(tau_out_Nm);
+  if      (iq >  iq_cap_A_rep) { iq =  iq_cap_A_rep; r.clamp = IQ_CLAMP_IQ; }
+  else if (iq < -iq_cap_A_rep) { iq = -iq_cap_A_rep; r.clamp = IQ_CLAMP_IQ; }
+  r.iq_A_rep = iq;
+  return r;
 }
 
 // Print at boot so wrong-firmware-on-wrong-board is visible in ONE GLANCE
@@ -773,14 +853,21 @@ static inline void printJointCal(Print& out) {
     // is multiplied by i_scale (+5% at i_scale = 1.05). The 1/i_scale - 1 figure
     // is the torque ERROR you would have shipped uncorrected (-4.76% at 1.05).
     // Both are worth seeing; neither is a name for the other.
+    // The old label read "cmds now scaled", which claimed a correction was being
+    // applied while nothing called calKtCmd(). It is applied by the boundary
+    // pair, and only where a caller uses it -- the label now says that.
     out.print(F(" (uncorrected torque error "));
     out.print(100.0f*(1.0f/CAL.i_scale - 1.0f), 2);
-    out.print(F("%, cmds now scaled "));
+    out.print(F("%; the boundary scales cmds "));
     if (CAL.i_scale > 1.0f) out.print('+');
     out.print(100.0f*(CAL.i_scale - 1.0f), 2);
     out.print(F("%)"));
   }
   out.println();
+  // The boundary's conversion, printed as a number so a wrong gear ratio, Ke or
+  // i_scale is visible at boot instead of on the bench. J01 expects 0.2517.
+  out.print(F("  torque boundary: 1 A_rep = ")); out.print(irepToTorqueOut(1.0f), 4);
+  out.println(F(" N.m output (true; eta excluded)"));
 
   // Drag is stored as POSITIVE magnitudes per direction; the consumer applies
   // sign(omega). Printed per direction because the asymmetry is the finding.
