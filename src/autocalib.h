@@ -266,7 +266,7 @@ const uint8_t  AC_RAMP_MS     = 10;
 // real current. Every current limit in this project is in the same units -- see
 // the i_scale block in fleet_config.h. Not dangerous at these margins; it has
 // to be stated before anything ships a torque limit.
-const float    AC_IMAX_ABORT  = 6.0f;     // A amplitude: hard abort (REPORTED A)
+const float    AC_IMAX_ABORT_A_rep  = 6.0f;     // A amplitude: hard abort (REPORTED A)
 const float    AC_COAST_RADS  = 5.0f;
 // F1 -- the |I|/Iq gate. |I| = sqrt(ia^2+ib^2+ic^2) is ALWAYS POSITIVE, so
 // mean(|I|) > |mean(I)| whenever there is ripple, and the smaller the DC current
@@ -458,7 +458,7 @@ static void acExit(bool keep_align) {
                               motor.controller = MotionControlType::torque; break;
     case MODE_VELOCITY:       motor.torque_controller = TorqueControlType::foc_current;
                               motor.controller = MotionControlType::velocity;
-                              motor.PID_velocity.limit = CURR_LIMIT; break;
+                              motor.PID_velocity.limit = CURR_LIMIT_A_rep; break;
   }
 }
 
@@ -507,7 +507,7 @@ static void acService() {
   if (mode == MODE_OPENLOOP) ac_i_amp = acPhaseAmp();
   else                       ac_i_amp = sqrtf(motor.current.q*motor.current.q
                                             + motor.current.d*motor.current.d);
-  if (ac_i_amp > AC_IMAX_ABORT) {
+  if (ac_i_amp > AC_IMAX_ABORT_A_rep) {
     ac_abort = true;  ac_guard = true;
     SerialUART.print(F("\n  !! ABORT overcurrent: ")); SerialUART.print(ac_i_amp, 2);
     SerialUART.println(F(" A amplitude"));
@@ -1856,22 +1856,22 @@ static void acM2Assist() {
 // which is why this is firmware-timed rather than typed by hand -- the elapsed
 // time is reported so that failure is visible instead of assumed away.
 // ===========================================================================
-const float    AC_M4_STEP_A    = 0.005f;   // A per step
+const float    AC_M4_STEP_A_rep    = 0.005f;   // A per step
 const uint16_t AC_M4_DWELL_MS  = 150;      // -> 0.033 A/s
 const float    AC_M4_MOVE_RADS = 0.5f;     // "it moved"
 // GIVE-UP LIMIT, and the WARN threshold below must stay strictly under it or it
-// can never fire -- the loop exits at i >= AC_M4_ABORT_A, so a warning set AT
+// can never fire -- the loop exits at i >= AC_M4_ABORT_A_rep, so a warning set AT
 // the abort value is unreachable. Raised 0.60 -> 0.80 so that the +5 sigma warn
 // point (0.60) is inside the range the ramp can actually reach and a legitimately
 // high reading gets RECORDED rather than reported as "NO MOTION". Thermally
 // free: 1.5 * 0.8^2 * 0.221 = 0.21 W.
-const float    AC_M4_ABORT_A   = 0.80f;
+const float    AC_M4_ABORT_A_rep   = 0.80f;
 // Warn, do not abort. J01 belt-off: mean 0.2923, sd 0.0611 (the +-20.9% is the
 // PLANT -- grease redistribution -- not the method).
 //   0.40 A = +1.76 sigma -> fires on ~4% of HEALTHY readings. It DID fire, on a
 //            0.4050 A reading, and that false alarm cost a teardown detour.
 //   0.60 A = +5.04 sigma -> a real outlier.
-const float    AC_M4_WARN_A    = 0.60f;
+const float    AC_M4_WARN_A_rep    = 0.60f;
 // Pre-slide creep indicator. J01 ran 107-146 counts; 200 is ~1.4x the worst
 // observed. See the note at the check itself for why TRAVEL and not elapsed time.
 const int32_t  AC_M4_WARN_CNT  = 200;
@@ -1905,8 +1905,8 @@ static void acM4Breakaway(float sgn) {
 
   uint32_t tramp = millis();
   float i = 0.0f; bool moved = false;
-  while (i < AC_M4_ABORT_A && !ac_abort) {
-    i += AC_M4_STEP_A;
+  while (i < AC_M4_ABORT_A_rep && !ac_abort) {
+    i += AC_M4_STEP_A_rep;
     target = sgn * i;
     uint32_t t0 = millis();
     while ((millis() - t0) < AC_M4_DWELL_MS && !ac_abort) {
@@ -1924,7 +1924,7 @@ static void acM4Breakaway(float sgn) {
 
   if (ac_abort) { SerialUART.println(F("    aborted -- discard")); return; }
   if (!moved) {
-    SerialUART.print(F("    NO MOTION up to ")); SerialUART.print(AC_M4_ABORT_A, 3);
+    SerialUART.print(F("    NO MOTION up to ")); SerialUART.print(AC_M4_ABORT_A_rep, 3);
     SerialUART.println(F(" A -- something is rubbing. Check bearing preload and"));
     SerialUART.println(F("    that the magnet is not skimming the sensor (gap 0.5-1.0 mm, NEVER zero)."));
     return;
@@ -1945,7 +1945,7 @@ static void acM4Breakaway(float sgn) {
   SerialUART.print(F(" s, travel ")); SerialUART.print(travel);
   SerialUART.println(F(" cnt"));
   // ELAPSED TIME CARRIES NO INDEPENDENT INFORMATION and the old `el < 1000` test
-  // was dead code. The ramp is deterministic: el = (i / AC_M4_STEP_A) *
+  // was dead code. The ramp is deterministic: el = (i / AC_M4_STEP_A_rep) *
   // AC_M4_DWELL_MS = i * 30000 ms/A, so el < 1000 ms is just i < 0.0333 A. At
   // J01's 0.2923 A the ramp takes 8.8 s and the test could never have fired.
   //
@@ -1960,8 +1960,8 @@ static void acM4Breakaway(float sgn) {
     SerialUART.print(F("    !! long pre-slide creep (")); SerialUART.print(travel);
     SerialUART.println(F(" cnt) -- reading is biased HIGH. Compare against the other positions."));
   }
-  if (i > AC_M4_WARN_A) {
-    SerialUART.print(F("    !! > ")); SerialUART.print(AC_M4_WARN_A, 2);
+  if (i > AC_M4_WARN_A_rep) {
+    SerialUART.print(F("    !! > ")); SerialUART.print(AC_M4_WARN_A_rep, 2);
     SerialUART.println(F(" A -- outside the measured plant spread (+5 sigma on J01). Investigate."));
   }
   SerialUART.println(F("    Rotate the shaft ~40 deg by hand and repeat -- 5 positions per direction."));
@@ -2081,7 +2081,7 @@ const uint8_t  AC_SW_N            = 4;
 // visible in the residuals testable rather than merely apparent (the 3-point
 // runs of 2026-09-19 showed a reproducible +9/-18/+9, i.e. SOFTENING with load,
 // consistent with the ring test -- but with 1 dof that pattern is unfalsifiable).
-const float    AC_SW_I[AC_SW_N]   = { 0.6f, 1.0f, 1.4f, 1.6f };   // REPORTED amps
+const float    AC_SW_I_A_rep[AC_SW_N]   = { 0.6f, 1.0f, 1.4f, 1.6f };   // REPORTED amps
 // 5 s, not 1 s. ~10 counts of creep (15 um of belt) appear over the first ~4 s
 // at 2 A and then converge -- measured 2026-09-05. Reading early reads the creep.
 const uint16_t AC_SW_SETTLE_MS    = 5000;
@@ -2158,13 +2158,13 @@ static void acSwingLadder() {
     SerialUART.println(F("         phase 2. The swing is FOC current -- a wrong ZEA invalidates it."));
     return;
   }
-  // Printed FROM AC_SW_I, not typed: a literal "1/2/3 A" here survived the
+  // Printed FROM AC_SW_I_A_rep, not typed: a literal "1/2/3 A" here survived the
   // 2026-09-19 change to 0.6/1.0/1.4/1.6 A and put the wrong currents in every
   // ladder log until 2026-09-28.
   SerialUART.print(F("[SWING] ladder"));
   for (uint8_t k = 0; k < AC_SW_N; k++) {
     SerialUART.print(k ? '/' : ' ');
-    SerialUART.print(AC_SW_I[k], 1);
+    SerialUART.print(AC_SW_I_A_rep[k], 1);
   }
   SerialUART.println(F(" A. OUTPUT MUST BE LOCKED (clamped or bonded)."));
   SerialUART.print(F("        belt row says ")); SerialUART.print(CAL.belt);
@@ -2182,12 +2182,12 @@ static void acSwingLadder() {
   motor.enable(); running = true; run_started = millis();
 
   // Keep the current WITH its swing. Compacting only the swings while indexing
-  // the fit off AC_SW_I would silently pair point 3 with 2 A if point 2 failed.
+  // the fit off AC_SW_I_A_rep would silently pair point 3 with 2 A if point 2 failed.
   float sw_y[AC_SW_N], sw_x[AC_SW_N];
   uint8_t n_ok = 0;
 
   for (uint8_t k = 0; k < AC_SW_N && !ac_abort; k++) {
-    const float amps = AC_SW_I[k];
+    const float amps = AC_SW_I_A_rep[k];
     SerialUART.print(F("\n  point ")); SerialUART.print(k + 1);
     SerialUART.print('/');             SerialUART.print(AC_SW_N);
     SerialUART.print(F("   +-"));      SerialUART.print(amps, 2);

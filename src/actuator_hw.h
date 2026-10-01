@@ -23,7 +23,7 @@
 // joint_cal.h::calKtCmd() exists to convert a desired torque into a COMMAND
 // current and currently HAS NO CALLER. Tier-0 is the first consumer, so this is
 // the exact place a silent 3-4% torque error would enter the robot. Every limit
-// below -- current_limit, the PI limits, CURR_MAX -- is in reported amps until
+// below -- current_limit, the PI limits, CURR_MAX_A_rep -- is in reported amps until
 // something calls calKtCmd().
 //
 // ---------------------------------------------------------------------------
@@ -210,7 +210,7 @@ static void printCfgBanner(Print& out, float driver_volt_limit, float curr_max) 
       ((driver_volt_limit < driver.voltage_power_supply)
          ? driver_volt_limit : driver.voltage_power_supply) * 0.57735f, 2);
   // TWO current limits, and they bind in DIFFERENT modes -- printing only one
-  // was misleading the moment CURR_MAX and CURR_LIMIT stopped being equal
+  // was misleading the moment CURR_MAX_A_rep and CURR_LIMIT_A_rep stopped being equal
   // (2026-09-17). Imax is the TORQUE(I) target clamp and is the one that binds
   // there; Ilim is motor.current_limit, which 2.3.1 applies only through
   // PID_velocity.limit, i.e. VELOCITY mode. In TORQUE(I) move() assigns

@@ -51,7 +51,7 @@ static constexpr float KT_PER_KE = 1.5f;
 //     J02  i_scale = 0.9690 +-2.7%   -> 3.2% higher (PROVISIONAL, see joint_cal.h)
 // So a limit written as 6.0 A actually trips at ~6.24 A of real current, and a
 // torque commanded through calKt() at i_scale = 1.0 is delivered ~3-4% OVER.
-// Affected today: AC_IMAX_ABORT (autocalib.h), CURR_LIMIT / motor.current_limit
+// Affected today: AC_IMAX_ABORT_A_rep (autocalib.h), CURR_LIMIT_A_rep / motor.current_limit
 // and the guard thresholds (open_test.cpp) -- all reported amps, all under-stated
 // by the same 3-4%. NOT dangerous at present bench margins. IT MUST BE RESOLVED
 // BEFORE TIER-0 SHIPS A TORQUE LIMIT, and the fix is one decision, not a sweep:

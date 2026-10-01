@@ -157,13 +157,13 @@ const float DRIVER_VOLT_LIMIT = 6.0f;
 const float VEL_MAX         = 20.0f;
 const float OVERSPEED_RADS  = 150.0f;   // torque mode has NO built-in speed limit
 const float VEL_STEP        = 1.0f;
-const float TORQUE_STEP     = 0.01f;
+const float TORQUE_STEP_V     = 0.01f;
 // TORQUE(V) target ceiling. Raised to 2.6 for the angle-lag sweep (130 rad/s
 // needs Uq = 2.56 V); 3.5 was rejected because Uq = 3.5 settles at 183 rad/s,
 // past the 150 rad/s overspeed guard. current_limit does not bind in voltage
 // mode (section 12).
 //
-// READ THIS BEFORE USING IT: TORQUE_MAX only sets how far '+' can wind `target`.
+// READ THIS BEFORE USING IT: TORQUE_MAX_V only sets how far '+' can wind `target`.
 // What is actually DELIVERED is clamped by motor.voltage_limit = VOLT_LIMIT in
 // BLDCMotor::move() -- voltage.q = constrain(target, -voltage_limit, +voltage_limit).
 // With VOLT_LIMIT = 2.0 every target above 2.0 V delivers exactly 2.0 V, so the
@@ -172,22 +172,22 @@ const float TORQUE_STEP     = 0.01f;
 // T_DELAY_PER_LOOP), and AUTOCALIB phase 5 raises voltage_limit itself for the
 // one sweep that still needs 2.6 and restores it afterwards. If a future test
 // needs > 2.0 V delivered, raise VOLT_LIMIT -- raising this alone does nothing.
-const float TORQUE_MAX      = 2.6f;
+const float TORQUE_MAX_V      = 2.6f;
 const unsigned long AUTO_STOP_MS = 20000;
 const unsigned long OVERSPEED_GRACE_MS = 300;   // ignore overspeed right after arming
 
-const float CURR_STEP   = 0.1f;
+const float CURR_STEP_A_rep   = 0.1f;
 // TORQUE(I) TARGET CLAMP. Raised 2.0 -> 3.0 on 2026-09-17 for the swing ladder
 // (section 22.3): swing(I) = [slack + lost motion] + 2*F(I)/k needs three well
 // separated currents to separate the intercept from the slope, and 1/2/3 A is
 // the widest span the plant allows.
 //
-// *** THIS IS THE LIMIT THAT ACTUALLY BINDS IN TORQUE(I), NOT CURR_LIMIT. ***
+// *** THIS IS THE LIMIT THAT ACTUALLY BINDS IN TORQUE(I), NOT CURR_LIMIT_A_rep. ***
 // Verified in the library, not assumed: BLDCMotor::move() case
 // MotionControlType::torque with foc_current is a bare `current_sp = target;`
-// with NO constrain against current_limit. So CURR_LIMIT/motor.current_limit is
+// with NO constrain against current_limit. So CURR_LIMIT_A_rep/motor.current_limit is
 // inert here and binds only in VELOCITY mode, via PID_velocity.limit.
-// CURR_LIMIT IS DELIBERATELY LEFT AT 2.0 -- raising it would widen the velocity
+// CURR_LIMIT_A_rep IS DELIBERATELY LEFT AT 2.0 -- raising it would widen the velocity
 // envelope, which no test asked for.
 //
 // WHAT 3.0 A COSTS, checked before raising it:
@@ -200,9 +200,9 @@ const float CURR_STEP   = 0.1f;
 //   belt      3 A = 0.081 N.m at the pinion = 21 N of belt force with 3.1 teeth
 //             in mesh and no idlers. THIS IS THE REAL RISK -- watch for skip.
 //             acSwingLadder() detects it from the return leg (ENC_CNT_PER_TOOTH).
-//   guards    AC_IMAX_ABORT is 6.0 A (reported); untouched and still 2x above.
-const float CURR_MAX    = 3.0f;
-const float CURR_LIMIT  = 2.0f;   // VELOCITY mode only -- see above. Unchanged.
+//   guards    AC_IMAX_ABORT_A_rep is 6.0 A (reported); untouched and still 2x above.
+const float CURR_MAX_A_rep    = 3.0f;
+const float CURR_LIMIT_A_rep  = 2.0f;   // VELOCITY mode only -- see above. Unchanged.
 
 // DEAD ZONE, PWM FREQUENCY: moved to fleet_config.h. Both are properties of the
 // EG2124A/B-G431B-ESC1 board family, identical on all twelve joints, and both are
@@ -797,8 +797,8 @@ Mode     log_mode = MODE_OPENLOOP;
 bool     log_running = false;
 // Step between two NONZERO currents: stepping from 0 puts the 532 us dead-zone
 // traverse in the measurement and hides the true electrical bandwidth.
-const float KICK_BASE = 0.5f;   // pre-step hold current
-const float KICK_A    = 1.5f;   // post-step current
+const float KICK_BASE_A_rep = 0.5f;   // pre-step hold current
+const float KICK_A_rep    = 1.5f;   // post-step current
 // TORQUE(V) step pair, for the inertia (J) and electrical-time-constant (L)
 // measurements. A Uq step is a KNOWN excitation even when the current loop is
 // untuned, so those tests do not depend on the open CUR_TF bisection. Iq is
@@ -1128,7 +1128,7 @@ void setMode(Mode m) {
       // not 7-9 A) and Iq/Id telemetry is live. Velocity PID output is in AMPS.
       motor.torque_controller = TorqueControlType::foc_current;
       motor.controller = MotionControlType::velocity;
-      motor.PID_velocity.limit = CURR_LIMIT;
+      motor.PID_velocity.limit = CURR_LIMIT_A_rep;
       target = 2.0f; break;
   }
   SerialUART.print(F("mode=")); SerialUART.print(modeName());
@@ -1137,8 +1137,8 @@ void setMode(Mode m) {
 
 
 void adjustTarget(float dir) {
-  if (mode == MODE_TORQUE)              target = constrain(target + dir*TORQUE_STEP, -TORQUE_MAX, TORQUE_MAX);
-  else if (mode == MODE_TORQUE_CURRENT) target = constrain(target + dir*CURR_STEP,  -CURR_MAX,  CURR_MAX);
+  if (mode == MODE_TORQUE)              target = constrain(target + dir*TORQUE_STEP_V, -TORQUE_MAX_V, TORQUE_MAX_V);
+  else if (mode == MODE_TORQUE_CURRENT) target = constrain(target + dir*CURR_STEP_A_rep,  -CURR_MAX_A_rep,  CURR_MAX_A_rep);
   else                                  target = constrain(target + dir*VEL_STEP,   -VEL_MAX,   VEL_MAX);
   SerialUART.print(F("target=")); SerialUART.println(target);
 }
@@ -1186,7 +1186,7 @@ void handleSerial() {
       // 'F' is force-align and 'G' is go -- binding either would have shadowed
       // an existing command silently.
       case 'N': case 'n': acM2Assist(); break;         // M2 bus-power ladder
-      case 'w': case 'W': acSwingLadder(); break;   // swing ladder, currents AC_SW_I, output LOCKED
+      case 'w': case 'W': acSwingLadder(); break;   // swing ladder, currents AC_SW_I_A_rep, output LOCKED
       case 'B': acM4Breakaway(+1.0f);   break;         // M4 breakaway, forward
       case 'b': acM4Breakaway(-1.0f);   break;         // M4 breakaway, reverse
       case '0': acPhase(0); break;                     // reset results
@@ -1206,13 +1206,13 @@ void handleSerial() {
         } else {
           bool volts = (mode == MODE_TORQUE);
           kick_sign = (c == 'K') ? -1.0f : +1.0f;
-          target = kick_sign * (volts ? KICKV_BASE : KICK_BASE);  // out of the dead zone
+          target = kick_sign * (volts ? KICKV_BASE : KICK_BASE_A_rep);  // out of the dead zone
           kick_at = millis() + 300;                     // settle, then step (in loop)
           SerialUART.print(F("kick armed ")); SerialUART.print(kick_sign > 0 ? '+' : '-');
           SerialUART.print(F(": hold ")); SerialUART.print(target, 3);
           SerialUART.print(volts ? F(" V") : F(" A"));
           SerialUART.print(F(" 300ms, then step to "));
-          SerialUART.println(kick_sign * (volts ? KICKV_A : KICK_A), 3);
+          SerialUART.println(kick_sign * (volts ? KICKV_A : KICK_A_rep), 3);
         }
         break;
       case 'j': case 'J':                               // zero-based step: measures dead-zone traverse
@@ -1256,7 +1256,7 @@ void setup() {
   motor.controller = MotionControlType::velocity_openloop;
   motor.voltage_limit  = VOLT_LIMIT;
   motor.velocity_limit = VEL_MAX;
-  motor.current_limit  = CURR_LIMIT;
+  motor.current_limit  = CURR_LIMIT_A_rep;
 
   // 2.3.1 defaults foc_modulation to SinePWM; this sketch inherited that silently.
   // SVPWM raises the linear ceiling from V_bus/2 to V_bus/sqrt(3) (+15.5% of usable
@@ -1285,7 +1285,7 @@ void setup() {
   // ---- HARDWARE BRING-UP, PHASE 2 ----
   cs_ok = actuatorInitMotor(SerialUART, cs_linked);
 
-  printCfgBanner(SerialUART, DRIVER_VOLT_LIMIT, CURR_MAX);
+  printCfgBanner(SerialUART, DRIVER_VOLT_LIMIT, CURR_MAX_A_rep);
 
   // DIRECTION IS NOT PRESET ON THIS BOARD. The ABZ build hardcoded CCW because
   // the TIM4 count convention had been confirmed; the MT6816 SPI angle runs on
@@ -1384,12 +1384,16 @@ void loop() {
   static uint16_t guard_div = 0;
   static uint8_t  guard_hits = 0;
   const uint8_t   GUARD_HITS = 8;          // ~8 x 2 ms = 16 ms of sustained mismatch
+  // Both thresholds are compared against the sensed |I|, so they are REPORTED amps
+  // by construction -- the unit the guard was tuned in. Do not convert them.
+  const float     GUARD_PAD_A_rep   = 0.6f;   // added to the expected |I|: low-Iq noise room
+  const float     GUARD_FLOOR_A_rep = 3.0f;   // raw |I| below this never counts as a hit
   if (running && mode == MODE_TORQUE_CURRENT && ++guard_div >= 30) {
     guard_div = 0;
     PhaseCurrent_s gc = currentSense.getPhaseCurrents();
     float raw = sqrtf(gc.a*gc.a + gc.b*gc.b + gc.c*gc.c);
-    float expect = AMP_INV_MAG * fabsf(motor.current.q) + 0.6f;
-    if (raw > expect * 3.0f && raw > 3.0f && fabsf(motor.voltage.q) < VOLT_LIMIT * 0.9f) {
+    float expect = AMP_INV_MAG * fabsf(motor.current.q) + GUARD_PAD_A_rep;
+    if (raw > expect * 3.0f && raw > GUARD_FLOOR_A_rep && fabsf(motor.voltage.q) < VOLT_LIMIT * 0.9f) {
       if (++guard_hits >= GUARD_HITS) {
         guard_hits = 0;
         stopMotor("SENSE MISMATCH (sustained raw |I| >> dq Iq)");
@@ -1418,7 +1422,7 @@ void loop() {
     if (running && isTorqueMode(mode)) {
       logStart(1);
       target = kick_sign * ((mode == MODE_TORQUE) ? KICKV_A
-                                                  : (kick_zero ? 1.0f : KICK_A));
+                                                  : (kick_zero ? 1.0f : KICK_A_rep));
       kick_zero = false;
     }
   }
