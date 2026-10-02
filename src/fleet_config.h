@@ -119,6 +119,24 @@ static constexpr float    ENC_RAD_PER_COUNT = 6.28318531f / (float)ENC_CPR;
 // Byte-identical to leaving it unset: the HAL substitutes exactly this value.
 static constexpr uint32_t PWM_FREQ_HZ = 25000;
 
+// FLASH PREFETCH -- enabled 2026-10-01; MEASURED NO EFFECT 2026-10-02.
+// The B-G431B-ESC1 variant clocks the core at 170 MHz with FLASH_LATENCY_8 and
+// the STM32 core leaves PREFETCH_ENABLE = 0. It was enabled on the hypothesis
+// that the loop is instruction-fetch bound (B12a a2: MODE_MIT cost several times
+// its instruction count). The bench FALSIFIED that fix: with prefetch=1 the
+// TORQUE(I) loop rate did not move (armed 12,440 -> 12,481 lps, +0.3%; disarmed
+// 66,300 -> ~65,560, -1.1% -- both inside build-to-build layout noise). The MIT
+// deficit did shrink (-8.2% -> -4.7%), but that tracks the MIT code trim made in
+// the same build (micros() -> DWT, per-loop tau removed), not prefetch.
+// Kept enabled because it is harmless and today's captures (a3 part 1, the a2
+// pulse re-check) ran with it; the CFG banner prints the live FLASH->ACR bits
+// (prefetch=, flash_ws=) so every capture stays traceable.
+// NOT CHANGED: the 8 wait states. RM0440 allows 4 at 170 MHz in range-1 boost.
+// Prefetch only hides SEQUENTIAL misses; if the loop is bound by misses on
+// branch/call targets, only fewer wait states would show it. Deferred with
+// reason in BELT_DRIVE §22.7.7 -- not needed while MIT is inside the 5% gate.
+static constexpr bool FLASH_PREFETCH = true;
+
 // DEAD ZONE -- FINAL VALUE, set by argument and confirmed by measurement.
 // Board-family constant (EG2124A gate driver), not per-unit.
 // dead_zone is a fraction of the PWM period, so its cost in lost command voltage
@@ -238,6 +256,10 @@ static constexpr float ENC_CNT_PER_TOOTH     = (float)ENC_CPR / (float)PINION_TE
 // hundreds of ms behind the 'x', by which time the coast is nearly over. J02's
 // captured only the last 2.3 rad/s and returned 223e-6, i.e. nonsense. It is not
 // viable with keyboard timing and the driven step is the better measurement.
+// IN-SITU CONSISTENCY, belt on (J01, B12a a3, 2026-10-02): requiring the 14/turn
+// ripple torque (D19) to be the same in both directions gives J_motor = 20.2e-6,
+// i.e. this value. A consistency check, not an independent measurement: it
+// assumes the ripple is conservative (BELT_DRIVE §22.7.11).
 static constexpr float J_ROTOR_KGM2 = 20.2e-6f;      // +-2.4e-6 (12%), n = 2 joints
 
 // FRICTION VARIES +-20% TRIAL TO TRIAL on this plant, and that is not noise in

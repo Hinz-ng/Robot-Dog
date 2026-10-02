@@ -86,6 +86,10 @@ struct ActuatorHwCfg {
 
 // Phase 1: bus-voltage seed, driver, encoder. Returns driver_ok.
 static bool actuatorInitHw(const ActuatorHwCfg& cfg, Print& out) {
+  // ---- FLASH PREFETCH (fleet_config.h). First, so every later step -- and every
+  // loop -- runs under the same fetch path. No functional effect; measured no
+  // loop-rate effect either (2026-10-02, see fleet_config.h).
+  if (FLASH_PREFETCH) __HAL_FLASH_PREFETCH_BUFFER_ENABLE();
   // ---- BUS VOLTAGE: seed BEFORE driver.init() and BEFORE currentSense.init().
   // Ordering is deliberate: currentSense.init() reconfigures the ADC, so any
   // Arduino-API analogRead() must either happen before it or be verified against
@@ -228,7 +232,13 @@ static void printCfgBanner(Print& out, float driver_volt_limit, float curr_max_A
   if (CAL.R_eff > 0.0f) out.print(motor.voltage_sensor_align / CAL.R_eff, 1);
   else                  out.print(F("? R_eff NOT MEASURED"));
   out.print(F("A) spi_nops=")); out.print(SPI_HALF_NOPS);
-  out.print(F(" jump_guard=")); out.println(SPI_JUMP_GUARD ? 1 : 0);
+  out.print(F(" jump_guard=")); out.print(SPI_JUMP_GUARD ? 1 : 0);
+  // Read back from the register, not from the flag: the fetch path can set the
+  // loop rate in every mode (fleet_config.h, FLASH_PREFETCH), so a capture must
+  // be traceable to the one it ran under. Pre-2026-10-01 builds: prefetch=0
+  // flash_ws=8. (Prefetch itself measured no loop-rate effect, 2026-10-02.)
+  out.print(F(" prefetch=")); out.print((FLASH->ACR & FLASH_ACR_PRFTEN) ? 1 : 0);
+  out.print(F(" flash_ws="));  out.println((uint32_t)(FLASH->ACR & FLASH_ACR_LATENCY));
 }
 
 // Alignment. Reads CAL.zea / CAL.dir from joint_cal.h directly rather than

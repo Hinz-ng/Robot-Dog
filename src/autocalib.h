@@ -459,6 +459,8 @@ static void acExit(bool keep_align) {
     case MODE_VELOCITY:       motor.torque_controller = TorqueControlType::foc_current;
                               motor.controller = MotionControlType::velocity;
                               motor.PID_velocity.limit = CURR_LIMIT_A_rep; break;
+    case MODE_MIT:            motor.torque_controller = TorqueControlType::foc_current;   // B12a
+                              motor.controller = MotionControlType::torque; break;
   }
 }
 
