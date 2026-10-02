@@ -8,6 +8,21 @@ number that reappears in an old note can be traced to its retraction.
 
 ---
 
+## 0. Changelog — 2026-10-02 (e) a5 PASS; B12a CLOSED
+
+- **a5 run 1 PASS** (outer clamp, 4 steps): code 1 only, `cl` inner/reject 0, τ_cmd ≤ 0.3900, Uq ≤ 0.72 V, rest error ≤ 1.4 mrad,
+  no limit cycle. **Run 2** (inner clamp): `m go 2` typed for `m go 0 2` → 2 ms pulse, then the revert zeroed A's gains. The inner
+  clamp still fired cleanly (code 2 only, `cl=0/22/0`, τ_cmd 0.4028); cap 6 void (kp 0). Not rerun: it gates nothing further.
+- **Findings, not pursued:** peak travel 115–120% vs 122–128% predicted; plateau torque −5% (Iq sags as the back-EMF ramps);
+  **measured Iq overshoots the clamped command by up to 6%** (1.69 vs 1.600 A_rep) → future envelopes sit ≥ 6% below the
+  demonstrated-safe current. O4 narrowed: releases also rest outside the 218 ± 70 band.
+- **Corrections (external review):** the a4 post-hoc rerun is "within 10%", not "explains" (−9 / +2.5 / −6%); a4 row 3 is
+  "miss, explained", not a pass.
+- **B12a CLOSED.** Next: B12b **b1** (clamped output, gain envelope). b2/b3 inertia bar deferred to the leg.
+- CLAUDE.md: new section "Everything earns its place" (streamlining rule). Docs only otherwise; no src change.
+
+---
+
 ## 0. Changelog — 2026-10-02 (d) a4 PASS on its aim; O4 detent rest; R29/R30; a5 procedure
 
 - **a4 PASS on its aim** (units end to end; BELT_DRIVE §22.7.13). Mean stop time against the linear-model prediction: kp 41
