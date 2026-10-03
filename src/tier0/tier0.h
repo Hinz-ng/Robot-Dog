@@ -41,6 +41,7 @@
 #include "can_proto_vectors.h"
 #include "can_fdcan.h"
 #include "t0_console.h"
+#include "t0_fault.h"         // IWDG + HardFault: phases off when this code stops running
 
 // safety.h reads these two from its includer (its header records why it was
 // not changed). Declared here so this header states its own dependency;
@@ -293,7 +294,8 @@ static void t0Armed() {
 
 // ---------------------------------------------------------------------------
 // Console. Immediate keys when no line is open: x s b t ?
-// Lines (Enter): `uid`. Nothing is queued while armed.
+// Lines (Enter): `uid`, and the N4e test lines `hang!` / `fault!` (work armed).
+// Nothing is queued while armed.
 // ---------------------------------------------------------------------------
 static char    t0_line[16];
 static uint8_t t0_line_n = 0;
@@ -352,6 +354,10 @@ static void t0Banner(Print& out);
 static void t0ExecLine() {
   t0_line[t0_line_n] = 0;
   if (strcmp(t0_line, "uid") == 0) t0PrintUidRow(con);
+  // N4e ONLY -- deliberate failures, typed in full, console only (never CAN).
+  // Both must end in an IWDG reset that reboots the joint DISARMED.
+  else if (strcmp(t0_line, "hang!") == 0)  { for (;;) { } }         // loop stops kicking
+  else if (strcmp(t0_line, "fault!") == 0) { __builtin_trap(); }   // UDF -> HardFault
   else if (t0_line_n) { con.print(F("? ")); con.println(t0_line); }
   t0_line_n = 0;
 }
@@ -419,6 +425,7 @@ static void t0Setup() {
   _delay(500);
   SimpleFOCDebug::enable(&SerialUART);
   SerialUART.println(F("=== TIER 0 joint firmware (CAN-T0) ==="));
+  SerialUART.print(F("last reset: ")); SerialUART.println(t0ResetCause());
   printJointCal(SerialUART);
 
   const ActuatorHwCfg hw = {
@@ -477,6 +484,10 @@ static void t0Setup() {
   t0Banner(SerialUART);
   SerialUART.println(F("Motor DISARMED. Arms only over CAN. Console: ? for keys."));
   t0_status_ms = millis();
+  // LAST: from here a loop that stops kicking for ~20 ms resets the chip.
+  t0IwdgStart();
+  SerialUART.print(F("IWDG armed: reload ")); SerialUART.print(T0_IWDG_RELOAD);
+  SerialUART.println(F(" at LSI/4 = ~20 ms"));
 }
 
 static void t0Loop() {
@@ -508,4 +519,5 @@ static void t0Loop() {
     if (dp > t0_pump_cyc_max) t0_pump_cyc_max = dp;
   }
   t0Led();
+  t0IwdgKick();                                  // the ONLY kick site
 }
