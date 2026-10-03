@@ -79,6 +79,10 @@ enum CanAdminOp : uint8_t {
   CAN_OP_DISARM      = 3,
   CAN_OP_ZERO        = 4,   // session zero at the current pose; refused while armed
   CAN_OP_CLEAR_FAULT = 5,   // refused while armed
+  CAN_OP_POLL        = 6,   // no action, reply STATE. How the master MONITORS a
+                            // node it has not armed: it never sends a CMD to a
+                            // joint it did not arm in this session (a rebooted
+                            // master must not resume a joint mid-DAMP).
 };
 static const uint8_t CAN_ADMIN_DLC = 3;
 

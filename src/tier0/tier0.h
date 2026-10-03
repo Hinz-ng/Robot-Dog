@@ -198,6 +198,8 @@ static void t0OnAdmin(const CanRxFrame& fr) {
       if (running) con.println(F("CLEAR refused: armed"));
       else         t0_fault = CAN_FAULT_NONE;
       break;
+    case CAN_OP_POLL:                    // monitoring only: reply STATE, change nothing
+      break;
     default:
       t0_n_admin_bad++;
       break;
