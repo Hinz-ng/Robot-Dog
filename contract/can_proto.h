@@ -234,6 +234,7 @@ enum CanStatusFlag : uint8_t {
   CAN_SF_FOC_READY  = 1u << 4,
   CAN_SF_CS_OK      = 1u << 5,   // current sense linked
   CAN_SF_ARMED      = 1u << 6,
+  CAN_SF_SELFTEST   = 1u << 7,   // can_proto_vectors.h passed on THIS build (refuse to arm if not)
 };
 struct CanStatus {
   uint8_t  build_type;
