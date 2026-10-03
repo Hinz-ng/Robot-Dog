@@ -690,6 +690,45 @@ const JointCal JOINTS[] = {
 
 static constexpr uint8_t JOINT_COUNT = (uint8_t)(sizeof(JOINTS) / sizeof(JOINTS[0]));
 
+// ---------------------------------------------------------------------------
+// BOARD IDENTITY -- the STM32 96-bit unique ID of the board each row was
+// measured on. (CAN-T0, 2026-10-03)
+// ---------------------------------------------------------------------------
+// WHY: with stored ZEA there is no per-boot alignment to catch a wrong-joint
+// flash (see 'V' above), and Tier 0 never aligns. J01's binary on J03's board
+// commutates on J01's ZEA -- a reduced or REVERSED torque constant inside a
+// position loop, i.e. a runaway. Tier 0 refuses to ARM unless the running MCU's
+// UID matches this table, and prints its own UID at boot so a new row is a
+// paste, not a lookup. {0,0,0} = NOT RECORDED -> Tier 0 refuses to arm, loudly.
+//
+// A PARALLEL TABLE, not a JointCal field, on purpose: only Tier 0 references it,
+// so the linker drops it from the bench harness and the harness stays
+// byte-identical. The cost of a parallel table is that it can drift out of
+// step with JOINTS[] -- hence the size static_assert below AND the .id string,
+// which Tier 0 compares against CAL.id before trusting the words.
+struct JointUid {
+  const char* id;          // must equal JOINTS[same index].id
+  uint32_t    w[3];        // HAL_GetUIDw0/1/2(), as printed in the Tier-0 banner
+};
+const JointUid JOINT_UID[] = {
+  { "J01", { 0, 0, 0 } },  // B-SPI-01 -- record from the T0_J01 boot banner (N1)
+  { "J02", { 0, 0, 0 } },  // B-ABZ-01 -- board failed after P8 (7d)
+  { "J03", { 0, 0, 0 } },
+  { "J04", { 0, 0, 0 } },
+  { "J05", { 0, 0, 0 } },
+  { "J06", { 0, 0, 0 } },
+  { "J07", { 0, 0, 0 } },
+  { "J08", { 0, 0, 0 } },
+  { "J09", { 0, 0, 0 } },
+  { "J10", { 0, 0, 0 } },
+  { "J11", { 0, 0, 0 } },
+  { "J12", { 0, 0, 0 } },
+  { "A1",  { 0, 0, 0 } },  // historical, not flashable
+  { "J01", { 0, 0, 0 } },  // J01 belt-off baseline: same board as index 0
+};
+static_assert(sizeof(JOINT_UID) / sizeof(JOINT_UID[0]) == JOINT_COUNT,
+              "JOINT_UID[] must have exactly one entry per JOINTS[] row");
+
 #ifndef JOINT_ID
   #error "Build with -D JOINT_ID=n (see platformio.ini). Refusing a joint-agnostic binary."
 #endif
