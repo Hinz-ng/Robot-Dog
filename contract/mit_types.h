@@ -5,6 +5,8 @@
 // One header both tiers include (the gait_types.h pattern). Deliberately has
 // NO includes and NO logic: Tier 1 (ESP32-S3) must be able to include it
 // without dragging in SimpleFOC, Arduino-STM32 or any calibration table.
+// Lives in contract/ (moved from src/ 2026-10-03, CAN-T0): both tiers build
+// with -I contract and nothing else in common.
 //
 // FRAME AND UNITS -- output side, SI, units in every name:
 //   p      rad      OUTPUT angle (after the 9:1). GEAR_RATIO stays inside Tier 0.
