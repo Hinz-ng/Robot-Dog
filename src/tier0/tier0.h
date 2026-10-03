@@ -232,7 +232,13 @@ static void t0OnCmd(const CanRxFrame& fr) {
 }
 
 static void t0OnFrame(const CanRxFrame& fr) {
-  if (fr.id == CAN_ID_ESTOP) { t0Stop(CAN_FAULT_ESTOP, "CAN ESTOP"); return; }   // no reply
+  // ESTOP: no reply. The master repeats it every cycle while its e-stop is
+  // latched, so act once -- when armed, or to latch the fault -- rather than
+  // printing "STOPPED" to a blocking UART 200 times a second.
+  if (fr.id == CAN_ID_ESTOP) {
+    if (running || t0_fault == CAN_FAULT_NONE) t0Stop(CAN_FAULT_ESTOP, "CAN ESTOP");
+    return;
+  }
   if (fr.id == canIdAdmin(JOINT_ID)) { t0OnAdmin(fr); return; }
   if (fr.id == canIdCmd(JOINT_ID))   { t0OnCmd(fr);   return; }
 }
