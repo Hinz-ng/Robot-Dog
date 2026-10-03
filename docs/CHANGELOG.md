@@ -8,6 +8,25 @@ number that reappears in an old note can be traced to its retraction.
 
 ---
 
+## 0. Changelog — 2026-10-03 b1 PASS; B12 CLOSED
+
+- **b1 PASS** (BELT_DRIVE §22.7.16): 10 captures on the clamped output, clamp 0, all rings decay, no buzz. Overshoot 35 → 24 →
+  17 → 9.5% (ζ 0.31 → 0.60) for kd 0 → 0.157 → 0.25 → 0.365 at kp 41; repeats within 1%.
+- **Gate not decidable:** f_d(kp 41)/f_d(kp 0). The kp 0 repeats differ by 9%, rings are 2–9 counts. Static stiffness answers the
+  underlying question (+54 vs +41 commanded). Gate design error recorded.
+- **Misses, explained:** rest deflection 2× predicted. The belt is a softening spring: secant 142–182 vs small-signal 280–335
+  N·m/rad. ζ(kp 41) −0.10, not −0.02: the prediction omitted the √(K/(K+kp)) scaling of structural damping. kd buys ~0.75 ζ per
+  N·m·s/rad, above prediction for rungs 2–3.
+- **Findings:** series compliance (output stiffness = kp·K/(kp+K), 80–89% of commanded at kp 41) → sim models the belt as a
+  series spring; kd quantisation blip = kd × 0.039 N·m (6 / 10 / 14 mN·m measured); O3 closed as explained.
+- **Sim/RL numbers:** belt mode 55–72 Hz, K_belt 140–335 N·m/rad output, ζ 0.20–0.45; demonstrated gain box kp ≤ 41,
+  kd ≤ 0.365.
+- **Deferred:** pushing kp/kd to a stability limit. Promote when gait/RL needs more; do it on the leg (clamped limit not
+  conservative).
+- **B12 CLOSED.** Next: B10 skip threshold → 7l homing → J03 → leg. Docs only; no src change.
+
+---
+
 ## 0. Changelog — 2026-10-02 (e) a5 PASS; B12a CLOSED
 
 - **a5 run 1 PASS** (outer clamp, 4 steps): code 1 only, `cl` inner/reject 0, τ_cmd ≤ 0.3900, Uq ≤ 0.72 V, rest error ≤ 1.4 mrad,

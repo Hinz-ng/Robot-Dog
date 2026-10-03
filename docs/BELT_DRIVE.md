@@ -46,7 +46,7 @@ Everything below is a **difference against the belt-off baseline**, which is why
 | ~~**B9**~~ | ~~Preload check / low-preload dead-zone check~~ **→ MERGED INTO B6a.** What survives separately: backdrive breakaway felt at the *output* pulley, as a qualitative hand check | 5 min | — | The dead-zone sweep *is* B6a, done properly with a clamp and a count readout instead of by feel. Keeping both invited the skip described in the hazard note below |
 | **B10** | **Tooth-skip threshold.** ⚠ **Method changed — this cannot be motor-driven.** Static lever at the output pulley plus a spring gauge. See the box below | 20 min | the hard force ceiling | **Do this last.** It is the only step that can damage the belt |
 | **B11** | Update `joint_cal.h`: `belt = "10mm-9:1"`, all four drag fields, `breakaway_A`. **A NEW ROW, not an edit** | 10 min | git diff with a date | The belt-off row is a baseline you can never re-measure. Keep it |
-| **B12** | **MIT impedance controller** on J01. `{p_des, v_des, kp, kd, τ_ff} → {p, v, τ}`. **Split 2026-10-01: B12a bare output** (contract, signs, velocity noise floor, saturation, friction band) **→ B12b defined load** (clamped output, then a balanced inertia bar). A bare output cannot test the belt mode or the lost motion: the loop closes on the motor encoder and the output pulley is ~1% of the rotor's inertia (R27). **Units decided (option A, README §15 7k):** τ in N·m at the output, η excluded; commands enter only through `tauOutCmdToIq()` | — | the frozen Tier-0 contract on real hardware | Everything above exists to make this honest |
+| **B12** | **MIT impedance controller** on J01. `{p_des, v_des, kp, kd, τ_ff} → {p, v, τ}`. **Split 2026-10-01: B12a bare output** (contract, signs, velocity noise floor, saturation, friction band) **→ B12b defined load** (clamped output, then a balanced inertia bar). **✅ CLOSED 2026-10-03** (§22.7.15 B12a, §22.7.16 b1; inertia bar deferred to the leg). A bare output cannot test the belt mode or the lost motion: the loop closes on the motor encoder and the output pulley is ~1% of the rotor's inertia (R27). **Units decided (option A, README §15 7k):** τ in N·m at the output, η excluded; commands enter only through `tauOutCmdToIq()` | — | the frozen Tier-0 contract on real hardware | Everything above exists to make this honest |
 | **B13** | **Build and characterise J02.** M1 → AUTOCALIB → M2 → M4 → belt | — | first fleet-spread data on a second board | 🔴 **Difference J02 against J02's OWN belt-off baseline, never against J01's.** The inter-joint drag spread is ~25% and real, so subtracting J01's baseline would attribute a board difference to the belt. J02's belt-off row already exists — use it |
 
 Then, with two characterised actuators and impedance control validated: leg links on, **M14 force-per-amp** (load cell), and Jacobian characterisation.
@@ -2176,6 +2176,7 @@ Plant: J01, recipe-B pulley, belt on, **output pulley bare and free**. Firmware:
 | a3 | kd is a damper; v_des drives; ripple in current mode (D19) | ✅ **PASS.** Part 1: slope −0.0998, R² 0.998 (§22.7.9). Part 2: all six runs inside 0.8–1.8 rad/s, mean of three = +1.123 / −1.095 against drag-map predictions of 1.120 / 1.096; Uq ≤ 0.32 V; clamp 0 (§22.7.11). **D19 PROMOTED:** a 14/turn torque of 44–48 mN·m output, conservative and speed-independent. Also found: **O2**, friction that depends on output angle |
 | a4 | Step timing vs kp (three stiffnesses) | ✅ **PASS on its aim (units end to end), 2026-10-02.** Mean stop time kp 41 **+1.6%**, kp 16.8 **−9.8%** (gates ±10%); kp 6.6 **+21%, gate ±15% missed** (n = 4). Rest errors, holding, Uq ≤ 0.31 V and clamp 0 pass in every row. The miss is the pre-registered washboard branch: re-run from the measured start counts, with no fitted parameters, the model gives 17.7 / 28.7 / 57.7 ms vs measured 19.5 / 28.0 / 61.2. **O4 (new, established):** the joint always rests in the same 14/turn detent phase, so the eight-position design never sampled the washboard (R29). O3 written; O1 narrowed (§22.7.13) |
 | a5 | Saturation on a moving motor (outer, then inner clamp) | ✅ **PASS 2026-10-02** (§22.7.15). Run 1: 4 steps, code 1 only, τ_cmd ≤ 0.3900, rest error ≤ 1.4 mrad. Run 2: inner clamp fired on a 2 ms pulse (`m go 2` typo), code 2 only, `cl=0/22/0`. **B12a CLOSED** |
+| b1 | Clamped output: belt mode in current mode; kp/kd envelope with the belt in the loop | ✅ **PASS 2026-10-03** (§22.7.16). 10 captures, clamp 0, every ring decays, no buzz. Overshoot 35 → 24 → 17 → 9.5% for kd 0 → 0.365 at kp 41 (ζ 0.31 → 0.60). f-ratio gate **not decidable** (rings 2–9 counts); static stiffness shows kp acting (+54 vs +41). Belt is a softening series spring: secant 142–182 vs small-signal 280–335 N·m/rad. **B12 CLOSED** |
 
 ### 22.7.2 a0 — speed filter (analysis 2026-10-01)
 
@@ -2464,7 +2465,7 @@ Per capture (stop time ms / stop % / rest error mrad / roll-back after the peak 
 - **What changed:** after row 1, the session analysis attributed it ~70% to a spring in series with output friction (belt or tooth flex) and ~25% to pre-sliding, and called cogging "ruled out, 9/9 against step direction". **That ruling-out is withdrawn (R30).** It assumed random start phase. Because of O4, every step starts in the detent, so a washboard that pulls back against the step every time is exactly what cogging predicts.
 - **Belt wind-up:** the recipe-B ladder stiffness (true 67.2 kN/m, about 80 N·m/rad output-referred) gives at most ~1 mrad (25 counts) at 0.084 N·m. That could be part of row 1's 0.5–0.7 mrad, but it cannot produce the 200–255-count returns on release.
 - **Ranking:** washboard + low near-standstill friction (H1) high, because one mechanism covers O3, the release returns and O4; belt wind-up a contributor of ≤ 1 mrad; pre-sliding low. **This data cannot separate H1's share of O3 from ≤ 1 mrad of belt wind-up.** B12b's clamped output separates them.
-- **Deferred with reason:** no B12a decision depends on it. **Promoted when** the D19 at-rest sweep gives the washboard shape (H1 then predicts O3 per capture), or when B12b b1 runs.
+- **Deferred with reason:** no B12a decision depends on it. **Promoted when** the D19 at-rest sweep gives the washboard shape (H1 then predicts O3 per capture), or when B12b b1 runs. **b1 ran (2026-10-03, §22.7.16):** belt secant K 150–180 → wind-up ≤ 0.5 mrad at 0.084 N·m; rows 2–3 need H1. **O3 closed as explained.**
 
 **O1 (roll-back at zero torque after the a2 pulses) — narrowed, not closed.** O4 supplies the mechanism that O1 lacked: friction near standstill is below the washboard. Roll-backs up to half a period (585 counts, 25 mrad output) fit a detent. a2 cap 2's 32.2 mrad exceeds that, so something more (orders 1, 7, 12, which are not 1170-periodic, or coasting) is involved. Same promotion condition as O3.
 
@@ -2552,3 +2553,61 @@ Gates: code 1 only, inner = reject = 0, τ_cmd never above 0.3900, Uq ≤ 0.72 V
 - **O4 narrowed:** releases land outside the 218 ± 70 band too (cap 3 release → 694; cap 2 release → 271). "Always rests in the same detent" holds for a4's hand-turned starts, not for every release. The stick band is wide because the washboard (~0.046 N·m) and static friction (~0.03–0.05) are the same size.
 
 **B12a CLOSED.** a0–a5 done: law, signs, units end to end, velocity estimate, both clamps on a moving motor, no wind-up, no limit cycle. **Next: b1, clamped output (gain envelope with the belt in the loop).** b2/b3 inertia-bar tests deferred until the leg shows ringing or bandwidth below the √(1 + J_L/J_m) prediction.
+
+### 22.7.16 b1 results — clamped output, gain envelope with the belt in the loop; B12 CLOSED (2026-10-03)
+
+Log: `B12_b1.txt` (10 captures, decim 1, ~94 µs/sample). Analysis script `b1.py` (session scratch). J01, output pulley clamped as in B6b, current mode, held `ff` step (no revert), switch at sample 50.
+
+| cap | kp | kd | ff | clamp | deflection (cnt / mrad) | belt secant K (N·m/rad) | 1st peak after switch | overshoot | ζ from overshoot | ζ from decrement | ring f (extrema) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 0 | 0 | 0.200 | 0 | 33.0 / 1.41 | 142 | 10.2 ms | 21% | 0.44 | 0.20 | 66 Hz |
+| 2 | 0 | 0 | 0.200 | 0 | 29.1 / 1.24 | 161 | 10.5 | 27% | 0.38 | 0.23 | 72 |
+| 3 | 41 | 0 | 0.226 | 0 | 25.8 / 1.10 | 163 | 8.6 | 35% | 0.31 | 0.13 | 68 |
+| 4 | 41 | 0 | 0.226 | 0 | 25.7 / 1.09 | 165 | 8.5 | 36% | 0.31 | 0.12 | 68 |
+| 5 | 41 | 0.157 | 0.226 | 0 | 24.9 / 1.06 | 172 | 8.3 | 24% | 0.41 | 0.17 | (80) |
+| 6 | 41 | 0.157 | 0.226 | 0 | 24.4 / 1.04 | 175 | 8.2 | 24% | 0.41 | 0.18 | (78) |
+| 7 | 41 | 0.250 | 0.226 | 0 | 24.0 / 1.02 | 180 | 8.0 | 17% | 0.49 | (0.22) | (77) |
+| 8 | 41 | 0.250 | 0.226 | 0 | 24.0 / 1.02 | 180 | 7.8 | 17% | 0.50 | (0.22) | (86) |
+| 9 | 41 | 0.365 | 0.226 | 0 | 23.7 / 1.01 | 182 | 7.8 | 9% | 0.60 | — | — |
+| 10 | 41 | 0.365 | 0.226 | 0 | 23.7 / 1.01 | 182 | 8.2 | 10% | 0.60 | — | — |
+
+Brackets: rings of 1–4 counts, below what the extrema method resolves. "Belt secant K" = belt torque at rest ÷ deflection (τ_law/p, so kp is excluded). ζ from overshoot includes Coulomb friction; it is used for the trend, not as an absolute.
+
+**Gates.**
+- **Every ring dies out; no buzz:** ✅ all 10. Status lines steady after every capture, `cl=0/0/0` throughout, |v| ≤ 0.03 rad/s at rest.
+- **Clamp code 0:** ✅ all 10.
+- **ζ rises at every kd rung:** ✅ overshoot 35 → 24 → 17 → 9.5%, ζ_OS 0.31 → 0.41 → 0.50 → 0.60, repeats within 1%.
+- **f_d(B)/f_d(A) = 1.04–1.08:** **❌ not decidable from this data.** The two kp 0 repeats differ by 9% (66 / 72 Hz). After the first swing the rings are only 2–9 counts, so 1-count timing resolution cannot see a 6% shift. The question behind the gate was whether kp acts as a stiffness at the output. **Static deflection answers it:** total stiffness ff/p = **206 at kp 41 vs 152 at kp 0**, i.e. +54 against +41 commanded. The difference is the softening below. a4 had already shown units end to end. **This gate was badly designed** (my design): a frequency ratio was picked without checking ring amplitude against encoder resolution.
+
+**Predictions vs measured.**
+- f(A) 69–74 Hz → **66–72** ✓ (edge).
+- ζ(A) 0.05–0.25 → **0.20–0.23** from the decrement ✓. The first-swing overshoot gives 0.38–0.44 (includes friction).
+- **Rest point p ≈ 0.63 mrad (15 counts) → 1.0–1.4 mrad (24–33 counts). Miss, explained.** I sized `ff` with the small-signal K = J·ω² ≈ 315 N·m/rad. The belt joint is a **softening spring** (B6b already showed −0.47 Hz per count of amplitude), so at 25–33 counts its secant stiffness is **142–182 N·m/rad**, about half the small-signal value of **280–335** (J·(2π·66–72 Hz)²). The first swing is slower than the ring too: about 9 ms to the peak at kp 0, ≈ 55 Hz equivalent.
+- **ζ(B) within ±0.05 of A (model −0.02) → −0.10 by both methods. Miss, explained.** The prediction left out that adding stiffness divides the existing structural damping by √((K+kp)/K): √(196/155) → 0.41 × 0.89 = 0.36, then −0.02 for lag → 0.34, against 0.31 measured.
+- **kd increments +0.07 / +0.10 / +0.15 (±50%) → +0.10 / +0.19 / +0.29.** Rung 1 is inside the band; rungs 2–3 sit 1.9× above. kd buys about **0.75 ζ per N·m·s/rad** on this mode, more than predicted. That fits the lower effective K at these amplitudes (kd/(2√(K·J)) grows as K falls) and/or less lag than the 40° estimate. **This data cannot separate the two.**
+- f rising with kd (+4 / +7 / +9%): direction consistent, rings too small to measure (brackets). Not claimed.
+
+**Findings, one line each.**
+- **Series compliance at the output.** The loop closes on the motor encoder, so the joint's output stiffness = kp·K/(kp+K). At kp 41 with K 150–330 that is 33–37 N·m/rad, **80–89% of commanded**. At kp 100 it would be 60–77%. **Sim consequence:** model the belt as a series spring (randomise K 140–335 N·m/rad output-referred, softening with amplitude). The policy's kp is not the foot's kp.
+- **kd injects encoder-quantisation torque at rest.** Each 1-count flicker shows up as a 0.039 rad/s spike after the 1 ms filter, so the blip is **kd × 0.039 N·m**. Measured: 6 / 10 / 14 mN·m at kd 0.157 / 0.25 / 0.365, linear. At kd 1.0 that is 39 mN·m (10% of the 0.39 envelope); at `MIT_RANGES.kd_max` 2.0 it is 78 mN·m. This **noise ceiling on kd does not depend on the plant** and survives the leg.
+- **Current tracking during the ring:** measured τ ripples ±6% around the command at the ring frequency. The current PI does not fully reject the ring's back-EMF, which is one source of damping in current mode. Peak measured current +4.5% over the step command, inside the B12a carry-forward rule (envelopes ≥ 6% below the demonstrated-safe current). The −5% acceleration sag (B12a) was **not** seen at these speeds; not promoted.
+- **Rest point depends on kd** (25.8 → 23.7 counts). With friction of ~0.03–0.05 N·m the stick band is ±0.2 mrad (±5 counts) at K ≈ 200, and a less oscillatory approach stops it in a different place. That is the ± on every secant K above.
+- **O3 (§22.7.13):** at secant K 150–180, belt wind-up at 0.084 N·m is **≤ 0.5 mrad**, half the ≤ 1 mrad bound from the ladder. Row 1's 0.48–0.74 mrad is about the size of wind-up; rows 2–3 (up to 2.5 mrad) need the washboard (H1). **O3 closed as explained; no action.**
+
+**Sim / RL numbers set by b1 (J01, fleet-level until the leg says otherwise):**
+- Belt mode, output clamped, current mode: **f 55–72 Hz** (first swing at ~35–40 counts → small rings).
+- **K_belt 140–335 N·m/rad output, softening.**
+- **Natural ζ 0.20–0.45.**
+- **Demonstrated gain box: kp ≤ 41 N·m/rad, kd ≤ 0.365 N·m·s/rad**, stable throughout; ζ ≈ 0.6 on the belt mode at the top of the box.
+
+`MIT_RANGES` (kp 200, kd 2.0) stays a validator ceiling. It was not demonstrated.
+
+**Deferred with reason: pushing kp/kd to a stability limit.**
+- **Gains are per-plant.** With the leg on, the belt mode moves up by √(1 + J_m/J_L) (≈ 1.2–1.4× for J_L/J_m 1–2) into more controller lag. So a clamped-output kd limit is **not conservative** and would be re-found on the leg anyway.
+- kp above K_belt buys little output stiffness (series spring).
+- kd is capped by quantisation noise before stability (line above), which is computed, not tested.
+- **Promote when** gait/RL design needs kp > 41 or kd > 0.365 at a joint. Then run it **on the leg**, one rung at a time, after checking the kd × 0.039 N·m blip against the envelope.
+
+**B12 CLOSED.** B12a (contract, signs, units, estimator, both clamps) and b1 (stable with the belt in the loop across the demonstrated gain box) are done. b2/b3 inertia bar stays deferred (promote if the leg rings or misses the √(1 + J_L/J_m) bandwidth prediction).
+
+**Next:** B10 skip threshold (static lever + spring gauge; raises the 1.6 A envelope with the 6% rule) → 7l homing / boot pose → J03 bring-up → leg.
