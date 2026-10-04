@@ -5,7 +5,7 @@
 // ============================================================================
 // nodes.h -- what the master knows about each joint. (CAN-T0)
 // ============================================================================
-// Shared between the poll task (core 0, writes state, reads cmd) and the
+// Shared between the poll task (core 1, high priority; writes state, reads cmd) and the
 // console (loop(), writes cmd/requests, reads state). Every cross-task access
 // goes through m_mux; copies are taken inside the critical section and used
 // outside it.

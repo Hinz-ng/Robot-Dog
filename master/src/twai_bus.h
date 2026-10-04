@@ -40,7 +40,7 @@ static bool busSend(uint16_t id, const uint8_t* data, uint8_t dlc, bool single_s
 }
 
 // Wait up to timeout_us for a frame with exactly this id. Other frames are
-// dropped (counted). Busy-waits: the poll task owns core 0 for ~1 ms per cycle.
+// dropped (counted). Busy-waits ~1 ms per cycle on core 1, pre-empting loop() only.
 static uint32_t m_rx_stray = 0;
 static bool busWaitFor(uint16_t id, uint8_t out[8], uint8_t& dlc, uint32_t timeout_us) {
   const uint32_t t0 = micros();

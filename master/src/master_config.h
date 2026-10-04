@@ -42,6 +42,17 @@ static const float M_PDES_MAX[] = { +6.28f, +6.28f };
 static_assert(sizeof(M_MOUNT_SIGN) == M_N_NODES && sizeof(M_PDES_MIN) / sizeof(float) == M_N_NODES
               && sizeof(M_PDES_MAX) / sizeof(float) == M_N_NODES, "one entry per node");
 
+// ---- phone terminal (web_term.h) ----
+// The ESP32 makes its own WiFi network; join it from the phone and open
+// http://192.168.4.1 . Change the password before the robot leaves the bench.
+static const char*    M_WIFI_SSID = "LegMaster";
+static const char*    M_WIFI_PASS = "legmaster1";      // >= 8 chars or softAP refuses
+static const uint8_t  M_WIFI_CHANNEL = 6;
+// Phone dead-man: if the PHONE armed a joint and then stops polling for this
+// long (screen lock, out of range, tab closed), every armed joint is disarmed.
+// The page polls every 250 ms, so this is ~6 missed polls.
+static const uint32_t M_WEB_DEADMAN_MS = 1500;
+
 // ---- log ----
 static const uint32_t M_LOG_RECORDS = 4000;   // x 40 B = 160 kB internal RAM (halved until malloc succeeds)
                                               // = 10 s of 2 nodes at 200 Hz

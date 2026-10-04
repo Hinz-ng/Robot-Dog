@@ -5,7 +5,7 @@
 #include "twai_bus.h"
 #include "nodes.h"
 // ============================================================================
-// poll.h -- the polled bus schedule. A FreeRTOS task pinned to core 0.
+// poll.h -- the polled bus schedule. A FreeRTOS task pinned to core 1 (WiFi owns core 0).
 // ============================================================================
 // Every M_CYCLE_MS, for each node in turn: [IDENT -> STATUS once a second]
 // [pending admin -> STATE] then the regular exchange -> STATE:
