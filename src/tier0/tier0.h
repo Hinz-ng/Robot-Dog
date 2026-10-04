@@ -474,6 +474,16 @@ static void t0Setup() {
   t0_calibrated = (CAL.zea >= 0.0f && CAL.dir != 0 && CAL.Ke > 0.0f && CAL.R_eff > 0.0f);
   if (t0_calibrated) {
     runInitFOC(false, false, t0_foc_ready, target, SerialUART);
+    // What SimpleFOC's current-sense alignment LEFT the gains at. "MOT: Success:
+    // 3" (N1, 2026-10-04) only says at least one gain ended negative -- it
+    // cannot tell "unchanged from the -64/7 constructor" from "one phase
+    // flipped". All three at -9.142857 = alignment changed nothing, which is
+    // the evidence skip_align (no boot-time phase pulses on a leg) needs.
+    SerialUART.print(F("cs gains after align: "));
+    SerialUART.print(currentSense.gain_a, 6); SerialUART.print(' ');
+    SerialUART.print(currentSense.gain_b, 6); SerialUART.print(' ');
+    SerialUART.print(currentSense.gain_c, 6);
+    SerialUART.println(F("  (constructor -9.142857 each)"));
   } else {
     SerialUART.println(F("!! joint_cal row NOT calibrated -- initFOC skipped, ARM REFUSED for this boot."));
   }
