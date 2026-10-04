@@ -476,14 +476,17 @@ static void t0Setup() {
     runInitFOC(false, false, t0_foc_ready, target, SerialUART);
     // What SimpleFOC's current-sense alignment LEFT the gains at. "MOT: Success:
     // 3" (N1, 2026-10-04) only says at least one gain ended negative -- it
-    // cannot tell "unchanged from the -64/7 constructor" from "one phase
-    // flipped". All three at -9.142857 = alignment changed nothing, which is
-    // the evidence skip_align (no boot-time phase pulses on a leg) needs.
+    // cannot tell "unchanged from the constructor" from "one phase flipped".
+    // UNIT: gain_x is the V->A ratio 1/(shunt * amp gain), NOT the amp gain:
+    // 1/(0.003 * -64/7) = -36.458333. (Corrected 2026-10-04: the first version
+    // of this line said -9.142857, which is the amp gain itself.)
+    // All three at -36.458333 = alignment changed nothing -- measured on J01
+    // 2026-10-04 (N2d boot) -- the evidence skip_align needs, per board.
     SerialUART.print(F("cs gains after align: "));
     SerialUART.print(currentSense.gain_a, 6); SerialUART.print(' ');
     SerialUART.print(currentSense.gain_b, 6); SerialUART.print(' ');
     SerialUART.print(currentSense.gain_c, 6);
-    SerialUART.println(F("  (constructor -9.142857 each)"));
+    SerialUART.println(F("  (unchanged = -36.458333 each = 1/(0.003 * -64/7))"));
   } else {
     SerialUART.println(F("!! joint_cal row NOT calibrated -- initFOC skipped, ARM REFUSED for this boot."));
   }
