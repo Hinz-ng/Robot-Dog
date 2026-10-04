@@ -711,7 +711,7 @@ struct JointUid {
   uint32_t    w[3];        // HAL_GetUIDw0/1/2(), as printed in the Tier-0 banner
 };
 const JointUid JOINT_UID[] = {
-  { "J01", { 0, 0, 0 } },  // B-SPI-01 -- record from the T0_J01 boot banner (N1)
+  { "J01", { 0x460030, 0x34354B0F, 0x30373336 } },  // B-SPI-01 -- T0_J01 boot banner, 2026-10-04 (N1)
   { "J02", { 0, 0, 0 } },  // B-ABZ-01 -- board failed after P8 (7d)
   { "J03", { 0, 0, 0 } },
   { "J04", { 0, 0, 0 } },
@@ -724,7 +724,7 @@ const JointUid JOINT_UID[] = {
   { "J11", { 0, 0, 0 } },
   { "J12", { 0, 0, 0 } },
   { "A1",  { 0, 0, 0 } },  // historical, not flashable
-  { "J01", { 0, 0, 0 } },  // J01 belt-off baseline: same board as index 0
+  { "J01", { 0x460030, 0x34354B0F, 0x30373336 } },  // J01 belt-off baseline: same board (B-SPI-01) as index 0
 };
 static_assert(sizeof(JOINT_UID) / sizeof(JOINT_UID[0]) == JOINT_COUNT,
               "JOINT_UID[] must have exactly one entry per JOINTS[] row");
