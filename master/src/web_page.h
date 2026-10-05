@@ -59,6 +59,13 @@ padding:9px 4px;font-size:13px;font-weight:600;min-height:40px}
 .btns button:active,.btn:active{background:#2a3140}
 .btns .g{color:var(--ok)} .btns .y{color:var(--warn)} .btns .r{color:var(--bad)}
 details summary{color:var(--dim);font-size:12px;cursor:pointer;padding:2px 0}
+.tbar{display:flex;align-items:center;gap:6px;margin:4px 10px 0;font-size:12px;color:var(--dim)}
+.tbar .btn{min-height:32px;padding:4px 12px;font-size:12px}
+#copyBox{display:none;position:fixed;inset:0;background:#000c;z-index:10;flex-direction:column;padding:12px;gap:8px}
+#copyBox.show{display:flex}
+#copyBox textarea{flex:1;background:#0a0c10;color:var(--text);border:1px solid var(--acc);border-radius:8px;
+font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;padding:8px}
+#copyBox .hint{color:#fff;font-weight:600}
 #term{flex:1;overflow-y:auto;margin:4px 10px 0;padding:8px;background:#0a0c10;border:1px solid var(--line);
 border-radius:10px;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all}
 #term .ev{color:var(--warn)} #term .err{color:var(--bad)} #term .echo{color:var(--echo)}
@@ -104,13 +111,21 @@ form .btn{padding:0 14px}
       <button onclick="location.href='/log.csv'">log.csv</button>
       <button onclick="send('help')">help</button>
       <button onclick="send('t')">self-test</button>
-      <button onclick="clearTerm()">clear</button>
       <button class="r" onclick="send('disarm all')">disarm all</button>
     </div>
   </details>
 </div>
 
+<div class="tbar"><span id="lineCount">0 lines</span><span class="spacer"></span>
+  <button class="btn" id="copyBtn" onclick="copyAll()">copy all</button>
+  <button class="btn" onclick="saveTxt()">save .txt</button>
+  <button class="btn" onclick="clearTerm()">clear</button>
+</div>
 <div id="term"></div>
+<div id="copyBox"><div class="hint">Copy was blocked by the browser. Long-press the text, Select all, Copy.</div>
+  <textarea id="copyText" readonly></textarea>
+  <button class="btn" onclick="document.getElementById('copyBox').className=''">close</button>
+</div>
 <button id="newBtn" onclick="toBottom()">new lines</button>
 
 <form onsubmit="submitLine(event)" autocomplete="off">
@@ -147,10 +162,55 @@ function addLines(arr, forceCls) {
   }
   term.appendChild(frag);
   while (term.childElementCount > MAX_LINES) term.removeChild(term.firstChild);
+  updCount();
   if (stick) toBottom(); else document.getElementById('newBtn').style.display = 'block';
 }
 function sys(l) { addLines([l], 'sys'); }
-function clearTerm() { term.innerHTML = ''; }
+function clearTerm() { term.innerHTML = ''; updCount(); }
+function updCount() { document.getElementById('lineCount').textContent = term.childElementCount + ' lines'; }
+// Everything currently in the terminal (since page load, last MAX_LINES), as text.
+function termText() { return Array.from(term.children, d => d.textContent).join(String.fromCharCode(10)); }
+function flash(id, txt) {
+  const b = document.getElementById(id), old = b.textContent;
+  b.textContent = txt; setTimeout(() => { b.textContent = old; }, 1500);
+}
+// Plain http://192.168.4.1 is not a "secure context", so phone browsers hide
+// navigator.clipboard. Try it anyway (desktop/localhost), then the legacy
+// execCommand path (allowed on http inside a tap), then show the text for a
+// manual long-press copy. Never fails silently.
+function legacyCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;font-size:16px';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select(); ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+function manualCopy(text) {
+  const box = document.getElementById('copyBox'), ta = document.getElementById('copyText');
+  ta.value = text; box.className = 'show';
+  ta.focus(); ta.select(); ta.setSelectionRange(0, text.length);
+}
+async function copyAll() {
+  const text = termText(), n = term.childElementCount;
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); flash('copyBtn', 'copied ' + n); return; } catch (e) {}
+  }
+  if (legacyCopy(text)) { flash('copyBtn', 'copied ' + n); return; }
+  manualCopy(text);
+}
+function saveTxt() {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([termText()], { type: 'text/plain' }));
+  const t = new Date(), p2 = v => String(v).padStart(2, '0');
+  a.download = 'leg_terminal_' + t.getFullYear() + p2(t.getMonth() + 1) + p2(t.getDate()) + '_' +
+               p2(t.getHours()) + p2(t.getMinutes()) + p2(t.getSeconds()) + '.txt';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
 term.addEventListener('scroll', () => { if (nearBottom()) document.getElementById('newBtn').style.display = 'none'; });
 
 async function get(url, ms) {
