@@ -105,14 +105,18 @@ check: s1 = V_meter1/c1 and s2 = V_meter2/c2 must agree within 0.3 %
 ## Step 2: encoder link (1 min)
 
 1. Press **`e`**.
+2. Press **`E`** (live monitor) and **turn the shaft by hand through a full revolution**. Press any key to stop.
 
 | Gate | Pass |
 |---|---|
 | Parity errors | **0 / 2000** |
 | `no_mag` | **0** |
+| **`raw` while turning** | **sweeps the whole 0–16383 range and follows the shaft.** Never stuck at one value |
 | Read time | ≈ 6.65 µs (informative) |
 
-If it fails, check the magnet gap/centring and the 4 SPI wires before anything else.
+> **⚠ Parity and `no_mag` alone are NOT a pass** (found on J03, 2026-10-08). If the chip never drives its data line (unpowered, HVPP not tied, CSN/SCK open), every read is all zeros. All zeros has even parity and a zero `no_mag` bit, so `e` reports a clean link while `raw` sits at **0** forever. Only the turning check catches it.
+
+If it fails: on the encoder board, with power on, check **VDD = 3.3 V, HVPP = 3.3 V, CSN = 3.3 V idle**. Then, with power off, check continuity PB5→CSN, `HA/A`(PB6)→MOSI, `HB/B`(PB7)→MISO, `HC/Z`(PB8)→SCK, and that MISO is not shorted to GND. Then the magnet gap/centring.
 
 ---
 
