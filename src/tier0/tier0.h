@@ -427,6 +427,28 @@ static void t0Led() {
 // SETUP -- blocking prints are fine here: nothing is armed and the bus has not
 // been joined until canInit() at the end.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// N4d WITHOUT A CONSOLE -- fault-test builds ONLY (envs T0_J01_HANG /
+// T0_J01_FAULT, -D T0_FAULT_TEST=1|2). The PlatformIO monitor would not take
+// typed input on the bench, so `hang!` / `fault!` could not be sent; these
+// builds trigger the same failure on their own 3 s after the joint is ARMED
+// (arm from the phone with zero gains). 1 = loop stops kicking the IWDG,
+// 2 = undefined instruction -> HardFault. Never in a normal T0_Jxx build.
+// ---------------------------------------------------------------------------
+#ifdef T0_FAULT_TEST
+static void t0FaultTestService() {
+  static uint32_t armed_ms = 0;
+  if (!running) { armed_ms = 0; return; }
+  if (!armed_ms) { armed_ms = millis() | 1u; return; }
+  if (millis() - armed_ms < 3000) return;
+#if T0_FAULT_TEST == 1
+  for (;;) { }                                     // IWDG must reset us
+#else
+  __builtin_trap();                                // HardFault_Handler, then IWDG
+#endif
+}
+#endif
+
 static void t0Setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   SerialUART.begin(921600);
@@ -503,6 +525,11 @@ static void t0Setup() {
   canInit((uint8_t)JOINT_ID, SerialUART);
 
   t0Banner(SerialUART);
+#ifdef T0_FAULT_TEST
+  SerialUART.println(T0_FAULT_TEST == 1
+    ? F("!! FAULT-TEST BUILD: the loop will HANG 3 s after arming (N4d). Reflash T0_Jxx after.")
+    : F("!! FAULT-TEST BUILD: HARDFAULT 3 s after arming (N4d). Reflash T0_Jxx after."));
+#endif
   SerialUART.println(F("Motor DISARMED. Arms only over CAN. Console: ? for keys."));
   t0_status_ms = millis();
   // LAST: from here a loop that stops kicking for ~20 ms resets the chip.
@@ -540,5 +567,8 @@ static void t0Loop() {
     if (dp > t0_pump_cyc_max) t0_pump_cyc_max = dp;
   }
   t0Led();
+#ifdef T0_FAULT_TEST
+  t0FaultTestService();
+#endif
   t0IwdgKick();                                  // the ONLY kick site
 }
