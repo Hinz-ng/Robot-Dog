@@ -116,7 +116,12 @@ check: s1 = V_meter1/c1 and s2 = V_meter2/c2 must agree within 0.3 %
 
 > **⚠ Parity and `no_mag` alone are NOT a pass** (found on J03, 2026-10-08). If the chip never drives its data line (unpowered, HVPP not tied, CSN/SCK open), every read is all zeros. All zeros has even parity and a zero `no_mag` bit, so `e` reports a clean link while `raw` sits at **0** forever. Only the turning check catches it.
 
-If it fails: on the encoder board, with power on, check **VDD = 3.3 V, HVPP = 3.3 V, CSN = 3.3 V idle**. Then, with power off, check continuity PB5→CSN, `HA/A`(PB6)→MOSI, `HB/B`(PB7)→MISO, `HC/Z`(PB8)→SCK, and that MISO is not shorted to GND. Then the magnet gap/centring.
+If it fails: on the encoder board, with power on and the firmware running, check:
+- **VDD = 3.3 V** and **HVPP = 3.3 V** (both steady).
+- **CSN ≈ 1.8–1.9 V** on a meter. The firmware reads continuously (low ~44 % of each loop), so a meter shows the average. Flat 3.3 V or 0 V means it isn't toggling.
+- **SCK ≈ 2.5–2.7 V** average. Flat 3.3 V or 0 V means no clock is arriving.
+
+Then, with power off, check continuity PB5→CSN, `HA/A`(PB6)→MOSI, `HB/B`(PB7)→MISO, `HC/Z`(PB8)→SCK, and that MISO is not shorted to GND. Then the magnet gap/centring.
 
 ---
 
