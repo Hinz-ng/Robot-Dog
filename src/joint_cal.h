@@ -580,8 +580,19 @@ const JointCal JOINTS[] = {
   //    1.0 (inert multiplier), not 0.
   //    ORDER: M1 first, then AUTOCALIB, then paste. Not the other way round --
   //    R_eff, U0 and Ke are all measured THROUGH vbus_scale.
+  // J03 vbus_scale = 0.008357 -- M1 2026-10-08, SEED path, UT89X at the board
+  //   pads: banner 11.94 / 22.55 V (at a provisional 0.008302) vs meter
+  //   12.02 / 22.70 V -> seed counts 1438.2 / 2716.2, slope 0.0083568. The two
+  //   single-point ratios agree to 0.005%; seed offset +0.2 counts (~0).
+  //   1.1% below J01 (0.008448), 1.9% below J02 (0.008516): divider spread.
+  //   SUPERSEDED same day: 0.008302, a 2-point slope from the DMA buffer
+  //   (1383 / 2667 counts) taken because the first flash had 0.0 (seed
+  //   ignored). It was 0.66% LOW: the uncalibrated DMA path is NOT offset-only
+  //   on this board (offset -58 counts at 12 V, -49 at 22.7 V), contrary to
+  //   CALIBRATION 21's "vbus_scale transfers to the DMA path unchanged". Do
+  //   not derive M1 from the DMA buffer.
   { "J03", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
-    0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+    0.008357f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
   { "J04", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
   { "J05", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,

@@ -65,6 +65,7 @@ meter: UT89X   pack ____   magnet gap ____ mm
 1. **Label the board** physically, e.g. `B-SPI-02`. The string you write in `board_sn` must match the label. The motor is J02's (`M-ABZ-01`, the old A1/J02 motor); confirm against its physical label.
 2. In `src/joint_cal.h`, in the **J03** row only, set **`vbus_scale` to `0.0085f`** with the comment `// PROVISIONAL for M1 -- replace`.
    - Why: with `0.0f` the firmware ignores the bus reading, and M1 needs one.
+   - **Do not skip this and compute M1 from the `p` probe's DMA buffer instead.** On J03 (2026-10-08) that path's slope was **0.66 % low**: its error is not offset-only. Only the seed (`seed Vb=`) is valid for M1.
    - `0.0085` is between J01 (0.008448) and J02 (0.008516); M1 replaces it.
 3. Flash the harness: `pio run -e J03 -t upload`.
 
