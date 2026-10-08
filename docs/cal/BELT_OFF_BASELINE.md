@@ -119,7 +119,8 @@ check: s1 = V_meter1/c1 and s2 = V_meter2/c2 must agree within 0.3 %
 If it fails: on the encoder board, with power on and the firmware running, check:
 - **VDD = 3.3 V** and **HVPP = 3.3 V** (both steady).
 - **CSN ≈ 1.8–1.9 V** on a meter. The firmware reads continuously (low ~44 % of each loop), so a meter shows the average. Flat 3.3 V or 0 V means it isn't toggling.
-- **SCK ≈ 2.5–2.7 V** average. Flat 3.3 V or 0 V means no clock is arriving.
+- **SCK ≈ 2.5–3.0 V** average (2.89 V measured on J03's working line). Flat 3.3 V or 0 V means no clock is arriving.
+- **If all four look right and `raw` is still stuck at 0, swap the encoder board.** On J03 (2026-10-08) the chip's MISO output was dead (J02 incident). The swap separates the encoder from the driver board in ~10 min, and the meter can't.
 
 Then, with power off, check continuity PB5→CSN, `HA/A`(PB6)→MOSI, `HB/B`(PB7)→MISO, `HC/Z`(PB8)→SCK, and that MISO is not shorted to GND. Then the magnet gap/centring.
 

@@ -548,6 +548,12 @@ const JointCal JOINTS[] = {
   //   0.2219 on the SAME hardware, twice. Both are right; different chords.
   //   A phase 3 reading ~0.222 today is NOT a fault and NOT a reason to edit
   //   this row -- that was chased once already (CHANGELOG section 0).
+  // ⚠ J02's MT6816 ENCODER BOARD IS DEAD -- found 2026-10-08 when moved to J03:
+  //   MISO stuck low (every read = all-zero frame, which passes parity and
+  //   No_Mag). VDD, HVPP, CSN and SCK all good; a new encoder on the same
+  //   harness works, so the J03 driver board and wiring are fine. Consistent
+  //   with damage in the J02 board failure (BELT_DRIVE 22.4.12), not proven.
+  //   Replaced. This row's zea/dir belong to the old encoder + this magnet.
   { "J02", "___", "___", "2026-08-08", "OFF",
      0.3482f, +1, 0.22810f,        // zea, dir, R_eff  @ 0.28-1.96 A  M1-rescaled x1.018904
      0.014937f,                    // U0   M1-rescaled -- weak, see the U0 note below
