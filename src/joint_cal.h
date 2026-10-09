@@ -564,7 +564,9 @@ const JointCal JOINTS[] = {
      0.1061f, 0.1074f,             // drag_c fwd, rev      unchanged (reported A)
      0.000948f, 0.000845f,         // drag_v fwd, rev      unchanged (reported A)
      0.2983f },                    // breakaway_A  M4, n=18, +-8.7%  (reported A)
-  // -- J03 .. J12 -- NOT BUILT. EVERY MEASURABLE FIELD IS 0.0f = NOT MEASURED.
+  // -- J04 .. J12 -- NOT BUILT. EVERY MEASURABLE FIELD IS 0.0f = NOT MEASURED.
+  //    (J03 sits here for JOINT_ID order but is BUILT since 2026-10-08 -- see
+  //    its own comment below.)
   //    zea = -1 and dir = 0 still make runInitFOC() fall back to a full
   //    alignment, so selecting one of these is safe -- just uncalibrated, and
   //    now loudly so: the boot banner prints R=0.00000 Ke=0.000000, which
@@ -597,8 +599,29 @@ const JointCal JOINTS[] = {
   //   on this board (offset -58 counts at 12 V, -49 at 22.7 V), contrary to
   //   CALIBRATION 21's "vbus_scale transfers to the DMA path unchanged". Do
   //   not derive M1 from the DMA buffer.
-  { "J03", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
-    0.008357f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+  //
+  // J03 = board_3 (new) + motor_2 (J02's motor) + a NEW MT6816 encoder board
+  //   (J02's was dead, see the J02 row). BARE MOTOR, belt off, not in the
+  //   plate. AUTOCALIB 2026-10-08, banner 11.98 V vs UT89X 11.97 V.
+  //   zea 0.3866 sd 3.5 deg (n=7); R_eff 0.23068 +-0.75%; U0 0.01919;
+  //   L 45.75 uH (J02 46.25); drag_c 0.0935 / 0.1058 A (J02 0.106 / 0.107);
+  //   T/T_loop 0.939 / 0.971; INL 1.42 deg mech (1/rev dominant -> new
+  //   encoder's centring, M8; not a blocker).
+  //   Ke 0.017900 is 1.09% BELOW J02's 0.018097 on the SAME motor, just
+  //   outside the +-1% sheet gate. Read as J02's reference being high, not
+  //   J03 low: J03's vbus_scale has two-point (0.005%) and banner (0.01 V)
+  //   support, while J02's carries the unresolved 0.32% ambiguity of README
+  //   24.14b, whose alternative moves J02's Ke TOWARD this value. J03's own
+  //   Ke is therefore stored. Magnet temperature (phase 5 runs after the
+  //   locked phases) may account for part of it.
+  { "J03", "board_3", "motor_2", "2026-10-08", "OFF",
+     0.3866f, +1, 0.23068f,        // zea, dir, R_eff
+     0.01919f,                     // U0
+     0.017900f, 45.75e-6f,         // Ke, L   (Kt = calKt() = 0.026850)
+     0.008357f, 1.0000f,           // vbus_scale (M1 2026-10-08), i_scale PENDING M2
+     0.0935f, 0.1058f,             // drag_c fwd, rev   (reported A, belt OFF, bare motor)
+     0.001143f, 0.000713f,         // drag_v fwd, rev
+     0.0000f },                    // breakaway_A  PENDING M4
   { "J04", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
   { "J05", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
