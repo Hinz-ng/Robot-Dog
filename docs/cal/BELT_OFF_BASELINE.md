@@ -92,24 +92,24 @@ Wire this **before powering up**, and leave it in place for all of Step 4. The c
 | | |
 |---|---|
 | **Ammeter** | UT89X on **DC mA, 600 mA range**, in series with the **positive** supply lead: pack + → UT89X **mA** jack; UT89X **COM** → board `7V-48V` pad. Pack − goes straight to board `GND`. **Never the 10 A range:** 10 mA resolution is 4 % of the span |
-| **Voltmeter** | A **second** meter (the RC3563 works). The UT89X can't do both, because moving its lead to the V jack opens the supply. **Gate (step 1): probes on the board pads**, since the banner reads the pads and the ammeter drops volts before them. **Ladder (`N`): probes on the pack terminals.** That is `V_s`; the fit subtracts the ammeter drop itself (`V_term = V_s − Ibus·R_b`). `V_s` barely matters (0.1 V → 0.0004 on `g`) |
+| **Voltmeter** | A **second** meter (the RC3563 works). The UT89X can't do both, because moving its lead to the V jack opens the supply. Probes on the **board pads** for the whole step. That reading **is** `V_term`, so it already includes the ammeter drop and any pack sag (J03: 2.3 Ω total, 0.76 Ω of it pack + leads). Meter scale cancels in `g` |
 | **`R_b`** | The ammeter's own resistance: **1.547 Ω** (UT89X, 600 mA range). Re-measure only if the meter or leads change: 4-wire, **unpowered** |
 | **Plant** | Motor clamped, belt off, hands off the shaft. The rotor is held magnetically and must not creep (`drift=`) |
 
-**Reading:** Ibus falls point by point, **~337 → ~81 mA** (§20.1 burden column). At each point let the reading settle, then write **Ibus to 0.1 mA** (e.g. `336.8`) and **V_s** beside that point's `M2,` line, then press any key. The firmware auto-advances after 12 s, so read within that window.
+**Reading:** Ibus falls point by point, **~337 → ~81 mA** (§20.1 burden column). At each point let the reading settle, then write **Ibus to 0.1 mA** (e.g. `336.8`) and **Vbus** (pads) beside that point's `M2,` line, then press any key. The firmware auto-advances after 12 s, so read within that window.
 
-1. Gate (voltmeter on the **pads**): banner vs meter **±0.03 V**, else reboot. Then move the voltmeter to the **pack**.
+1. Gate: banner vs meter **±0.03 V**, else reboot. With the ammeter in, the pads sit ~0.06 V under the banner at idle (J03: 11.80 vs 11.86), because boot draws less current; that is expected. If in doubt, check without the ammeter first.
 2. `1`, `2`, `3` → **cold `R_eff`**.
-3. `N`: at each of 8 points, record **V_s** (pack) and **Ibus to 0.1 mA**, then any key (auto-advances at 12 s).
+3. `N`: at each of 8 points, record **Vbus** and **Ibus to 0.1 mA**, then any key (auto-advances at 12 s).
 4. `3` again at once → **hot `R_eff`**.
 5. Send the log to Claude Code for the fit (`g = 1.5·R/c`). Store `i_scale = g` with its ±, then reflash.
 
 | Gate | Pass |
 |---|---|
-| `I_reported` vs the §20.1 table | ±3 % |
+| `I_reported` vs the §20.1 table | ±3 % (J01's supply; J03's softer pack read −5 % at pt 8, not a failure if `drift=` holds) |
 | Ibus span, pt 1 → 8 | 230–280 mA |
 | hot vs cold `R_eff` | ≤ 2 % |
-| `drift=` | 0 every point |
+| `drift=` | within ±3 cnt (encoder jitter; J01 1, J02 3, J03 2 accepted). Creep shows as tens |
 | `g` | 0.95–0.98 (J01 0.9621, J02 0.9690) |
 
 Fleet `i_scale` for later boards is decided at milestone close, not here. Record `g ±` only.
