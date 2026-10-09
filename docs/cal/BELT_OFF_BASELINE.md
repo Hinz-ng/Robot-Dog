@@ -106,6 +106,7 @@ check: s1 = V_meter1/c1 and s2 = V_meter2/c2 must agree within 0.3 %
 
 1. Press **`e`**.
 2. Press **`E`** (live monitor) and **turn the shaft by hand through a full revolution**. Press any key to stop.
+   - The monitor was built for a still-shaft wiggle test, so while you turn it, every window prints `<<<<<< HIT`. **That's expected here.** What you want: `perr=0` throughout, and a window with `span=16383` (`raw` wrapped through 0, i.e. a full revolution).
 
 | Gate | Pass |
 |---|---|
@@ -134,7 +135,7 @@ Press, waiting for each result line:
 
 1. **`Y`**: status. Shows nothing passed yet.
 2. **`1`**: LINK. Expect PASS.
-3. **`2`**: ALIGN. Small twitch. Expect PASS with `zea=` and `dir=`. **Let go of the shaft.**
+3. **`2`**: ALIGN. Small twitch. Expect PASS with `zea=` and `dir=`. 
 4. **`3`**: R/U0, about 6 s, rotor held still. Expect PASS with `R_eff` and `U0`.
 5. **`4`**: L, step train. Expect PASS with `L` and τ.
 6. **`5`**: SPIN, **both directions, fast**. Hands clear, motor clamped. Expect PASS with `Ke`, `Kt` and drag fwd/rev.
