@@ -10,7 +10,7 @@ Written with J03's numbers; for another joint, swap the number and use its motor
 ## Setup
 
 - **UT89X** meter. **Bench pack ~12 V** for everything. **Second supply 17–28 V** for M1 point 2 only.
-- M2 current instrumentation: option A/B/C, [`CALIBRATION.md`](../CALIBRATION.md) §20.1.
+- **M2 only:** a second voltmeter (RC3563 or any DMM), because the UT89X is the ammeter there. See Step 4.
 - Motor clamped (phase 5 spins ~1,000 rpm). Magnet gap 0.5–1.0 mm, centred.
 - 5 pen marks at ~72° on the motor bell, plus a fixed pointer (for M4).
 - Console: `pio device monitor -e J03 -p COMx`. Every input is a **single key**.
@@ -83,11 +83,24 @@ Save the full phase-7 output **verbatim** as `docs/cal/J03/J03_<date>_autocalib 
 
 ## Step 4: M2, current scale → `i_scale` (25 min)
 
-Method, instrumentation, prediction table and fit: [`CALIBRATION.md`](../CALIBRATION.md) §20.1, M2 box.
+Theory, prediction table and fit: [`CALIBRATION.md`](../CALIBRATION.md) §20.1, M2 box.
 
-1. Gate: banner vs meter **±0.03 V**, else reboot. For B/C, measure `R_b` 4-wire, unpowered.
+### Bench setup
+
+Wire this **before powering up**, and leave it in place for all of Step 4. The cold `R_eff`, the ladder and the hot `R_eff` must all see the same circuit.
+
+| | |
+|---|---|
+| **Ammeter** | UT89X on **DC mA, 600 mA range**, in series with the **positive** supply lead: pack + → UT89X **mA** jack; UT89X **COM** → board `7V-48V` pad. Pack − goes straight to board `GND`. **Never the 10 A range:** 10 mA resolution is 4 % of the span |
+| **Voltmeter** | A **second** meter (the RC3563 works). The UT89X can't do both, because moving its lead to the V jack opens the supply. **Gate (step 1): probes on the board pads**, since the banner reads the pads and the ammeter drops volts before them. **Ladder (`N`): probes on the pack terminals.** That is `V_s`; the fit subtracts the ammeter drop itself (`V_term = V_s − Ibus·R_b`). `V_s` barely matters (0.1 V → 0.0004 on `g`) |
+| **`R_b`** | The ammeter's own resistance: **1.547 Ω** (UT89X, 600 mA range). Re-measure only if the meter or leads change: 4-wire, **unpowered** |
+| **Plant** | Motor clamped, belt off, hands off the shaft. The rotor is held magnetically and must not creep (`drift=`) |
+
+**Reading:** Ibus falls point by point, **~337 → ~81 mA** (§20.1 burden column). At each point let the reading settle, then write **Ibus to 0.1 mA** (e.g. `336.8`) and **V_s** beside that point's `M2,` line, then press any key. The firmware auto-advances after 12 s, so read within that window.
+
+1. Gate (voltmeter on the **pads**): banner vs meter **±0.03 V**, else reboot. Then move the voltmeter to the **pack**.
 2. `1`, `2`, `3` → **cold `R_eff`**.
-3. `N`: at each of 8 points, record **Vbus** and **Ibus to 0.1 mA**, then any key (auto-advances at 12 s).
+3. `N`: at each of 8 points, record **V_s** (pack) and **Ibus to 0.1 mA**, then any key (auto-advances at 12 s).
 4. `3` again at once → **hot `R_eff`**.
 5. Send the log to Claude Code for the fit (`g = 1.5·R/c`). Store `i_scale = g` with its ±, then reflash.
 
