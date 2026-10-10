@@ -3,7 +3,7 @@
 §1 hardware · §1a assemblies · §2 clone vs genuine · §2a vendor documentation · §3 board pin
 truths · §14 ST tooling · §16 thermal. CAN hardware: [`CAN_BRINGUP.md`](CAN_BRINGUP.md) §23.
 
-*Hub: [`README.md`](../README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
+*Hub: [`README.md`](README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
 
 ---
 

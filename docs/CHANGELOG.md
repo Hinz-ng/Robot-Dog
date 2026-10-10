@@ -3,7 +3,7 @@
 One entry per session: what closed, which values changed (old → new), where the detail lives.
 Detail and data live in the section docs; this file is the index of changes.
 
-*Hub: [`README.md`](../README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
+*Hub: [`README.md`](README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
 
 ---
 

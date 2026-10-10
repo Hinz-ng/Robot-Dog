@@ -5,7 +5,7 @@ drivetrain health. Per-joint values live in `src/joint_cal.h`; fleet values in
 `src/fleet_config.h`. Belt-on plant states are per-plant and live in
 [`BELT_DRIVE.md`](BELT_DRIVE.md).
 
-*Hub: [`README.md`](../README.md).*
+*Hub: [`README.md`](README.md).*
 
 ---
 

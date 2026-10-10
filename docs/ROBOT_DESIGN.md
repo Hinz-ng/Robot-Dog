@@ -2,7 +2,7 @@
 
 §17 robot-level design decisions · §19 battery specification.
 
-*Hub: [`README.md`](../README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
+*Hub: [`README.md`](README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
 
 ---
 

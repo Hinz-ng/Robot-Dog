@@ -5,7 +5,7 @@ specification · §22.3 belt geometry and tension · §22.4 J02 acceptance (SCB 
 recipe A (superseded) · **§22.6 J01 recipe B, pulley of record** · §22.7 B12 MIT law ·
 §22.8 deferred items.
 
-*Hub: [`README.md`](../README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
+*Hub: [`README.md`](README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
 
 ---
 

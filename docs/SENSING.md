@@ -2,7 +2,7 @@
 
 §5 encoder (MT6816 SPI) · §6 alignment / ZEA · §7 current-sense calibration and sensor INL.
 
-*Hub: [`README.md`](../README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
+*Hub: [`README.md`](README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
 
 ---
 

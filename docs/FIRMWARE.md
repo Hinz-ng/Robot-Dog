@@ -3,7 +3,7 @@
 §4 firmware contract and the known-good `platformio.ini` · §11 session workflow, commands and
 telemetry · §18 sketch known gaps.
 
-*Hub: [`README.md`](../README.md).*
+*Hub: [`README.md`](README.md).*
 
 ---
 

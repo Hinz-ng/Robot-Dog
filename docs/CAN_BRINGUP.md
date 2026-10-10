@@ -4,7 +4,7 @@ Classic CAN at 1 Mbit/s, ESP32-S3 master ↔ ESC1 clones. The ladder is complete
 robustness tests A, C, D passed 2026-08-13 → 15). This file holds the measured facts, the Tier-0
 init checklist, and the deferred 12-board termination rework.
 
-*Hub: [`README.md`](../README.md). Sketches: [`tools/can_bringup/`](../tools/can_bringup/).*
+*Hub: [`README.md`](README.md). Sketches: [`tools/can_bringup/`](../tools/can_bringup/).*
 
 ---
 

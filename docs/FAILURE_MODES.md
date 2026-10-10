@@ -3,7 +3,7 @@
 §12 failure modes that each cost at least one session · §13 diagnostic ladder.
 **Read this before believing any number.**
 
-*Hub: [`README.md`](../README.md).*
+*Hub: [`README.md`](README.md).*
 
 ---
 

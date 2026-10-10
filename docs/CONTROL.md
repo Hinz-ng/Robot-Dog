@@ -2,7 +2,7 @@
 
 §10 current loop, bandwidth limits, velocity loop (harness only), per-unit calibration policy.
 
-*Hub: [`README.md`](../README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
+*Hub: [`README.md`](README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
 
 ---
 
