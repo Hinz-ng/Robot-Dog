@@ -20,7 +20,7 @@
 
 // ---- DRIVE -- copied from open_test.cpp, unchanged ----
 // Modulation reference (NOT a safety limit): sets Uq_ceil = rail/sqrt(3)
-// = 3.46 V. Raise before any high-speed work (README 8.3) -- not needed for
+// = 3.46 V. Raise before any high-speed work (CONSTANTS §8.3) -- not needed for
 // a hanging leg.
 const float T0_DRIVER_VOLT_LIMIT = 6.0f;
 // Uq clamp. At 2.0 V into R_eff ~0.22 ohm a rail-pinned fault is ~9 A; the

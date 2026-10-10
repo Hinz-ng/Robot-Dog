@@ -2,11 +2,9 @@
 // ============================================================================
 // mit_types.h -- THE TIER-0 ACTUATOR CONTRACT, as data. (B12a, 2026-10-01)
 // ============================================================================
-// One header both tiers include (the gait_types.h pattern). Deliberately has
-// NO includes and NO logic: Tier 1 (ESP32-S3) must be able to include it
-// without dragging in SimpleFOC, Arduino-STM32 or any calibration table.
-// Lives in contract/ (moved from src/ 2026-10-03, CAN-T0): both tiers build
-// with -I contract and nothing else in common.
+// One header both tiers include. NO includes and NO logic: Tier 1 (ESP32-S3)
+// must be able to include it without SimpleFOC, Arduino-STM32 or any
+// calibration table. Both tiers build with -I contract and nothing else in common.
 //
 // FRAME AND UNITS -- output side, SI, units in every name:
 //   p      rad      OUTPUT angle (after the 9:1). GEAR_RATIO stays inside Tier 0.
@@ -20,11 +18,11 @@
 //
 // SIGN: positive = the motor's positive electrical direction (SimpleFOC
 // sensor_direction applied). A belt does not reverse direction, so the output
-// turns the same way. Which PHYSICAL direction that is gets written down at
-// B12a step a2. A per-joint MOUNTING sign for mirrored legs is NOT applied
-// here -- open contract item, decide before the freeze (README 15, 7l).
+// turns the same way: + = counter-clockwise viewed facing the output-pulley
+// shaft end (BELT_DRIVE §22.7.1). A per-joint MOUNTING sign for mirrored legs
+// is NOT applied here -- the master owns it (master_config.h M_MOUNT_SIGN).
 //
-// ZERO: SESSION-RELATIVE for B12 -- p = 0 at the moment the joint is armed.
+// ZERO: SESSION-RELATIVE -- p = 0 where the harness arms, or at Tier 0's ZERO.
 // The MT6816 is absolute over one MOTOR turn = 40 deg of output, so an absolute
 // output angle needs homing or a known boot pose. Open item 7l; until it is
 // closed this contract is NOT frozen.
