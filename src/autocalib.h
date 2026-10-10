@@ -2,24 +2,8 @@
 // ============================================================================
 // autocalib.h  --  ONE-KEY PER-JOINT CHARACTERISATION
 // ============================================================================
-// Include this in open_test.cpp IMMEDIATELY BEFORE `void handleSerial()` (it
-// must be above handleSerial so the case labels can see acPhase), and add:
-//
-//     #include "autocalib.h"          // <-- directly above void handleSerial()
-//
-//     case 'Y': case 'y': acStatus();   break;   // what is done / what is next
-//     case '1': acPhase(1); break;   // LINK    zero current, always safe
-//     case '2': acPhase(2); break;   // ALIGN   ZEA + direction
-//     case '3': acPhase(3); break;   // R/U0    self-locked, rotor still
-//     case '4': acPhase(4); break;   // L       self-locked step train
-//     case '5': acPhase(5); break;   // SPIN    free-spin both directions
-//     case '6': acPhase(6); break;   // T/INL   computation only, no motor
-//     case '7': acPhase(7); break;   // REPORT  print the pasteable block
-//     case '0': acPhase(0); break;   // RESET   discard all results
-//     case 'V': acVerifyZea(); break;   // RESOLVED: lower-case 'v' stays VELOCITY
-//                                       // mode, upper-case 'V' verifies ZEA.
-//
-// ('A' is already logStats, so 'Y' is used for status.)
+// Included once by open_test.cpp, directly above handleSerial(); the keys are
+// bound there ('Y' status, '1'-'7' phases, '0' reset, 'V' verify ZEA).
 //
 // ONE PHASE PER KEYPRESS, ON PURPOSE. You inspect each result before the next
 // phase runs, you can re-run any single phase, and a failure never leaves the
@@ -27,24 +11,18 @@
 // everything it touches, and refuses to run if its prerequisites have not
 // PASSED -- so out-of-order presses cannot silently produce garbage.
 //
-// BELT STATE -- it is NOT "belt off" across the board, and saying so blanket
-// was actively misleading once M2 got deferred past the belt build:
+// BELT STATE:
 //     FREE SHAFT REQUIRED : 2 (the alignment must settle unloaded)
 //                           5, 6 (free spin)
 //     BELT-AGNOSTIC       : 1, 3 and the M2 ladder -- locked-rotor, the rotor
 //                           never turns, so the belt is not in the loop.
 //                           The one thing that DOES matter there is that the
 //                           rotor must not creep: watch the drift column.
-//     BELT-OFF ONLY       : 4. It was listed as belt-agnostic until 2026-09-30,
-//                           by argument; the measurement says otherwise. Its
-//                           32-step train cycles the self-lock 0.8 <-> 3.2 A, and
-//                           belt friction (~0.3 A) plus belt wind-up let the rotor
-//                           sit off-axis at the weak hold and get pulled in at the
-//                           strong one, so it RATCHETS: J01 belt-on drifted -169
-//                           counts (WARN). Phase 3 is immune because it sweeps
-//                           strongest-first, and then friction holds it (drift 0
-//                           in the same session). L is a motor property: carry
-//                           the belt-off value, do not re-run 4 belt-on.
+//     BELT-OFF ONLY       : 4. Its 32-step train cycles the self-lock 0.8 <-> 3.2 A;
+//                           belt-on, friction and wind-up make the lock ratchet
+//                           (J01 drift -169 counts, WARN). L is a motor constant:
+//                           carry the belt-off value. Phase 3 is immune (it
+//                           sweeps strongest-first).
 //     BOTH, DELIBERATELY  : M4. Belt-off is the baseline; belt-on at M5 is the
 //                           number that decides impedance quality. Its banner
 //                           REPORTS the state instead of demanding one.
@@ -60,12 +38,8 @@
 //     6 T/INL  -> 4 and 5              (needs R, L, Ke and the +-omega bins)
 //     7 REPORT -> whatever has run; missing outputs are printed as NOT MEASURED
 //
-// WHY A .h AND NOT A .cpp: PlatformIO compiles every .cpp in src/ as its own
-// translation unit. A .cpp that is ALSO #included gets compiled twice and fails
-// at link with duplicate symbols. As a header included once, this file sees
-// motor / driver / currentSense / encoder / mode / running / target directly --
-// no extern declarations, no duplicated MT6816SPI definition, and nothing in
-// open_test.cpp has to move. Exactly two edits to the main sketch.
+// WHY A .h: included once, it sees motor / driver / currentSense / encoder /
+// mode / running / target directly, with no extern declarations.
 //
 // ---------------------------------------------------------------------------
 // WHAT IT PRODUCES
@@ -129,10 +103,10 @@
 //     guards do NOT run while it executes. Equivalents live in acService():
 //     a hard phase-amplitude abort, an overspeed abort, and an any-key abort.
 //   * Direction reversal in phase 5 is the only genuinely dangerous moment. At
-//     +110 rad/s, commanding even 0.0 V draws -9.8 A of braking (back-EMF
-//     1.95 V across 0.198 ohm); commanding -2.0 V draws -20 A. The routine
-//     therefore NEVER commands a reversing voltage: it DISABLES the driver and
-//     lets the shaft coast, then re-enables.
+//     +110 rad/s, commanding 0.0 V draws ~-9 A of braking (back-EMF 1.95 V
+//     across ~0.22 ohm); -2.0 V draws ~-18 A. The routine therefore NEVER
+//     commands a reversing voltage: it DISABLES the driver and lets the shaft
+//     coast, then re-enables.
 //   * Every voltage change is soft-ramped in 0.05 V steps -> 0.25 A transients.
 //   * Any serial byte aborts. On abort or FAIL the motor is disabled and every
 //     mutated global is restored.
@@ -141,24 +115,9 @@
 //   motor.PID_current_{q,d}.limit, motor.zero_electric_angle,
 //   motor.sensor_direction, foc_ready.
 //
-// REVISION 2 (2026-08-07), after the first full run on assembly A2:
-//   F1  |I| ratio gate moved to the SQUARED domain and widened to a gross-sanity
-//       band. The old 1.20-1.25 gate produced a FALSE FAIL: free-spinning belt-off
-//       Iq is only 0.10-0.18 A, and mean(sqrt) of an always-positive rippling
-//       quantity is biased up by 4-8% there.
-//   F2  VBUS_SCALE is per-board and unmeasurable without an external reference,
-//       so the report now DEMANDS a written-in multimeter reading.
-//   F3  acService() no longer reads the phase currents twice per iteration. That
-//       cost ~18 us and dropped the loop from 16.8 to 12.9 kHz -- which matters
-//       because T_delay is ONE LOOP PERIOD, so the reported T was 33% high.
-//       f_loop and T/T_loop are now printed alongside T.
-//   F4  The L step trace is binned by TIME, not sample index, turning natural
-//       loop-phase jitter into equivalent-time sampling: ~17 fit points, not 5.
-//   S2  New 'V' command verifies a stored ZEA against a fresh alignment.
-//
 // RUNTIME per phase: 1 ~0.3 s | 2 ~8 s | 3 ~6 s | 4 ~2 s | 5 ~50 s | 6,7 instant.
 //   Settle times are deliberately 2-3x the relevant time constants.
-// RAM ~1.6 kB of statics on top of the 19.5 kB log buffer. CHECK THE FREE-RAM
+// RAM ~1.6 kB of statics on top of the 18.0 kB log buffer. CHECK THE FREE-RAM
 //   FIGURE IN THE BUILD OUTPUT -- a static array colliding with the stack gives
 //   a HardFault, not a compile error. Drop LOG_N if it is tight.
 // ============================================================================
@@ -172,29 +131,9 @@ const float   AC_ZEA_SD_WARN  = 0.08f;
 const float   AC_ZEA_SE_FAIL  = 0.035f;   // rad elec (2.0 deg) on the median
 
 const uint8_t AC_R_N          = 9;
-// TOP POINT 0.46 -> 0.68 V, PERMANENT AND FLEET-WIDE, 2026-08-20. Not a tuning
-// preference: it fixed a diagnostic that was returning a physically impossible
-// answer. R and U0 are strongly anti-correlated in this fit, so a short lever
-// arm lets them trade off against each other.
-//
-//                      corr(R,U0)   SE(R)        U0 signif.        resid rms
-//   old top 0.46 V     -0.89/-0.90  0.68/0.69%   9.1s / 2.8s WARN  2.19/2.23 mV
-//   new top 0.68 V     -0.84/-0.84  0.41/0.37%   13.0s / 12.1s     1.87/1.67 mV
-//
-// The consequence that mattered was the cold/hot bracket around M2. On the old
-// ladder the fitted dR was +1.87% while U0 moved -67%, and refitting the slope
-// with U0 HELD gave dR = -1.78%: heating that ran backwards. On the new ladder
-// dU0 is -16% and dR-with-U0-held is +0.71% = +1.8 K, which is what two
-// back-to-back ~8 J sweeps should do. J02 agrees: +0.43% = +1.1 K, 9/9 points,
-// zero drift, U0 at 14.4s/13.7s.
-//
-// *** RETRACTION, recorded because the conclusion survived and its reasoning
-// did not. *** The old bracket was first rejected with "every hot current is
-// higher, so R did not rise". That silently assumes U0 is FIXED. It was not --
-// it moved 67%, and the entire fitted R rise was that trade-off. The correct
-// diagnostic is the constrained refit with U0 held, never a raw current
-// comparison. A right answer reached by wrong reasoning is the more dangerous
-// failure, because it survives the retraction of the reasoning.
+// TOP POINT 0.68 V (was 0.46, 2026-08-20). R and U0 are anti-correlated in this
+// fit; the longer lever arm cut SE(R) from ~0.7% to ~0.4% and made U0 12-13
+// sigma. To read a cold/hot dR, refit with U0 HELD -- never compare raw currents.
 const float   AC_R_V[AC_R_N]  = { 0.68f, 0.40f, 0.35f, 0.30f, 0.25f,
                                   0.20f, 0.16f, 0.12f, 0.08f };   // DESCENDING
 const uint16_t AC_R_SETTLE_MS = 350;
@@ -209,37 +148,17 @@ const uint8_t  AC_L_NS        = 40;       // samples captured per repeat
 const float    AC_L_VBASE     = 0.20f;    // hold between steps (~0.8 A)
 const float    AC_L_VSTEP     = 0.70f;    // stepped-to (~3.4 A peak)
 const uint16_t AC_L_DECAY_MS  = 4;        // >= 9 tau_e at tau_e ~ 200 us
-const uint8_t  AC_L_MIN_PTS   = 6;        // was 8. 6 is the statistical floor for a
-                                          // 2-parameter fit with an rms gate; 8 was
-                                          // set from F4's WRONG ~17-point prediction.
-// F5 -- DELIBERATE PHASE DITHER. F4 assumed the step's phase relative to the loop
-// was random. It is NOT: acService() IS the loop, so samples land at step+{0,60,
-// 120..} us rigidly and only every 3rd 20 us bin is ever visited. Measured: 7 fit
-// points, not 17. FIX: after the sample that APPLIES the step, stall r*2 us so the
-// REMAINING samples of that repeat sit at a per-repeat offset. Across 32 reps the
-// offset sweeps 0..62 us = one full loop period, so sample k covers
-// [60(k-1), 60(k-1)+62] us and the union is contiguous.
-// AC_L_DITHER_US * AC_L_REPS must be >= ONE LOOP PERIOD, or the sweep leaves a
-// hole and the un-dithered grid shows through. It was 2: 2 x 32 = 64 us against
-// a 75 us loop period at 13.3 kHz -- an 11 us hole per period, which is exactly
-// why session 3's LSB `n` column still peaked every third bin (21, 15, 17, 15,
-// 16...). 3 x 32 = 96 us covers 13.3 kHz with margin and still covers 16.8 kHz.
-// Over-covering is harmless: the offsets simply spread over 1.3 loop periods
-// and bin occupancy evens out. J01's existing fit is unaffected (that data is
-// already taken and the tau it produced was verified offline); this is for J02+.
+const uint8_t  AC_L_MIN_PTS   = 6;        // floor for a 2-parameter fit with an rms gate
+// F5 -- PHASE DITHER. acService() IS the loop, so step samples land on a rigid
+// grid (step + {0, 60, 120..} us) and only every 3rd 20 us bin would be
+// visited. After the sample that applies the step, stall r * AC_L_DITHER_US so
+// each repeat sits at its own offset. AC_L_DITHER_US * AC_L_REPS must cover at
+// least one loop period (3 x 32 = 96 us > 75 us at 13.3 kHz) or the grid shows
+// through. Over-covering is harmless.
 const uint8_t  AC_L_DITHER_US = 3;
 const float    AC_L_RMS_FAIL  = 0.20f;
-// F4 -- TIME BINNING.  *** PARTLY SUPERSEDED BY F5 ABOVE -- read that first. ***
-// STILL TRUE: averaging by SAMPLE INDEX throws away timing information that is
-// useful, and binning the (t, I) pairs by TIME instead is the right move. Index
-// averaging left exactly 5 points in the 0.15-0.85 fit band on assembly A2 --
-// tau = 200 us against a 58.5 us sample period is only 3.4 samples/tau.
-// RETRACTED: F4 originally claimed the step's phase relative to the control loop
-// was "effectively random across repeats", and predicted ~17 fit points from
-// that free jitter alone. It is NOT random -- acService() IS the loop, so the
-// samples land on a rigid grid, and time binning ALONE gave 7 points, not 17.
-// The 18 points actually achieved come from F5's DELIBERATE per-repeat dither.
-// Time binning is the mechanism; the dither is what supplies the coverage.
+// F4 -- TIME BINNING. (t, I) pairs are binned by TIME, not sample index; with
+// the F5 dither this gives ~18 fit points instead of 5.
 const uint8_t  AC_L_TBINS     = 48;       // 48 x 20 us = 960 us of rise
 const uint16_t AC_L_TBIN_US   = 20;
 const uint8_t  AC_L_BIN_MIN_N = 3;        // samples needed before a bin is used
@@ -261,25 +180,15 @@ const float    AC_T_AGREE     = 0.25f;    // the two T estimates must agree
 
 const float    AC_RAMP_V      = 0.05f;
 const uint8_t  AC_RAMP_MS     = 10;
-// *** REPORTED AMPS, NOT TRUE AMPS -- AND CORRECTLY SO. *** M2 2026-08-20
-// measured the sense UNDER-reading by 3.9% (J01) / 3.2% (J02), so this trips at
-// ~6.24 / 6.19 A of real current. Under the 2026-10-01 unit rule (fleet_config.h)
-// a limit lives in the unit of its SOURCE: this one is a bench threshold on the
-// sensed current, so it stays A_rep and is never converted.
+// REPORTED amps: a bench threshold on the sensed current, never converted
+// (trips at ~6.24 A true on J01).
 const float    AC_IMAX_ABORT_A_rep  = 6.0f;     // A amplitude: hard abort (REPORTED A)
 const float    AC_COAST_RADS  = 5.0f;
-// F1 -- the |I|/Iq gate. |I| = sqrt(ia^2+ib^2+ic^2) is ALWAYS POSITIVE, so
-// mean(|I|) > |mean(I)| whenever there is ripple, and the smaller the DC current
-// the larger the relative bias. Free-spinning belt-off, Iq is only 0.10-0.18 A --
-// the WORST case. Measured on A2: 1.324 at Iq=0.100 falling monotonically to
-// 1.273 at Iq=0.179, i.e. +8.1% -> +3.9%. That is the bias, not a fault, and the
-// original 1.20-1.25 gate produced a FALSE FAIL.
-// FIX: accumulate in the SQUARED domain. Instantaneously |I|^2 = 1.5*(Iq^2+Id^2),
-// so  ratio = sqrt( mean(ia^2+ib^2+ic^2) / (1.5*mean(Iq^2+Id^2)) )  removes the
-// sqrt bias entirely. The gate is then a GROSS-SANITY band, because the two sides
-// are still sampled at different instants of a PWM-rippling current.
-// The definitive 1.22-1.23 check is a LOCKED-ROTOR one -- see README, and do it
-// by hand in 'c' mode. Phase 5 cannot assert it.
+// F1 -- the |I|/Iq gate, in the SQUARED domain. mean(|I|) > |mean(I)| under
+// ripple, and at free-spin currents (0.10-0.18 A) the bias is +4-8% -- it gave
+// a false FAIL. ratio = sqrt(mean(ia^2+ib^2+ic^2) / (1.5*mean(Iq^2+Id^2)))
+// removes it. Still a GROSS-SANITY band (the two sides are sampled at different
+// instants); the tight 1.22-1.23 check is locked-rotor only, by hand in 'c' mode.
 const float    AC_RATIO_LO    = 1.15f;
 const float    AC_RATIO_HI    = 1.40f;
 const float    AC_BW_HZ       = 400.0f;   // for the SUGGESTED gains only
@@ -310,11 +219,8 @@ static bool ac_guard;
 // a DIFFERENT PHYSICAL JOINT.
 //
 // Why it exists: phase 7 CARRIES vbus_scale, i_scale and breakaway_A from the
-// flashed row, because a re-run must not discard an M1/M2/M4 result. That is
-// correct when the row is this joint's. It is exactly wrong when it is not --
-// J02's first report carried J01's breakaway_A = 0.2920 with no warning at all,
-// even though the 'V' check had failed thirty lines earlier. The report had
-// every piece of information needed to catch it and said nothing.
+// flashed row so a re-run keeps M1/M2/M4 results. If the row is another
+// joint's, that carry must be blocked.
 //
 // Set by BOTH detectors, because either can run first and the operator may never
 // press 'V':
@@ -382,12 +288,9 @@ static float ac_wx[2*AC_W_N], ac_wy[2*AC_W_N];        // Ke fit: vel, U - R*Iq -
 static float ac_w_vel[2*AC_W_N], ac_w_iq[2*AC_W_N], ac_w_u[2*AC_W_N];
 static float ac_floop[2*AC_W_N];                      // F3: measured loop rate per point
 static uint8_t ac_wn;
-// One-shot: set by handleSerial() when it sees '-' immediately followed by
-// '5' (the swapped-order chord for finding 2's mandatory repeat -- fwd/rev
-// asymmetry was confounded with warm-up ordering because every phase-5 run
-// went forward-then-reverse). acP5() consumes and clears it unconditionally
-// on entry so a failed/aborted run, or a '-' typed for unrelated jogging
-// long before some later '5', can never leave a stale swap armed.
+// One-shot: set by handleSerial() on '-' then '5' (phase 5 reverse-first, which
+// separates direction from warm-up order). acP5() clears it on entry, so a
+// refused run or an unrelated earlier '-' can never leave it armed.
 static bool ac_p5_swap_next = false;
 // [direction][speed slot][bin] ; direction 0 = forward, 1 = reverse
 static float    ac_bin_id[2][AC_BIN_SPEEDS][AC_BINS];
@@ -499,13 +402,9 @@ static void acService() {
   if (running) motor.move(target);
   ac_loops++;
 
-  // F3 -- do NOT read the phase currents again here in closed-loop modes.
-  // getFOCCurrents() above already cost one ADC read; a second getPhaseCurrents()
-  // every iteration cost ~18 us and dropped the loop from 16.8 kHz to 12.9 kHz.
-  // That matters twice over: it degrades every measurement, AND since
-  // T_delay ~= ONE FULL LOOP PERIOD (see the T model note in phase 6), it made
-  // the T reported here 33% larger than the T the main sketch actually has.
-  // In closed-loop modes the dq magnitude IS the phase amplitude, so it is free.
+  // F3 -- do NOT read the phase currents again in closed-loop modes: a second
+  // read cost ~18 us per loop (16.8 -> 12.9 kHz), and T_delay is one loop
+  // period. In closed-loop modes the dq magnitude IS the phase amplitude.
   if (mode == MODE_OPENLOOP) ac_i_amp = acPhaseAmp();
   else                       ac_i_amp = sqrtf(motor.current.q*motor.current.q
                                             + motor.current.d*motor.current.d);
@@ -563,9 +462,8 @@ static int32_t acCntDelta(uint16_t a, uint16_t b) {
   return d;
 }
 
-// Coast to a stop WITHOUT commanding a reversing voltage. At +110 rad/s even
-// commanding 0.0 V draws -9.8 A of braking (back-EMF 1.95 V across 0.198 ohm);
-// commanding -2.0 V draws -20 A. So disable the driver and let drag do it.
+// Coast to a stop WITHOUT commanding a reversing voltage (see SAFETY in the
+// header): disable the driver and let drag do it.
 static void acCoast() {
   target = 0.0f;
   motor.disable(); running = false;
@@ -856,8 +754,8 @@ static void acP3() {
 //  (a) The step is DIFFERENTIAL, VBASE -> VSTEP, so the rotor stays firmly held
 //      throughout. De-energising between repeats would excite the ~18 Hz
 //      magnetic-spring resonance and put mechanical motion into the trace.
-//  (b) AC_L_REPS repeats are averaged sample-by-sample: noise falls as
-//      1/sqrt(24), about 1.3% on a 2.5 A step versus ~15% single-shot.
+//  (b) AC_L_REPS repeats are averaged sample by sample: noise falls as
+//      1/sqrt(AC_L_REPS).
 //  (c) The fit is LINEARISED. ln((Iinf - i)/(Iinf - I0)) is linear in t with
 //      slope -1/tau. Iinf and I0 come from the SAME averaged trace, so the
 //      result does not depend on phase 3, and the fitted INTERCEPT absorbs the
@@ -867,11 +765,8 @@ static void acP3() {
 // Only samples in the 0.15-0.85 band are fitted: below that the lag dominates,
 // above it the noise on a small (Iinf - i) does.
 // R converts tau to L, so this phase needs phase 3 -- but only for that scaling.
-// BELT-OFF ONLY (see the BELT STATE note at the top). The whole phase takes
-// under a second -- the 600 ms lock "twitch" IS the run, not a failure to start.
-// Belt-on it completes but the lock ratchets (J01 2026-09-30: drift -169, WARN,
-// L 44.7 uH -- +2.1% vs the belt-off 43.77, the same +2.1% seen belt-on on
-// 2026-08-12). Nothing belt-on needs L re-measured.
+// BELT-OFF ONLY (see BELT STATE at the top). The whole phase takes under a
+// second -- the 600 ms lock "twitch" IS the run.
 // ===========================================================================
 static void acP4() {
   if (!acNeed(3)) return;
@@ -898,8 +793,7 @@ static void acP4() {
     for (uint8_t k = 0; k < AC_L_NS && !ac_abort; k++) {
       acService();
       uint32_t dt = micros() - t0;
-      // F4: bin by TIME. The step phase relative to the loop is random across
-      // repeats, so these land scattered -- equivalent-time sampling for free.
+      // F4: bin by TIME (coverage comes from the F5 dither below).
       if (dt < (uint32_t)AC_L_TBINS * AC_L_TBIN_US) {
         uint8_t b = (uint8_t)(dt / AC_L_TBIN_US);
         ac_lb_i[b] += ac_i_amp; ac_lb_n[b]++;
@@ -992,9 +886,7 @@ static void acP5() {
   // inheriting it.
   if (!acHaveCommutation()) return;
   SerialUART.print(F("[5] FREE-SPIN  (shaft must be free; ~50 s)"));
-  // Order is part of the plant state for this run -- printed so it lands in
-  // the capture, not just typed and forgotten (finding 2's swapped repeat is
-  // worthless if the log doesn't say which run was which).
+  // Order is part of the plant state for this run: printed so it lands in the log.
   SerialUART.println(swap ? F("  -- ORDER SWAPPED: reverse first ('-' then '5')")
                            : F("  -- order: forward first (default)"));
   acEnter();
@@ -1117,10 +1009,6 @@ static void acP5() {
   // out positive and the consumer applies sign(omega). Split by the sign of the
   // measured speed rather than by loop index, because a point dropped for
   // n < 500 breaks any index-to-direction mapping.
-  // These four numbers used to be fitted by hand off the phase-7 CSV. Twelve
-  // joints x four numbers is exactly the arithmetic this routine exists to
-  // remove, and hand-fitting was what collapsed them to a single mean in the
-  // first place.
   {
     static float dx[AC_W_N], dy[AC_W_N];
     for (uint8_t d = 0; d < 2; d++) {
@@ -1181,8 +1069,7 @@ static void acP5() {
     SerialUART.println(F(" mA"));
   }
   SerialUART.print(F("    ")); SerialUART.println(acVs(ac_v_drag));
-  // Was "larger ... run M4 by hand": M4 has been the firmware 'B'/'b' ramp since
-  // it was written, and belt-ON J01 breakaway came out EQUAL to drag_c (R16).
+  // Belt-off breakaway is far larger than drag_c; belt-on it is ~equal.
   SerialUART.println(F("    DYNAMIC drag only. STATIC breakaway is a separate number (belt-off"));
   SerialUART.println(F("    far larger, belt-on ~equal) -- press B / b (M4/B4), fill breakaway_A."));
   ac_done[5] = (ac_v_Ke != AC_FAIL);
@@ -1198,23 +1085,12 @@ static void acP5() {
 //   transport T   delta = omega_e*T, proportional to omega, FLIPS    -> ODD
 //   even = (fwd+rev)/2 -> ZEA residual + INL      odd = (fwd-rev)/2 -> T
 //
-// Forward-only data CANNOT do this. Three sessions of forward-only fitting gave
-// T = 85.7 us with a 28.7 us unexplained excess; the two-direction split gave
-// 57.0 us, plus the INL profile for free. The two binned speeds give two
-// independent T estimates, and T must be speed-INDEPENDENT -- that consistency is
-// what makes it a measurement rather than a reading.
+// Forward-only data cannot separate the even terms from the odd one. The two
+// binned speeds give two independent T estimates; T must be speed-independent.
 //
-// T MODEL, CORRECTED 2026-08-07:  T ~= ONE FULL LOOP PERIOD.
-// Three points across two loop rates:
-//     f_loop 16770 -> T_loop 59.6 us, T 57.0  ->  T/T_loop 0.956
-//     f_loop 12911 -> T_loop 77.5 us, T 73.8  ->  T/T_loop 0.953
-//     f_loop 12908 -> T_loop 77.5 us, T 75.8  ->  T/T_loop 0.978
-// The old "0.5*T_pwm + 0.5*T_loop" model predicts 49.8 / 58.7 / 58.7 and is 15-29%
-// low. The PWM period (40 us) is SHORTER than the loop period, so the duty update
-// lands inside one PWM cycle and the loop period dominates outright.
-// Consequence: LOOP RATE BUYS TRANSPORT DELAY ONE-FOR-ONE, and T measured in here
-// is only the sketch's T if the loop rates match -- hence f_loop is reported with
-// it, and T/T_loop is the transferable number.
+// T ~= ONE LOOP PERIOD (T/T_loop, fleet_config.h): loop rate buys transport
+// delay one-for-one, so T is reported with f_loop, and T/T_loop is the
+// transferable number.
 // ===========================================================================
 static float acBinAngleDeg(uint8_t d, uint8_t s, uint8_t b) {
   if (ac_bin_n[d][s][b] == 0) return 0.0f;
@@ -1382,10 +1258,7 @@ static void acP7() {
   }
   SerialUART.print(F("!! WRITE IN: multimeter Vbus = ______ V   (firmware read "));
   SerialUART.print(driver.voltage_power_supply, 2); SerialUART.println(F(")"));
-  // Threshold lowered from 1% to 0.5% on 2026-08-18. Two boards were then
-  // measured 0.80% apart, and J01's own M1 error was 1.08% -- which a ">1%"
-  // trigger would have let through by 0.02 percentage points. A 1% gate cannot
-  // separate "correct" from "one board's divider on another board's numbers".
+  // > 0.5%: two boards measured 0.80% apart, and J01's own M1 error was 1.08%.
   SerialUART.println(F("   >0.5% apart -> recalibrate VBUS_SCALE for THIS BOARD before"));
   SerialUART.println(F("   trusting R_EFF, U0 or KE. They all scale with it."));
   SerialUART.println(F("   Two boards MEASURED 0.80% apart 2026-08-18: this is not a formality."));
@@ -1410,17 +1283,9 @@ static void acP7() {
     acPrintVal(F("drag_c_rev "), ac_drag_c[1], 4, true, ac_v_drag, F("A"));
     acPrintVal(F("drag_v_fwd "), ac_drag_v[0], 6, true, ac_v_drag, F("A/(rad/s)"));
     acPrintVal(F("drag_v_rev "), ac_drag_v[1], 6, true, ac_v_drag, F("A/(rad/s)"));
-    // Kt is DERIVED and deliberately absent from the row. Printed as a NAMEPLATE
-    // cross-check and nothing more.
-    // *** RETRACTED 2026-08-18: this used to say "the one absolute cross-check
-    // the routine can make on the VOLTAGE scale", and the printed line said
-    // "confirms the VOLTAGE scale only". It cannot. Ke is COMPUTED from
-    // vbus_scale, so this comparison cannot referee the scale it was derived
-    // from -- it is circular. The old J01 agreement of +0.38% looked like
-    // confirmation and was a coincidence of a divider that was 1.1% LOW; at the
-    // corrected scale the same joint reads +1.45%. Only M1 against an external
-    // meter checks vbus_scale. What this line IS still good for: excluding a
-    // grossly wrong nameplate KV (KV380 lands 7-8% out, not 1-2%).
+    // Kt is DERIVED and absent from the row. NAMEPLATE cross-check only: it
+    // cannot check vbus_scale (Ke is computed through it); it does exclude a
+    // grossly wrong KV (KV380 lands 7-8% out).
     SerialUART.print(F("  Kt     ")); SerialUART.print(KT_PER_KE*ac_Ke, 6);
     SerialUART.print(F("\tDERIVED = 1.5*Ke, never stored. vs nameplate KV"));
     SerialUART.print(MOTOR_KV_NAMEPLATE, 0); SerialUART.print(F(" = "));
@@ -1432,10 +1297,7 @@ static void acP7() {
   SerialUART.println();
 
   // ---- the ONE pasteable artefact ----------------------------------------
-  // A JointCal row in joint_cal.h's field order. This used to emit standalone
-  // `const float R_EFF = ...` declarations, which have not matched the storage
-  // schema since joint_cal.h existed: pasting them would not have compiled into
-  // anything the firmware actually reads.
+  // A JointCal row in joint_cal.h's field order.
   SerialUART.println(F("---- PASTE THIS ROW INTO joint_cal.h (replace the whole row) ----"));
   SerialUART.println(F("// fill in: id (MUST match the board label), board_sn, motor_sn, date, belt"));
   // id / serials are carried too, and on a mismatch they name the WRONG board.
@@ -1674,57 +1536,27 @@ void acVerifyZea() {
 // ===========================================================================
 // M2 ASSIST -- 'N'.  ABSOLUTE CURRENT-SENSE SCALE, bus-power ladder.
 //
-// WHAT IT DOES NOT DO: it does not compute anything. It holds the rotor still
-// at five known voltages, long enough for an EXTERNAL meter to settle, and
-// prints the current the firmware THINKS is flowing at each. You supply the
-// truth from the bus side. That asymmetry is the whole point -- no internal
-// check can see a current-sense gain error, because every internal cross-check
-// divides one wrongly-scaled current by another and gets the right answer.
+// Holds the rotor still at AC_M2_N known voltages, long enough for an EXTERNAL
+// meter to settle, and prints the current the firmware thinks is flowing. The
+// truth comes from the bus side: no internal check can see a current-sense
+// gain error.
 //
-// WHY THE BUS AND NOT A PHASE LEAD: at a locked rotor the phase currents are
-// DC, but how they split between the three phases depends on where the rotor
-// happened to stop, which is unknown. Bus power has no such ambiguity: nothing
-// moves, so every watt in comes out as heat, and the firmware claims that heat
-// is 1.5*I^2*R_eff. Compare its claim to the wall.
+// WHY THE BUS, NOT A PHASE LEAD: at a locked rotor the DC split between phases
+// depends on where the rotor stopped. Bus power has no such ambiguity: every
+// watt in is heat, which the firmware claims is 1.5*I^2*R.
 //
-// WHY FIVE POINTS AND NOT TWO -- this SUPERSEDES the two-point difference:
-// differencing removes the CONSTANT losses (MCU, gate drive, LEDs) but NOT the
-// terms proportional to I. Switching loss (~0.15 W at 3.1 A) and dead-time
-// body-diode conduction (~1.5*U0*I ~ 0.05 W) both survive it, and together they
-// are ~5% of the differenced signal -- the same size as the gain error being
-// hunted. A two-point difference would report g ~ 0.95 on a PERFECTLY
-// calibrated board. A ladder and a quadratic separate them:
+// WHY A LADDER, NOT A TWO-POINT DIFFERENCE: switching (~0.15 W at 3.1 A) and
+// dead-time (~1.5*U0*I) losses scale with I and survive a difference (~5% of
+// the signal). A quadratic separates them:
 //
 //     P_bus = a + b*I + c*I^2      a = housekeeping, b = switching + dead time
-//     g     = 1.5 * R / c          (fit OFFLINE -- see README section 20.1)
+//     g     = 1.5 * R / c          (fit OFFLINE -- CALIBRATION §20.1)
 //
-// USE THE LADDER'S OWN R, NOT A PHASE-3 R -- changed 2026-08-20. The R in that
-// formula must come from this run's own U_delivered-vs-I slope, over this run's
-// own current range, in this run's own thermal state. A cross-session phase 3
-// re-introduces exactly the drift the cold/hot bracket exists to bound, and
-// R_eff turns out to be current-range dependent by 1.0-1.6% anyway. The
-// self-fit formulation also removes the need for the phase-3 bypass clip.
-//
-// DOWNWARD ladder, same reason as phase 3: the lock is established at the
-// strongest hold first, so cogging never gets to win.
-//
-// EIGHT POINTS, 12 s EACH -- widened from five at 20 s on 2026-08-20, because
-// J02's SE(c) came in at 2.37% against J01's 0.66%, which is the difference
-// between a decisive result and a provisional one. A 3-parameter quadratic on
-// n = 5 has 2 degrees of freedom; n = 8 has 5.
-//   *** ARITHMETIC NOTE, so the next reader does not "fix" this back. *** The
-//   session write-up called for "7 points (add 0.62, 0.47, 0.32)". Five plus
-//   three is EIGHT, and 4 dof needs 7 -- the two halves of that instruction
-//   disagree. The three named voltages were taken, because they are the
-//   concrete half AND because the thermal arithmetic confirms them: the old
-//   ladder was 10.84 W-equivalent x 20 s = 217 J, the new one is 17.94 x 12 =
-//   215 J. Eight-at-twelve reproduces the old thermal load almost exactly,
-//   which is what "cap dwell at 12 s so total thermal load doesn't rise" means.
-//   Seven would come in under it.
-// The 12 s cap does double duty: point 1 was still HEATING through its 20 s
-// averaging window on both joints (drift -0.63% J01, -0.93% J02), smearing the
-// (I_reported, Ibus) pairing the whole fit rests on. A shorter window reduces
-// that smear, and 12 s is still long enough for a DMM to settle.
+// R is this run's OWN U_delivered-vs-I slope (same session, current range and
+// thermal state), not a phase-3 R. DOWNWARD ladder, as phase 3, so the lock
+// forms at the strongest hold. 8 points x 12 s: 5 degrees of freedom for the
+// quadratic, the same ~215 J thermal load as the old 5 x 20 s, and less
+// point-1 heating smear.
 // ===========================================================================
 const uint8_t  AC_M2_N          = 8;
 const float    AC_M2_V[AC_M2_N] = { 0.70f, 0.62f, 0.55f, 0.47f,
@@ -1735,12 +1567,7 @@ const uint16_t AC_M2_TICK_MS    = 2000;    // running-mean heartbeat
 
 static void acM2Assist() {
   if (!acReady()) return;
-  // The self-lock itself does not depend on the alignment -- velocityOpenloop()
-  // applies voltage at a fixed ELECTRICAL angle and the rotor pulls into it.
-  // The real requirement is comparability with the phase-3 sweep, which the fit
-  // is normalised against -- and phase 3 now accepts a stored ZEA too, so
-  // demanding a fresh phase 2 here would make M2 the last thing on the bench
-  // still forcing a re-alignment. Same gate as phase 3, for the same reason.
+  // Needs valid commutation only for comparability with phase 3 (same gate).
   if (!acHaveCommutation()) return;
 
   SerialUART.println(F("[M2] BUS-POWER LADDER.  Rotor self-locks -- HANDS OFF THE SHAFT."));
@@ -1801,13 +1628,9 @@ static void acM2Assist() {
     int32_t moved = acCntDelta(c0, encoder.raw);
     // Same split as M4: a clean CSV line, then a sentence.
     //     M2,<Uq>,<I_reported>,<n>,<drift_cnt>,<Vdma_mean>,<Vdma_n>
-    // Vdma APPENDED 2026-08-21 as trailing columns, so column-indexed offline
-    // fits of older M2 data keep working. It is the DMA path's bus reading,
-    // MEANED over the same dwell as I_reported, and it is here because this
-    // ladder is the one routine that already puts 0.66-2.97 A through the board
-    // with a meter on the terminals -- which makes it the H7 test.
-    // Vdma_n = 0 (and a nan mean) means the DMA buffer was never reachable, not
-    // 0 V. DIAGNOSTIC -- remove when the DMA offset has a named cause.
+    // Vdma (trailing columns) is the DMA bus reading meaned over the same dwell:
+    // with a meter on the pads this is the live-Vbus acceptance data (CONSTANTS
+    // §8.3). Vdma_n = 0 (nan mean) means the buffer was unreachable, not 0 V.
     const float vd_mean = vd_n ? (float)(vd_acc / vd_n) : (float)NAN;
     SerialUART.print(F("M2,")); SerialUART.print(AC_M2_V[k], 3);
     SerialUART.print(',');      SerialUART.print(n ? (float)(acc / n) : 0.0f, 4);
@@ -1836,43 +1659,20 @@ static void acM2Assist() {
 // ===========================================================================
 // M4 ASSIST -- 'B' forward / 'b' reverse.  BREAKAWAY (STATIC friction).
 //
-// The current at which a STATIONARY rotor first moves. This is NOT phase 5's
-// drag_c: that is friction while ALREADY MOVING (0.075 A on J01). Breakaway is
-// the threshold to GET moving, and it varies around the revolution because
-// cogging adds and subtracts. Belt-OFF it is far higher (J01 0.2923 vs 0.075 A).
-// Belt-ON it is NOT reliably higher: J01, -0.12 pulley, 2026-09-28, the MEAN of
-// 5x2 equalled drag_c (0.288 vs 0.291 A) with single readings 0.085-0.49 A
-// (BELT_DRIVE.md 22.5). An earlier version of this comment said "always
-// higher"; the belt-on measurement overrode it. It is the term that decides
-// whether impedance control feels alive or dead near zero commanded force --
-// belt-on it was 46% of standing leg load on A1, five times every other loss
-// combined.
-//
-// Nothing turns at the start. The rotor is still; the current rises until it
-// is not; 0.5 rad/s is only the threshold that counts as "it moved". (An
-// earlier description said "ramp Iq through zero at +-0.5 rad/s", which read as
-// though something should already be turning. It should not.)
-//
-// THE RAMP RATE IS THE MEASUREMENT. 0.005 A / 150 ms = 0.033 A/s, so breakaway
-// at 0.15 A takes ~4.5 s. Too fast and you measure the ramp, not the friction,
-// which is why this is firmware-timed rather than typed by hand -- the elapsed
-// time is reported so that failure is visible instead of assumed away.
+// The current at which a STATIONARY rotor first moves (0.5 rad/s counts as
+// moved). Not phase 5's drag_c, which is friction while already moving.
+// Belt-off it is far higher (J01 0.2923 vs 0.075 A); belt-on the mean ~=
+// drag_c. It varies around the revolution because cogging adds and subtracts.
+// THE RAMP RATE IS THE MEASUREMENT: 0.005 A / 150 ms = 0.033 A/s, firmware-timed.
 // ===========================================================================
 const float    AC_M4_STEP_A_rep    = 0.005f;   // A per step
 const uint16_t AC_M4_DWELL_MS  = 150;      // -> 0.033 A/s
 const float    AC_M4_MOVE_RADS = 0.5f;     // "it moved"
-// GIVE-UP LIMIT, and the WARN threshold below must stay strictly under it or it
-// can never fire -- the loop exits at i >= AC_M4_ABORT_A_rep, so a warning set AT
-// the abort value is unreachable. Raised 0.60 -> 0.80 so that the +5 sigma warn
-// point (0.60) is inside the range the ramp can actually reach and a legitimately
-// high reading gets RECORDED rather than reported as "NO MOTION". Thermally
-// free: 1.5 * 0.8^2 * 0.221 = 0.21 W.
+// GIVE-UP LIMIT. The WARN threshold below must stay strictly under it or it can
+// never fire (the loop exits at i >= abort). Thermally free: 0.21 W at 0.8 A.
 const float    AC_M4_ABORT_A_rep   = 0.80f;
-// Warn, do not abort. J01 belt-off: mean 0.2923, sd 0.0611 (the +-20.9% is the
-// PLANT -- grease redistribution -- not the method).
-//   0.40 A = +1.76 sigma -> fires on ~4% of HEALTHY readings. It DID fire, on a
-//            0.4050 A reading, and that false alarm cost a teardown detour.
-//   0.60 A = +5.04 sigma -> a real outlier.
+// Warn, do not abort: +5 sigma on J01 belt-off (mean 0.2923, sd 0.0611). 0.40 A
+// was +1.76 sigma and fired on healthy readings.
 const float    AC_M4_WARN_A_rep    = 0.60f;
 // Pre-slide creep indicator. J01 ran 107-146 counts; 200 is ~1.4x the worst
 // observed. See the note at the check itself for why TRAVEL and not elapsed time.
@@ -1939,25 +1739,15 @@ static void acM4Breakaway(float sgn) {
   SerialUART.print(',');       SerialUART.print(c0);
   SerialUART.print(',');       SerialUART.print(el/1000.0f, 2);
   SerialUART.print(',');       SerialUART.println(travel);
-  // Human-readable, separately. Mixing the two put "A at raw=" AFTER the count
-  // and printed the rotor position twice.
+  // Human-readable, separately.
   SerialUART.print(F("    breakaway ")); SerialUART.print(i, 4);
   SerialUART.print(F(" A at raw=")); SerialUART.print(c0);
   SerialUART.print(F("   ramp ")); SerialUART.print(el/1000.0f, 1);
   SerialUART.print(F(" s, travel ")); SerialUART.print(travel);
   SerialUART.println(F(" cnt"));
-  // ELAPSED TIME CARRIES NO INDEPENDENT INFORMATION and the old `el < 1000` test
-  // was dead code. The ramp is deterministic: el = (i / AC_M4_STEP_A_rep) *
-  // AC_M4_DWELL_MS = i * 30000 ms/A, so el < 1000 ms is just i < 0.0333 A. At
-  // J01's 0.2923 A the ramp takes 8.8 s and the test could never have fired.
-  //
-  // TRAVEL is the quantity that actually detects a too-slow ramp relative to the
-  // creep: the current keeps climbing throughout the pre-slide creep, so a long
-  // creep inflates the recorded breakaway. Direction of the bias is HIGH.
-  // Order of magnitude, with the assumption named because it is not measured:
-  // if the creep averages ~half the 0.5 rad/s detection threshold, 200 counts is
-  // ~0.31 s of creep and ~0.010 A of inflation. The creep SPEED is not recorded,
-  // so treat that as a scale, not a correction -- do not subtract it.
+  // TRAVEL, not elapsed time, flags a too-slow ramp: the current keeps rising
+  // through the pre-slide creep, so a long creep biases the reading HIGH (scale
+  // ~0.01 A per 200 counts; creep speed is not recorded, so do not subtract it).
   if (acAbs32(travel) > AC_M4_WARN_CNT) {
     SerialUART.print(F("    !! long pre-slide creep (")); SerialUART.print(travel);
     SerialUART.println(F(" cnt) -- reading is biased HIGH. Compare against the other positions."));
@@ -1994,8 +1784,7 @@ static void acStatus() {
     SerialUART.println();
   }
   SerialUART.println(F("  Any key aborts a running phase."));
-  // Belt-on use of 5 is B3 (drag only); 6's T/T_loop is invalid belt-on
-  // (BELT_DRIVE.md 22.1 Findings 2-3). The old line said 5 needed BELT OFF.
+  // Belt-on, 5 is B3 (drag only) and 6's T/T_loop is invalid (BELT_DRIVE §22.1).
   SerialUART.println(F("  FREE SHAFT is needed by 2, 5 and 6. Belt ON: 5 = drag only (Ke is"));
   SerialUART.println(F("      contaminated, never carry it); 6's T/T_loop is invalid."));
   SerialUART.println(F("  1, 3 are LOCKED-ROTOR and belt-agnostic. Leg links off throughout."));
@@ -2035,54 +1824,26 @@ void acPhase(uint8_t n) {
 // SWING LADDER -- key 'w'.  Manual-assist, NOT part of the 1..7 chain.
 // ===========================================================================
 // Separates the GEOMETRIC term (slack + mesh lost motion) from the ELASTIC term
-// by measuring swing at three currents instead of one:
+// by measuring the swing at AC_SW_N currents:
 //
 //     swing(I) = [slack + lost motion] + 2*F(I)/k_beltline
 //
-// The intercept is the geometric term with the elastic part removed RIGOROUSLY,
-// instead of by subtracting a fixed count using a stiffness measured at some
-// other operating point -- which is what the single-current swing has had to do
-// (51 counts at the ring-derived 370 kN/m, 2026-09-17). The slope is the
-// belt-line stiffness at the swing's own operating point.
+// Intercept = geometric term (friction-correct it with I_f: BELT_DRIVE §22.4.4);
+// slope = belt-line stiffness at the swing's own operating point. A firmware
+// command because the manual version is ~90 keystrokes of jogging.
 //
-// WHY THIS IS A FIRMWARE COMMAND AND NOT A KEYSTROKE PROCEDURE. The manual
-// version is: c, g, +x15, read, -x30, read, +x15. Three currents triples that to
-// ~90 keystrokes, each one a chance to mis-count a jog, and the 5 s settle has to
-// be timed by hand on all six legs. The failure it prevents is not hypothetical:
-// this campaign has already archived four ring captures believing two of them
-// were negative-going, and four dumps of which only three were unique.
-//
-// PRECONDITIONS, and they are not optional:
-//   * OUTPUT LOCKED (clamped or bonded). A free output measures nothing.
-//   * Valid alignment. This is FOC current; a wrong ZEA invalidates the torque.
-//   * Idlers in whatever state is being characterised -- RECORD IT. The number
-//     describes the plant actually fitted, not the one in the row.
-//
-// THERMAL: six legs x AC_SW_SETTLE_MS stalled, the 3 A pair costing ~2.9 W.
-// ~30 J total. Do not extend the settle without re-reading section 16.
+// PRECONDITIONS: output LOCKED (clamped); valid alignment (FOC current); record
+// the idler / pulley / belt state by hand -- the banner does not carry it.
+// THERMAL: under 1 W stalled at 1.6 A. Re-read HARDWARE §16 before extending
+// the settle.
 // ---------------------------------------------------------------------------
 const uint8_t  AC_SW_N            = 4;
-// LADDER CURRENTS -- lowered 1/2/3 -> 0.6/1.0/1.4 on 2026-09-19 by measurement,
-// not by caution. J02, slicer+boss pulley, NO IDLERS:
-//     1.0 A = 7.1 N of belt force  -> held clean, return error 13 counts
-//     2.0 A = 14.2 N               -> RATCHETED CONTINUOUSLY through the mesh,
-//                                     |Iq| sagging to 1.7-1.9 A on back-EMF,
-//                                     ending one tooth displaced
-// So the skip threshold is between 7.1 and 14.2 N with 3.1 teeth in mesh and a
-// slack belt. The top point is set at 1.4 A = 9.9 N, 30% below the current that
-// demonstrably skips. THIS CEILING IS PLANT-SPECIFIC: it will rise once idlers
-// are fitted and the belt is tensioned, and this array should be re-raised then
-// -- a wider span is strictly better for the slope (see below).
-// The bottom is 0.6 A = 2x J02's 0.2983 A breakaway, so the traverse is not
-// fighting stiction; going lower biases the swing short.
-// 1.6 A ADDED 2026-09-19 as a FOURTH point, not as a new top of three. 1.6 A =
-// 11.4 N, 80% of the 14.2 N that skipped -- thinner margin than the rest of the
-// ladder, so it is placed where losing it costs least: the ladder stops on skip,
-// so if 1.6 goes the three proven-clean points below it survive and the run is
-// still usable. Four points also buy 2 dof, which is what makes the curvature
-// visible in the residuals testable rather than merely apparent (the 3-point
-// runs of 2026-09-19 showed a reproducible +9/-18/+9, i.e. SOFTENING with load,
-// consistent with the ring test -- but with 1 dof that pattern is unfalsifiable).
+// LADDER CURRENTS, set by measurement on J02 with NO idlers: 1.0 A (7.1 N belt
+// force) held clean, 2.0 A (14.2 N) ratcheted. Top point 1.6 A (11.4 N); the
+// ladder stops on skip, so losing it keeps the three points below. Bottom
+// 0.6 A = 2x breakaway, so no traverse fights stiction. Four points give 2 dof
+// to test the curvature (the drive softens with load). Plant-specific: raise
+// through B10 once the tensioned skip threshold is known.
 const float    AC_SW_I_A_rep[AC_SW_N]   = { 0.6f, 1.0f, 1.4f, 1.6f };   // REPORTED amps
 // 5 s, not 1 s. ~10 counts of creep (15 um of belt) appear over the first ~4 s
 // at 2 A and then converge -- measured 2026-09-05. Reading early reads the creep.
@@ -2092,32 +1853,11 @@ const uint16_t AC_SW_TICK_MS      = 1000;   // settling heartbeat, so creep is v
 const int32_t  AC_SW_RETURN_CNT   = 25;
 
 // ---------------------------------------------------------------------------
-// FOUR LEGS, AND THE FIRST ONE IS THROWN AWAY. Corrected 2026-09-19.
-// ---------------------------------------------------------------------------
-// The 3-leg version (+, -, +ret) reported NOT REPEATABLE on 5 of 6 points across
-// two runs -- and it was right to, but the fault was here, not in the plant.
-// Each point takes its reference wherever the PREVIOUS point left the plant,
-// which is at that point's PLUS limit. So the first + leg of every point after
-// the first barely moves and never completes a traverse:
-//
-//     point        first + leg moved      return error
-//     0.6 A        359 / 179 counts       +6  / +9      <- real traverse
-//     1.0 A         28 /  28              +30 / +31     <- no traverse
-//     1.4 A         24 /  25              +37 / +37     <- no traverse
-//
-// The two runs agreed to +-1 count on those errors, so this was systematic, not
-// noise. A swing is the peak-to-peak of a HYSTERESIS LOOP: both limits have to
-// be reached by a full traverse or they are not the same loop. The old
-// swing = |cp - cm| was therefore biased LOW, and progressively so with current,
-// which drags the slope down and pushes the intercept up (287/576 measured,
-// against 324/564 from the matched pair).
-//
-// So: leg 1 CONDITIONS the plant and is discarded; legs 2, 3, 4 are all full
-// traverses and are the measurement. Two independent swings come out of them,
-// and their disagreement is a real repeatability figure instead of an artefact.
-// Cost: 5 s per point. Worth it -- once the idlers go in and the swing collapses
-// to lost motion alone (150-400 counts predicted), a 37-count bias would be
-// 10-25% of the entire signal.
+// FOUR LEGS, AND THE FIRST IS THROWN AWAY. A swing is the peak-to-peak of a
+// HYSTERESIS LOOP: both limits must be reached by a full traverse. Each point
+// starts where the previous one left the plant (its PLUS limit), so leg 1 only
+// CONDITIONS; legs 2-4 are full traverses and give two swings plus a
+// repeatability figure (m2 - m1).
 // ---------------------------------------------------------------------------
 
 // Re-reading the same leg is what turns "it moved" into "it skipped". A return
@@ -2160,9 +1900,7 @@ static void acSwingLadder() {
     SerialUART.println(F("         phase 2. The swing is FOC current -- a wrong ZEA invalidates it."));
     return;
   }
-  // Printed FROM AC_SW_I_A_rep, not typed: a literal "1/2/3 A" here survived the
-  // 2026-09-19 change to 0.6/1.0/1.4/1.6 A and put the wrong currents in every
-  // ladder log until 2026-09-28.
+  // Printed FROM AC_SW_I_A_rep, never typed, so the banner cannot drift from it.
   SerialUART.print(F("[SWING] ladder"));
   for (uint8_t k = 0; k < AC_SW_N; k++) {
     SerialUART.print(k ? '/' : ' ');
@@ -2213,8 +1951,7 @@ static void acSwingLadder() {
     const int32_t rep   = m2 - m1;            // 0 = the plant came back exactly
     const bool    good  = (acAbs32(rep) <= AC_SW_RETURN_CNT);
     // Machine-readable, alone on its line and fully comma-delimited, so a whole
-    // session pastes straight into docs/cal/*.csv. SCHEMA CHANGED 2026-09-19 --
-    // the old 7-field row carried a conditioning leg as if it were a limit:
+    // session pastes straight into docs/cal/*.csv:
     //     SW,<amps>,<minus1>,<plus>,<minus2>,<swing_a>,<swing_b>,<swing>,<repeat>
     SerialUART.print(F("SW,")); SerialUART.print(amps, 2);
     SerialUART.print(',');      SerialUART.print(m1);
@@ -2230,15 +1967,11 @@ static void acSwingLadder() {
     SerialUART.println(good ? F("  OK") : F("  !! NOT REPEATABLE"));
     const bool skipped = acSwTeeth(rep);
     if (good) { sw_x[n_ok] = amps; sw_y[n_ok] = (float)swing; n_ok++; }
-    // STOP CLIMBING once the mesh has let go. Every higher point would skip too,
-    // and worse, the plant has MOVED -- the belt is now sitting one tooth over,
-    // so the remaining points would not even be measuring the same assembly.
-    // Found the hard way 2026-09-19: the 2 A point ratcheted and the 3 A point
-    // had to be aborted by hand while the shaft was still spinning at 72 rad/s.
+    // STOP on a skip: higher points would skip too, and the belt has moved a
+    // tooth, so later points would measure a different assembly.
     if (skipped) {
-      // Blank line as its own println: a "\n" inside F() has now been mangled
-      // three times by the edit path (claude.md, the standing grep rule). Not
-      // worth re-escaping something that can just be a separate call.
+      // A separate println rather than a newline escape inside F(): escapes have
+      // been mangled by the edit path before (CLAUDE.md grep rule).
       SerialUART.println();
       SerialUART.print(F("  LADDER STOPPED at ")); SerialUART.print(amps, 2);
       SerialUART.println(F(" A -- the mesh let go. Higher points are not measurable"));
@@ -2280,12 +2013,9 @@ static void acSwingLadder() {
   // A FEEDBACK-direction crossing of the torque boundary (measured A_rep -> force),
   // so it goes through irepToTorqueOut() like any other -- joint_cal.h.
   //
-  // TWO numbers, on purpose. Every k archived before 2026-10-01 (BELT_DRIVE
-  // 22.5 / 22.6, e.g. recipe B's 64.7) was computed as calKt() * I_reported,
-  // which is the true value TIMES i_scale (3.9% low on J01). Printing only the
-  // true k would make the same plant read 3.9% stiffer than its own archive.
-  // Compare against the archive with the "archive conv." figure; quote physics
-  // with the true one.
+  // Two numbers: k archived before 2026-10-01 was computed as calKt() * I_rep,
+  // i.e. true k x i_scale. Compare with the archive using the second figure;
+  // quote physics with the true one.
   const float F_per_A = irepToTorqueOut(1.0f) / GEAR_RATIO
                         / (R_PINION_MM * 1e-3f);                   // N (true) per A_rep
   const float slope_m = slope * BELT_MM_PER_COUNT * 1e-3f;         // m per A_rep
