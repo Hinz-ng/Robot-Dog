@@ -16,7 +16,7 @@ drivetrain health. Per-joint values live in `src/joint_cal.h`; fleet values in
 | A1 | `M-ABZ-01` on `B-ABZ-01`, ABZ encoder | historical: rubbing encoder magnet contaminated every friction number (`drag_c` 1.05 A, "4.5 N / 46%"). Not used; voltage-derived numbers 1.89% low |
 | **J01** (= A2) | `B-SPI-01`, MT6816 SPI | reference actuator, belt on (recipe B) |
 | **J02** (= rebuilt A1) | `M-ABZ-01` on `B-ABZ-01`, MT6816 SPI | belt on (SCB pulley). ESC board failed after P8; its MT6816 board found dead 2026-10-08 (MISO stuck low) and replaced, so its stored `zea`/`dir` belong to the old encoder |
-| J03 | — | belt-off baseline done except Tier-0 UID |
+| J03 | board_3 + motor_2 | belt-off baseline complete (2026-10-10) |
 
 `zea` and `dir` never transfer between joints. `R_eff`, `U0`, `Ke`, `L`, `vbus_scale`, `i_scale`
 are per board (§21).
