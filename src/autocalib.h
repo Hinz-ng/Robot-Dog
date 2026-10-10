@@ -548,7 +548,8 @@ static void acP1() {
 // ===========================================================================
 static void acP2() {
   if (!acNeed(1)) return;
-  SerialUART.println(F("[2] ALIGN  (expect AC_ALIGN_N twitches)"));
+  SerialUART.print(F("[2] ALIGN  (")); SerialUART.print(AC_ALIGN_N);
+  SerialUART.println(F(" twitches)"));
   acEnter();
   static float z[AC_ALIGN_N];
   uint8_t n = 0; int8_t dirsum = 0;
