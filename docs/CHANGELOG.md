@@ -7,6 +7,11 @@ Detail and data live in the section docs; this file is the index of changes.
 
 ---
 
+## 2026-10-10 (bench) — J01 idle current; logic-supply heat closed
+
+- J01 idle 59.6 mA (3S) / 39.3 mA (6S), ST-LINK USB unplugged +4.8 mA → board is constant-power; J01 not degraded
+  (+1.7 mA at 12.28 V). Hot corner = 78L05 on the 9.5 V gate rail, ~0.22 W, design property; no heatsink (HARDWARE §16a).
+
 ## 2026-10-10 — docs
 
 - Engineering hub moved `README.md` → `docs/README.md` (section numbers unchanged); root `README.md` is now the public overview.

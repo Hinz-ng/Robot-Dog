@@ -1,7 +1,7 @@
 # Hardware, board truths, tooling, thermal
 
 §1 hardware · §1a assemblies · §2 clone vs genuine · §2a vendor documentation · §3 board pin
-truths · §14 ST tooling · §16 thermal. CAN hardware: [`CAN_BRINGUP.md`](CAN_BRINGUP.md) §23.
+truths · §14 ST tooling · §16 thermal · §16a logic supply and idle current. CAN hardware: [`CAN_BRINGUP.md`](CAN_BRINGUP.md) §23.
 
 *Hub: [`README.md`](README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
 
@@ -213,3 +213,54 @@ into circular DMA (16-bit, right-aligned): ADC1 buffer `0x2000050A` (5 elements)
   vendor's sign); the earlier falling pair was cross-session through `analogRead` and is suspect.
   Close it with one continuous run at 1.5 A for 2 min watching PB14 (§24.8). Read it from the DMA
   buffer (rank 4); `analogRead()` is forbidden after `currentSense.init()` (§12).
+
+### 16a. Logic supply and idle current (J01, 2026-10-10)
+
+**Power tree.** Markings read from photos; only the 9.5 V gate rail is measured (3S, 2026-07-22, §2).
+
+```
+7V~48V ─ buck ("CHGDVB" 8-pin + 22 µH "220") ─ gate rail 9.5 V (K36 node)
+           ├─ EG2124A VCC (3× K36 = bootstrap diodes)
+           └─ 78L05 (SOT-89) ─ 5 V: SIT1042, 5V pads          [fed from gate rail: inferred]
+                 └─ "L352" (SOT-23-5, no inductor = LDO) ─ 3.3 V: G431, LEDs, 3V pads   [inferred]
+```
+
+The 78L05 is not on the bus: at 6S the whole board draws 39.3 mA, below the ~45–55 mA a 5 V / 3.3 V
+tree of these parts needs (datasheet typicals, not measured). Settled by one reading: 78L05 input
+pin on 6S, probe one pin at a time.
+
+**Idle current**, motor disabled, UT89X 600 mA in series. V_pads = V_pack − I × 2.30 Ω (J03 M2 fit).
+
+| Pack (open circuit) | ST-LINK USB | I_idle | V_pads | P_in |
+|---|---|---|---|---|
+| 3S 11.89 V | plugged | 59.6 mA | 11.75 V | 0.700 W |
+| 3S 11.89 V | unplugged | 64.4 mA | 11.74 V | — |
+| 6S 22.70 V | plugged | 39.3 mA | 22.61 V | 0.889 W |
+
+- 6S/3S current ratio 0.66 (constant power 0.52, linear 1.00) → the board is a mostly
+  constant-power load: I ∝ V^−0.64, −3.1 mA/V at 12 V. Normalise: `I_ref = I · (V_ref / V_pads)^−0.64`.
+  Valid while the buck regulates. The 9.5 V rail on 3S suggests it does there; the K36 node on 6S
+  confirms it. If it does not, the 3S slope is ~0 and J01's delta below is +3.3 mA (still ≤ 40 mW).
+- **Unplugging the ST-LINK USB adds 4.8 mA** (the board powers part of the ST-LINK). Record the USB
+  state and the pad voltage with every idle reading.
+
+**Normalised to 12.28 V** (J01's August reading as measured; its banner said 12.22):
+
+| Board | Date | mA at 12.28 V | ST-LINK USB |
+|---|---|---|---|
+| J01 | 2026-08-20 | 56.3 | not recorded |
+| J02 | 2026-08-20 | 56.8 | not recorded |
+| J03 | 2026-10-09 | 54.0 | not recorded |
+| J01 | 2026-10-10 | **58.0 — J01 reference** | plugged |
+| J01 | 2026-10-10 | 62.6 | unplugged |
+
+J01 vs August: +1.7 mA if August was plugged, +6.3 mA if not; ≤ 75 mW either way, so it cannot cause
+the hot corner. Gate at milestone close (USB plugged, pads measured): **≤ 61 mA at 12.28 V; > 61 = a
+new idle load, look for a warm part.**
+
+**Hot corner = the 78L05, by design.** ≈ (9.5 − 5) V × ~50 mA ≈ 0.22 W in SOT-89 (θ_JA ~125–225 K/W,
+typical, not measured) → +28–50 K. The L352 dissipates ≈ 0.07 W. The rail is regulated, so the
+dissipation does not depend on pack voltage, and it is the same on every board. **No heatsink:** a
+SOT-89 sheds heat through its tab into the copper, and bare aluminium beside fine-pitch pads is a
+short risk. Promote when the electronics bay is sealed or has no airflow, or a board resets when
+hot: first measure the 78L05 input pin and the K36 node on the robot pack.

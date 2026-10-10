@@ -98,7 +98,7 @@ Wire this **before powering up**, and leave it in place for all of Step 4. The c
 
 **Reading:** Ibus falls point by point, **~337 → ~81 mA** (§20.1 burden column). At each point let the reading settle, then write **Ibus to 0.1 mA** (e.g. `336.8`) and **Vbus** (pads) beside that point's `M2,` line, then press any key. The firmware auto-advances after 12 s, so read within that window.
 
-1. Gate: banner vs meter **±0.03 V**, else reboot. With the ammeter in, the pads sit ~0.06 V under the banner at idle (J03: 11.80 vs 11.86), because boot draws less current; that is expected. If in doubt, check without the ammeter first.
+1. Gate: banner vs meter **±0.03 V**, else reboot. With the ammeter in, the pads sit ~0.06 V under the banner at idle (J03: 11.80 vs 11.86), because boot draws less current; that is expected. If in doubt, check without the ammeter first. Write the idle Ibus and whether the ST-LINK USB is plugged (unplugged adds 4.8 mA; HARDWARE §16a).
 2. `1`, `2`, `3` → **cold `R_eff`**.
 3. `N`: at each of 8 points, record **Vbus** and **Ibus to 0.1 mA**, then any key (auto-advances at 12 s).
 4. `3` again at once → **hot `R_eff`**.

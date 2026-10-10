@@ -89,7 +89,7 @@ Absolute Ibus assumes ~1 W housekeeping; the **span (230–280 mA)** is what mat
 
 | | Check against | J01 2026-08-20 |
 |---|---|---|
-| `a` | idle current × V_seed + ~0.10–0.12 W PWM ripple loss | 0.803 W vs 0.688 + ~0.12 |
+| `a` | idle current (ST-LINK USB plugged; unplugged adds 4.8 mA, HARDWARE §16a) × V_seed + ~0.10–0.12 W PWM ripple loss | 0.803 W vs 0.688 + ~0.12 |
 | `b` | ≈ 1.5·U0 W/A | +0.035 vs 0.020 |
 | U0 self-fit | phase-3 cold U0, ±0.003 V | 0.01350 vs 0.01686 |
 
