@@ -70,7 +70,7 @@ Every power-up:
 
 **Keys:** `g` go · `x`/`s` stop · `+`/`-` target · `o` open-loop · `t` torque(V) · `c` torque(I) ·
 `v` velocity · `f` align · `F` force fresh alignment · `V` verify stored ZEA · `e` encoder self-test
-(2000 reads; FAILs on all-zero frames) · `E` encoder monitor, continuous · `l`/`L` burst capture
+(20000 reads; FAILs on all-zero frames) · `E` encoder monitor, continuous · `l`/`L` burst capture
 fast/slow · `k` step + capture positive · `K` negative · `j` zero-based step · `d` dump · `a` stats ·
 `q` print interval · `p` VBUS/ADC register dump (read-only, motor disabled) · `?` help.
 

@@ -50,7 +50,7 @@ Back to ~12 V for the rest.
 
 ## Step 2: encoder (2 min)
 
-Press `e`: parity **0/2000**, `no_mag` **0**. Then `E` and **turn one full revolution**: `perr=0`, and some window shows `span=16383`. (`HIT` flags are expected while turning.)
+Press `e`: parity **0/20000**, `no_mag` **0**. Then `E` and **turn one full revolution**: `perr=0`, and some window shows `span=16383`. (`HIT` flags are expected while turning.)
 
 > ⚠ **`e` alone is not a pass.** A chip that never drives MISO returns all-zero frames, which pass parity and `no_mag` while `raw` sits at 0 (J03, 2026-10-08).
 
