@@ -47,8 +47,8 @@ bring-up (§23) · N0–N6 CAN-T0 ladder · D/O deferred items and observations 
 ## 15. Status and roadmap
 
 **Binding milestone:** MIT contract over CAN on two joints (CAN-T0), then the leg.
-**Now:** J01 belt-on and fully characterised (B12 closed 2026-10-03); CAN-T0 N0–N4 passed on J01;
-J03 belt-off baseline complete. **Next: N5/N6 (J01 + J03 on one bus).**
+**Now:** J01 fully characterised belt-on (B12 closed 2026-10-03), belt off since 2026-10-10 (bare
+motor); CAN-T0 N0–N4 closed on J01 (2026-10-10); J03 belt-off baseline complete. **Next: N5/N6 (J01 + J03 on one bus).**
 
 ### Closed
 
@@ -70,8 +70,7 @@ J03 belt-off baseline complete. **Next: N5/N6 (J01 + J03 on one bus).**
 
 | # | Task | Blocked by | Status |
 |---|---|---|---|
-| **CAN-T0** | **MIT contract over CAN, ESP32 ↔ J01 + J03** (branch `can-t0`) | — | 🟡 **N0–N4 passed on J01, 2026-10-04/06.** N1 0 bus errors, 1 late reply in 65k polls (status-print latency); one motor rev CW = −0.6998 rad. N2 all four refusals. N3 v +1.168 / −1.121 rad/s, step rest error 0.6 / 0.3 mrad, armed lps 11.5–12.2 k, 0 misses armed. N4 HOLD/DAMP/resume, cable pull, ESTOP, phone STOP, master reboot, phone dead-man. Current-sense align changes nothing on J01 (gains = constructor −36.458333) → evidence for `skip_align` at leg boot. Tier 0 refuses/trips on all-zero encoder frames. **Next: N5/N6.** Tier 0 `-e T0_J01/T0_J03`; master `pio run -d master`, operated from the phone (WiFi `LegMaster`, http://192.168.4.1); contract `contract/` (v0, not frozen). Bus: J01 and J03 keep R22 at the two ends, ESP32 breakout (jumper OFF) on a short mid stub, ≈ 60.5 Ω unpowered. Plan: `C:\Users\ACER\.claude\plans\read-the-attached-context-synchronous-aho.md` until §23.11 is written |
-| N4d | Watchdog/HardFault test and the DAMP refused-resume branch | — | ⏸ before the first armed run with links on |
+| **CAN-T0** | **MIT contract over CAN, ESP32 ↔ J01 + J03** (branch `can-t0`) | — | 🟡 **N0–N4 closed on J01, 2026-10-04/06/10.** N1 0 bus errors, 1 late reply in 65k polls (status-print latency); one motor rev CW = −0.6998 rad. N2 all four refusals. N3 v +1.168 / −1.121 rad/s, step rest error 0.6 / 0.3 mrad, armed lps 11.5–12.2 k, 0 misses armed. N4 HOLD/DAMP/resume, cable pull, ESTOP, phone STOP, master reboot, phone dead-man. N4d (bare motor): resume with p_des 0.199 rad off → 59 refusals, CMD_TIMEOUT at 500 ms; hang and HardFault builds → master LOST → IWDG reset → reboots disarmed. Current-sense align changes nothing on J01 (gains = constructor −36.458333) → evidence for `skip_align` at leg boot. Tier 0 refuses/trips on all-zero encoder frames. **Next: N5/N6.** Tier 0 `-e T0_J01/T0_J03`; master `pio run -d master`, operated from the phone (WiFi `LegMaster`, http://192.168.4.1); contract `contract/` (v0, not frozen). Bus: J01 and J03 keep R22 at the two ends, ESP32 breakout (jumper OFF) on a short mid stub, ≈ 60.5 Ω unpowered. Plan: `C:\Users\ACER\.claude\plans\read-the-attached-context-synchronous-aho.md` until §23.11 is written |
 | 7l | Output position: homing or a known boot pose (MT6816 is absolute over one motor turn = 40° of output) | — | ⏸ before the contract freezes and before the leg. Then set per-joint P travel limits (now ±2π) |
 | B10 | Tooth-skip threshold (static lever + spring gauge) | — | ⏸ before any command above 1.6 A and before the leg; raises the envelope (≥ 6% below demonstrated-safe current) |
 | — | CAN message spec + RL observation/action vector: frame IDs, packing and scaling, poll schedule | — | ⏸ freeze together (§23.6) |
