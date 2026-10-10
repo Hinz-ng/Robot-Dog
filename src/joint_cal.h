@@ -614,14 +614,22 @@ const JointCal JOINTS[] = {
   //   24.14b, whose alternative moves J02's Ke TOWARD this value. J03's own
   //   Ke is therefore stored. Magnet temperature (phase 5 runs after the
   //   locked phases) may account for part of it.
+  // J03 M2 2026-10-09 -- i_scale 0.9797 +-1.73%, 1.2 sigma from 1.0 -> PROVISIONAL
+  //   (as J02). Self-fit R 0.21609, c 0.33086; a, b, U0 checks all pass.
+  //   Ibus read to 1 mA (0.71% of the budget); Vterm at pts 1-2 extrapolated
+  //   from the meter's own 2.30-ohm line. docs/cal/J03/J03_M2.csv.
+  // J03 M4 2026-10-10 -- breakaway 0.2545 A reported, n=10, sd 0.078 (31%),
+  //   SE 9.7%; fwd 0.243 / rev 0.266. Bare motor, so compare motor-alone:
+  //   J02 (same motor_2) 0.2983 +-8.7%, -15%, 1.2 sigma -- not distinguishable.
+  //   In true amps 0.2598 A (/0.9797). docs/cal/J03/J03_M4.txt.
   { "J03", "board_3", "motor_2", "2026-10-08", "OFF",
      0.3866f, +1, 0.23068f,        // zea, dir, R_eff
      0.01919f,                     // U0
      0.017900f, 45.75e-6f,         // Ke, L   (Kt = calKt() = 0.026850)
-     0.008357f, 1.0000f,           // vbus_scale (M1 2026-10-08), i_scale PENDING M2
+     0.008357f, 0.9797f,           // vbus_scale (M1 2026-10-08), i_scale (M2 2026-10-09, PROVISIONAL)
      0.0935f, 0.1058f,             // drag_c fwd, rev   (reported A, belt OFF, bare motor)
      0.001143f, 0.000713f,         // drag_v fwd, rev
-     0.0000f },                    // breakaway_A  PENDING M4
+     0.2545f },                    // breakaway_A  (M4 2026-10-10, bare motor)
   { "J04", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
   { "J05", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
