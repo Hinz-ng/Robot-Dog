@@ -98,7 +98,7 @@ enum CanFault : uint8_t {
   CAN_FAULT_P_ENVELOPE     = 4,
   CAN_FAULT_ESTOP          = 5,   // 0x000 received
   CAN_FAULT_LOCAL_STOP     = 6,   // Tier-0 console 'x'
-  CAN_FAULT_ENCODER        = 7,   // MT6816 No_Mag
+  CAN_FAULT_ENCODER        = 7,   // MT6816 No_Mag, or all-zero frames (dead MISO)
 };
 
 // Command phase while armed (STATE status bits 1-2). See tier0_config.h.

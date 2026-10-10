@@ -16,12 +16,13 @@
 //   * ADMIN: IDENT / ARM / DISARM / ZERO / CLEAR_FAULT, with refusals.
 //   * Command timeout HOLD -> DAMP -> DISABLE, checked EVERY loop on the local
 //     clock (owner-approved 2026-10-03; tier0_config.h has the numbers).
-//   * Guards: overspeed, sense mismatch (harness copy), |p| envelope, No_Mag.
+//   * Guards: overspeed, sense mismatch (harness copy), |p| envelope, No_Mag,
+//     all-zero encoder frames (dead MISO; T0_ENC_ZERO_MS).
 //   * A non-blocking console that queues nothing while armed (t0_console.h).
 //
 // NEW stopMotor() CALL SITES -- the design-review list (CLAUDE.md "single
 // safety path"): CAN ESTOP, CAN DISARM, command timeout, overspeed, sense
-// mismatch, p envelope, encoder No_Mag, console 'x'. All go through t0Stop()
+// mismatch, p envelope, encoder No_Mag / all-zero frames, console 'x'. All go through t0Stop()
 // or stopMotor() directly; none touches the driver itself.
 //
 // Tier 0 NEVER ALIGNS. A row without zea/dir/Ke/R_eff cannot arm, ever --
@@ -76,6 +77,7 @@ static uint8_t       t0_phase = CAN_PHASE_LIVE;
 static uint8_t       t0_fault = CAN_FAULT_NONE;   // latched until CLEAR_FAULT
 static bool          t0_clamped = false;      // a clamp bound since the last STATE
 static float         t0_tau_law = 0.0f;
+static uint32_t      t0_enc_live_ms = 0;      // millis() of the last encoder frame that was not 0x0000
 
 // ---- counters (console status; reset at boot) ----
 static uint32_t t0_n_cmd = 0, t0_n_rej = 0, t0_n_admin = 0, t0_n_admin_bad = 0;
@@ -88,6 +90,9 @@ static T0ConOut con;                          // ALL post-setup text goes here
 
 static inline int8_t t0Dir()   { return (int8_t)motor.sensor_direction; }
 static inline float  t0P()     { return mitEstP(t0_est, t0Dir()); }
+// No non-zero encoder frame for T0_ENC_ZERO_MS: dead MISO, or a live rotor at
+// exactly count 0 (tier0_config.h says why these cannot be told apart).
+static inline bool   t0EncZeroStuck(uint32_t now) { return now - t0_enc_live_ms >= T0_ENC_ZERO_MS; }
 
 // ---------------------------------------------------------------------------
 // The one way Tier 0 stops the motor for a FAULT: the single disable path plus
@@ -157,6 +162,7 @@ static bool t0TryArm(uint8_t version) {
   if (!t0_uid_ok)                      return t0Refuse(F("board UID does not match JOINT_UID[] -- wrong board or not recorded"));
   if (!t0_foc_ready)                   return t0Refuse(F("initFOC failed"));
   if (encoder.no_mag)                  return t0Refuse(F("encoder No_Mag"));
+  if (t0EncZeroStuck(millis()))        return t0Refuse(F("encoder frames all zero -- MISO dead, or rotor at exactly count 0: turn the shaft a few degrees"));
   if (fabsf(t0P()) > T0_P_ABS_MAX_RAD) return t0Refuse(F("|p| outside envelope -- ZERO first"));
 
   // "Torque modes arm at zero": p_des = p, every gain zero -> tau = 0 until a
@@ -268,6 +274,7 @@ static void t0Armed() {
       fabsf(v) * GEAR_RATIO > T0_OVERSPEED_MOTOR_RADS) { t0Stop(CAN_FAULT_OVERSPEED, "OVERSPEED"); return; }
   if (fabsf(p) > T0_P_ABS_MAX_RAD)                   { t0Stop(CAN_FAULT_P_ENVELOPE, "P ENVELOPE"); return; }
   if (encoder.no_mag)                                { t0Stop(CAN_FAULT_ENCODER, "ENCODER No_Mag"); return; }
+  if (t0EncZeroStuck(now))                           { t0Stop(CAN_FAULT_ENCODER, "ENCODER all-zero frames"); return; }
   // Sense mismatch -- open_test.cpp's loop() guard, verbatim in logic: raw
   // (unsynchronised) |I| far above sqrt(3/2)|Iq| for ~20 ms means the dq
   // feedback has collapsed and the loop is winding to the rail.
@@ -335,6 +342,7 @@ static void t0PrintStatus() {
   con.print(F(" rdy=")); con.print(t0_uid_ok); con.print(t0_calibrated); con.print(can_up);
   con.print(t0_foc_ready); con.print(t0_cs_linked); con.print(t0_selftest_ok);
   con.print(F(" p=")); con.print(t0P(), 4);
+  con.print(F(" enc0=")); con.print(t0EncZeroStuck(now) ? 1 : 0);
   con.print(F(" v=")); con.print(t0_est.v_out_rads, 3);
   con.print(F(" cmd=")); con.print(t0_n_cmd);
   con.print(F(" rej=")); con.print(t0_n_rej);
@@ -541,6 +549,7 @@ static void t0Setup() {
 static void t0Loop() {
   motor.loopFOC();                               // refreshes the encoder even disarmed
   t0_loops++;
+  if (encoder.zero_run == 0) t0_enc_live_ms = millis();
 
   const uint32_t c0 = DWT->CYCCNT;
   const float dt = (float)(uint32_t)(c0 - t0_cyc_prev) * t0_s_per_cyc;

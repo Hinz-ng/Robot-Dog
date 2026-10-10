@@ -104,6 +104,17 @@ const float    T0_GUARD_FLOOR_A_rep = 3.0f;
 // Position envelope relative to the session zero: the CAN packing range.
 // Joint limits for the leg belong to the master (it owns geometry).
 const float    T0_P_ABS_MAX_RAD = 6.2832f;
+// Encoder link: all-zero frames for this long = dead/stuck-low MISO (mt6816.h
+// zero_run). Refuses ARM; trips an armed joint (CAN_FAULT_ENCODER).
+// AMBIGUOUS BY CONSTRUCTION: a LIVE encoder parked at exactly count 0 sends the
+// same word and does not jitter at rest ('e' passes only at span 0), so 1 rotor
+// position in 16384 reads as dead. Disarmed that costs a refused ARM (turn the
+// shaft a few degrees). Armed it would be a false trip IF the held rotor shows
+// no count jitter for the whole window -- NOT YET MEASURED (check: hold armed
+// with the shaft on raw 0 for 10 s; any trip = jitter-free hold). A missed dead line costs a frozen commutation
+// vector, bounded by the 1.6 A_rep envelope, so the window can be long: 200 ms
+// is ~2400 armed loops, and harm over it is bounded, not growing.
+const uint32_t T0_ENC_ZERO_MS = 200;
 
 // ---- HANG PROTECTION (owner addition 1) ----
 // IWDG on LSI (~32 kHz, spec 29.5-34 kHz): prescaler /4 -> 8 kHz tick.

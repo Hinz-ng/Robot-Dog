@@ -143,6 +143,16 @@ public:
     if (p & 1) { spi_err++; return false; }          // ODD -> corrupted frame
     raw     = (uint16_t)(((uint16_t)d03 << 6) | (d04 >> 2));   // 14 bits
     no_mag  = (d04 >> 1) & 1;
+    // ALL-ZERO FRAME. 0x0000 has even parity and No_Mag = 0, so a chip that
+    // never drives MISO reads as a perfect magnet parked at count 0 -- 'e'
+    // printed PASS on exactly that (J03, 2026-10-08). The mirror case, MISO
+    // stuck HIGH, is 0xFFFF: also even parity, but No_Mag = 1, so it is caught.
+    // The driver only COUNTS; callers decide, because a live chip parked at
+    // exactly count 0 sends the same word and does not jitter at rest.
+    // Untouched on a parity failure: a failed frame toggled bits, but it is
+    // not evidence either way about the angle.
+    if (word == 0) { if (zero_run != UINT32_MAX) zero_run++; }
+    else           zero_run = 0;
     spi_ok++;
     return true;
   }
@@ -183,6 +193,7 @@ public:
   uint32_t spi_ok     = 0;
   uint32_t spi_err    = 0;
   uint32_t spi_jump   = 0;
+  uint32_t zero_run   = 0;      // consecutive parity-passing 0x0000 frames (see readAngleRaw)
 
 private:
   float   last_ok_rad = 0.0f;
