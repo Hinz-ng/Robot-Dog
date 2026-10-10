@@ -7,6 +7,10 @@ Detail and data live in the section docs; this file is the index of changes.
 
 ---
 
+## 2026-10-10 — docs
+
+- Engineering hub moved `README.md` → `docs/README.md` (section numbers unchanged); root `README.md` is now the public overview.
+
 ## 2026-10-03 — b1 PASS; B12 CLOSED
 
 - b1 (BELT_DRIVE §22.7.16): clamped output, kp 41, overshoot 35 → 9.5% (ζ 0.31 → 0.60) for kd 0 → 0.365. Output stiffness
