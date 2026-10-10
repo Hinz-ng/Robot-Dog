@@ -83,7 +83,6 @@ motor); CAN-T0 N0–N4 closed on J01 (2026-10-10); J03 belt-off baseline complet
 | 2b | Read the ESC1 silkscreen version (V1.0 or V2.0) — §24.7 | — | 🟡 2 min |
 | M1b | One sitting: banner vs UT89X on J01 and J02 back to back; the J01↔J02 `Ke` gap should come back at 0.87% (CONSTANTS §8.1b) | J02 board | ⏸ low priority |
 | M2b | Re-run M2 on J02 | — | ⏸ only if something needs sub-1% torque accuracy |
-| — | **Raw cal data not in git:** `.gitignore` `cal*` ignores `docs/CALIBRATION.md` and most of `docs/cal/` (J01, J02, J03 autocalib CSVs, `pulley acceptance/`) | decision | 🔴 narrow the pattern, or `git add -f` them |
 | — | 12-board termination rework (§23.2) | first bus with > 2 ESC1s | ⏸ |
 | — | 478 mm apex mass question (§17) | — | ⏸ before the controller energy budget |
 

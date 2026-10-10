@@ -10,6 +10,7 @@ Detail and data live in the section docs; this file is the index of changes.
 ## 2026-10-10 — docs
 
 - Engineering hub moved `README.md` → `docs/README.md` (section numbers unchanged); root `README.md` is now the public overview.
+- `.gitignore` `cal*` → `/docs/cal/*` (README and BELT_OFF_BASELINE excepted): raw cal data stays local, `docs/CALIBRATION.md` now tracked.
 
 ## 2026-10-03 — b1 PASS; B12 CLOSED
 

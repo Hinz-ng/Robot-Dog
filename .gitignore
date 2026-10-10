@@ -4,7 +4,11 @@
 .vscode/launch.json
 .vscode/ipch
 
-cal*
+# Raw calibration data stays local. Anchored to docs/cal/ so it no longer
+# catches docs/CALIBRATION.md (core.ignorecase makes cal* match it).
+/docs/cal/*
+!/docs/cal/README.md
+!/docs/cal/BELT_OFF_BASELINE.md
 
 *project_context.md*
 *claude.md*
