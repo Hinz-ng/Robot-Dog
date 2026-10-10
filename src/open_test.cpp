@@ -4,20 +4,11 @@
 #include "joint_cal.h"      // PER-UNIT: this assembly only, picked by -D JOINT_ID
 
 // ============================================================================
-// ACTUATOR BASELINE + FOC CURRENT MODE + MT6816 4-WIRE SPI (bit-banged)
-// Board: B-G431B-ESC1 clone (EG2124A). SimpleFOC 2.3.1, platform ststm32@17.6.0.
-// THIS IS THE SPI MIGRATION BUILD -- flash it on the SPARE board/motor only.
-// The ABZ build (TIM4) is preserved on the original assembly for fault debug.
-//
-// ---------------------------------------------------------------------------
-// WHY THIS EXISTS
-//   ABZ lost ~60 counts (1.5% of a revolution) under 8-11 A, which destroyed
-//   commutation progressively and required a fresh 'f' to recover. An incremental
-//   counter has no mechanism to detect or correct that -- it "drifts confidently".
-//   The design point is 30 A x 12 joints, 3x harsher than what broke it.
-//   SPI returns the ABSOLUTE 14-bit angle every read: a corrupted sample costs
-//   ONE cycle and then self-corrects, and the frame carries a parity bit so the
-//   corruption is DETECTABLE rather than silent.
+// open_test.cpp -- BENCH HARNESS: FOC current mode + MT6816 4-wire SPI.
+// Board: B-G431B-ESC1 clone (EG2124A). SimpleFOC 2.3.1, ststm32@17.6.0.
+// Not shipped to the robot (Tier 0 is src/tier0/). Keys and session workflow:
+// docs/FIRMWARE.md §11. Boots DISABLED; 20 s auto-stop; 150 rad/s overspeed
+// cutoff; torque modes arm at 0.
 //
 // ---------------------------------------------------------------------------
 // MT6816 FACTS (datasheet Rev 2.1 2022.12, section 8 + 8.6) -- all verified:
@@ -48,78 +39,17 @@
 //     4-wire) and changing it needs 7.0-7.2 V on HVPP. Not attempted.
 //
 // ---------------------------------------------------------------------------
-// WIRING (XJX-135 JP2 header -> board). ALL FOUR SPI PINS MUST BE ON GPIOB:
-//   the fast path writes GPIOB->BSRR / reads GPIOB->IDR directly.
-//     CSN  -> PB5     (new wire)
-//     MOSI -> PB6     (was ABZ 'A'  -- same chip pin, no rewiring)
-//     MISO -> PB7     (was ABZ 'B'  -- same chip pin, no rewiring)
-//     SCK  -> PB8     (was ABZ 'Z'  -- same chip pin; see BOOT0 note)
-//     HVPP -> VDD/3V3 (new wire -- SELECTS SPI MODE. Without this you get ABZ.)
-//     VDD  -> 3V3,  GND -> GND
-//
-//   *** PB8 IS BOOT0. *** Fit a 10k pulldown from PB8 to GND. At MCU reset PB8
-//   is high-Z and the MT6816's SCK pin is an input, so nothing drives it -- a
-//   floating BOOT0 can boot the system bootloader instead of this firmware.
-//   SCK was chosen for PB8 deliberately: CSN (internal pull-UP) and MISO (an
-//   output) would both risk holding BOOT0 high at reset. Do not swap them.
-//
-//   The telemetry UART stays on PB4/PB3, UNTOUCHED. Bit-banging needs no
-//   peripheral pin map, so nothing has to move and the serial monitor survives.
-//
-// ---------------------------------------------------------------------------
-// WHAT THIS BUYS BEYOND THE BUG FIX
-//   * ZEA becomes a PERSISTENT constant (absolute angle within one mech rev).
-//     Measure it once, put it in ZEA_STORED, and 'f' stops twitching the rotor
-//     on every power-up. For a 12-DOF robot that is close to a requirement.
-//   * Alignment noise (measured 9.2 counts = 5.68 deg elec, belt-on) leaves the
-//     error budget once ZEA is stored instead of re-drawn per session.
-//   * No_Mag_Warning detects the failure mode in which a weak field makes the
-//     angle engine emit garbage -- previously an undetectable blind spot.
-//
-// ---------------------------------------------------------------------------
-// COMMANDS: g=go x/s=stop +/-=target | o=openloop t=torque(V) c=torque(I)
-//           v=velocity | f=initFOC  F=force fresh alignment | ?=help
-//           e=encoder self-test (SPI health, no motor current)
-//   logger: l=fast capture  L=slow capture  k=kick-step  j=zero-step
-//           d=dump CSV      a=stats (mean of last capture)
-//   autocalib: Y=menu/status  1..6=phases  7=report  0=reset  V=verify stored ZEA
-//   manual:    N=M2 current-sense ladder (needs a meter)  B/b=M4 breakaway +/-
-//           q=toggle telemetry interval 300 <-> 3000 ms
-// Boots DISABLED. 20 s auto-stop. 150 rad/s overspeed cutoff. Torque modes arm at 0.
-//
-// ---------------------------------------------------------------------------
-// CHANGELOG vs the ABZ build (open_test.cpp, md5 71a41c24...). Every change:
-//   1. TIM4Encoder REPLACED by MT6816SPI (bit-banged 4-wire, mode 3). TIM4 is no
-//      longer used at all. Resolution 4096 -> 16384 counts/rev.
-//   2. Parity checked on EVERY read. Failed reads reuse the last good angle and
-//      increment spi_err; No_Mag_Warning and Over_Speed are surfaced.
-//   3. Optional jump-plausibility reject (SPI_JUMP_GUARD) -- DEFAULT OFF so
-//      bring-up debugs one thing at a time. Turn on after basic operation.
-//   4. New 'e' command: encoder self-test -- N reads, reports parity error rate,
-//      per-read time, angle span. Runs with the motor disabled, zero current.
-//   5. ZEA_STORED / DIR_STORED: if set, 'f' skips alignment entirely. 'F' forces
-//      a fresh alignment regardless. Boot banner says which path was used.
-//   6. sensor_direction is NO LONGER hardcoded to CCW -- the SPI angle convention
-//      is not the TIM4 count convention, so it MUST be re-derived on this board.
-//      DIR_STORED = 0 means "let initFOC detect it". Record the result, then pin it.
-//   7. Telemetry: cnt is now the 14-bit SPI raw; added nmg / ovs / perr / spi_us.
-//   8. Log field cnt now holds the 14-bit raw angle (still uint16, wraps at
-//      16383 = one mechanical revolution -- UNWRAP before differentiating).
-//   9. Header comment "cannot lose counts" DELETED -- falsified by bench evidence.
-// UNCHANGED: the safety path, sense-mismatch guard, overspeed / auto-stop,
-//   mode transitions, every gain, the Vbus block, the logger, all print formats
-//   except the additions in item 7.
+// WIRING (XJX-135 JP2 header -> board). All four SPI pins must be on GPIOB:
+// the fast path writes GPIOB->BSRR and reads GPIOB->IDR directly.
+//     CSN  -> PB5     MOSI -> PB6     MISO -> PB7     SCK -> PB8 (= BOOT0)
+//     HVPP -> VDD/3V3 (selects SPI; low gives ABZ)     VDD -> 3V3, GND -> GND
+//   SCK sits on PB8 because CSN (internal pull-up) and MISO (an output) could
+//   hold BOOT0 high at reset. Keep a 10k pulldown PB8 -> GND.
+//   The telemetry UART stays on PB4/PB3: bit-banging needs no pin map.
 // ============================================================================
 
-// ---------------------------------------------------------------------------
-// BUILD GUARD -- WRONG-HARDWARE BINARY
-// ---------------------------------------------------------------------------
-// platformio.ini's [env:A1] defines ENCODER_ABZ because A1 is the ORIGINAL
-// quadrature assembly. This source is the MT6816 4-wire SPI build. Without this
-// guard the pairing produced a binary that flashes, boots, prints an entirely
-// plausible JOINT/CFG banner, and then reads garbage angles -- the exact class
-// of silent wrong-hardware failure the failure catalogue exists to prevent. A
-// comment was not enough; make it fail at BUILD time instead of on the bench.
+// BUILD GUARD: [env:A1] defines ENCODER_ABZ. This source is the SPI build; on
+// ABZ hardware it would flash, print a plausible banner and read garbage.
 #ifdef ENCODER_ABZ
   #error "This source is the MT6816 4-wire SPI build; [env:A1] is ABZ/TIM4 hardware. \
 It would boot, print a valid-looking banner and read garbage. Restore the ABZ \
@@ -128,7 +58,7 @@ sources on a branch and build there -- do not build this environment."
 
 HardwareSerial SerialUART(PB4, PB3);
 
-#include "mt6816.h"   // MT6816 SPI encoder -- extracted verbatim, see that file
+#include "mt6816.h"   // MT6816 SPI encoder
 
 // ---------------------------------------------------------------------------
 
@@ -137,77 +67,34 @@ HardwareSerial SerialUART(PB4, PB3);
 // THIS SKETCH'S bench envelope. Not fleet (fleet_config.h) and not per-unit
 // (joint_cal.h) -- a test harness owns these and the robot will not inherit them.
 //
-// Uq rails -> real current = VOLT_LIMIT / CAL.R_eff. At 2.0 V into 0.221 ohm that
-// is ~9.0 A / 18 W for the ~1 s it takes to react: thermally trivial. The
-// debounced sense guard is the backstop. (The old comment said R_eff = 0.218,
-// which is A1's number, not this joint's -- R_eff is per-unit, see joint_cal.h.)
+// Uq rails -> real current = VOLT_LIMIT / CAL.R_eff: ~9 A at 2.0 V for the ~1 s
+// it takes to react. The debounced sense guard is the backstop.
 const float VOLT_LIMIT      = 2.0f;
-// The SVPWM modulation reference handed to driver.voltage_limit -- see the long
-// note at the assignment in setup(). It sets the HARD phase-voltage ceiling at
-// rail/sqrt(3) = 3.46 V, which is 28% of a 12.46 V bus.
-//
-// *** THIS IS A SPEED CEILING YOU WILL HIT. *** Required Uq at 270 rad/s is
-// Ke*w + R*Iq = 4.79 V unloaded and ~7 V at 10 A, against 3.46 V available.
-// The rig tops out near 190 rad/s unloaded and well below that under load.
-// Nothing measured so far was clipped -- the highest Uq ever commanded is 2.60
-// (AC_W_VLIMIT) and the highest reached is 2.00 -- so every constant in the
-// J01 row stands. But this must be raised before any high-speed work.
-// See README section 8.3 for the promotion condition and what a change costs.
+// SVPWM modulation reference for driver.voltage_limit (see actuator_hw.h):
+// phase-voltage ceiling 6.0/sqrt(3) = 3.46 V. A SPEED CEILING: ~190 rad/s
+// unloaded. Raise before any high-speed work (CONSTANTS §8.3).
 const float DRIVER_VOLT_LIMIT = 6.0f;
 const float VEL_MAX         = 20.0f;
 const float OVERSPEED_RADS  = 150.0f;   // torque mode has NO built-in speed limit
 const float VEL_STEP        = 1.0f;
 const float TORQUE_STEP_V     = 0.01f;
-// TORQUE(V) target ceiling. Raised to 2.6 for the angle-lag sweep (130 rad/s
-// needs Uq = 2.56 V); 3.5 was rejected because Uq = 3.5 settles at 183 rad/s,
-// past the 150 rad/s overspeed guard. current_limit does not bind in voltage
-// mode (section 12).
-//
-// READ THIS BEFORE USING IT: TORQUE_MAX_V only sets how far '+' can wind `target`.
-// What is actually DELIVERED is clamped by motor.voltage_limit = VOLT_LIMIT in
-// BLDCMotor::move() -- voltage.q = constrain(target, -voltage_limit, +voltage_limit).
-// With VOLT_LIMIT = 2.0 every target above 2.0 V delivers exactly 2.0 V, so the
-// top 0.6 V of this range is currently UNREACHABLE. That is deliberate today:
-// the angle-lag sweep this headroom existed for is CLOSED (see fleet_config.h,
-// T_DELAY_PER_LOOP), and AUTOCALIB phase 5 raises voltage_limit itself for the
-// one sweep that still needs 2.6 and restores it afterwards. If a future test
-// needs > 2.0 V delivered, raise VOLT_LIMIT -- raising this alone does nothing.
+// TORQUE(V) target ceiling. It only sets how far '+' winds `target`: delivered
+// Uq is clamped to VOLT_LIMIT in move(), so the top 0.6 V is unreachable. To
+// deliver more than 2.0 V raise VOLT_LIMIT, not this (phase 5 raises
+// voltage_limit itself). current_limit does not bind in voltage mode.
 const float TORQUE_MAX_V      = 2.6f;
 const unsigned long AUTO_STOP_MS = 20000;
 const unsigned long OVERSPEED_GRACE_MS = 300;   // ignore overspeed right after arming
 
 const float CURR_STEP_A_rep   = 0.1f;
-// TORQUE(I) TARGET CLAMP. Raised 2.0 -> 3.0 on 2026-09-17 for the swing ladder
-// (section 22.3): swing(I) = [slack + lost motion] + 2*F(I)/k needs three well
-// separated currents to separate the intercept from the slope, and 1/2/3 A is
-// the widest span the plant allows.
-//
-// *** THIS IS THE LIMIT THAT ACTUALLY BINDS IN TORQUE(I), NOT CURR_LIMIT_A_rep. ***
-// Verified in the library, not assumed: BLDCMotor::move() case
-// MotionControlType::torque with foc_current is a bare `current_sp = target;`
-// with NO constrain against current_limit. So CURR_LIMIT_A_rep/motor.current_limit is
-// inert here and binds only in VELOCITY mode, via PID_velocity.limit.
-// CURR_LIMIT_A_rep IS DELIBERATELY LEFT AT 2.0 -- raising it would widen the velocity
-// envelope, which no test asked for.
-//
-// WHAT 3.0 A COSTS, checked before raising it:
-//   thermal   P_cu = 1.5*R*I^2 = 1.5*0.2168*9 = 2.9 W stalled, no airflow. The
-//             ladder dwells ~10 s at 3 A, so ~30 J. Section 16's concern starts
-//             at 4.5 A / 6.6 W sustained. Fine for a 15-minute test, NOT for a
-//             standing hold -- do not leave a 3 A target parked.
-//   headroom  Uq needed at stall = 3.0*0.2168 + U0 = 0.67 V against
-//             VOLT_LIMIT 2.0 and Uq_ceil 3.46. Not clipped.
-//   belt      3 A = 0.081 N.m at the pinion = 21 N of belt force with 3.1 teeth
-//             in mesh and no idlers. THIS IS THE REAL RISK -- watch for skip.
-//             acSwingLadder() detects it from the return leg (ENC_CNT_PER_TOOTH).
-//   guards    AC_IMAX_ABORT_A_rep is 6.0 A (reported); untouched and still 2x above.
+// TORQUE(I) TARGET CLAMP -- the limit that actually binds in TORQUE(I):
+// BLDCMotor::move() torque/foc_current is a bare `current_sp = target;`, so
+// CURR_LIMIT_A_rep (motor.current_limit) binds only in VELOCITY mode.
+// 3.0 A: 2.9 W stalled -- fine for a short test, never a standing hold; Uq at
+// stall 0.67 V. Belt force at 3 A is 21 N: watch for tooth skip.
 const float CURR_MAX_A_rep    = 3.0f;
 const float CURR_LIMIT_A_rep  = 2.0f;   // VELOCITY mode only -- see above. Unchanged.
 
-// DEAD ZONE, PWM FREQUENCY: moved to fleet_config.h. Both are properties of the
-// EG2124A/B-G431B-ESC1 board family, identical on all twelve joints, and both are
-// echoed in the CFG banner because a measurement is only comparable to others
-// taken under the same values.
 
 const float CURQ_P = 0.1f,  CURQ_I = 335.0f;
 const float CURD_P = 0.1f,  CURD_I = 335.0f;
@@ -222,25 +109,11 @@ const float VEL_D  = 0.0f;
 const float VEL_TF = 0.02f;
 
 // ---------------------------------------------------------------------------
-// PER-JOINT CALIBRATION -- see joint_cal.h
+// PER-JOINT CALIBRATION -- joint_cal.h, selected by -D JOINT_ID
 // ---------------------------------------------------------------------------
-// These used to be literals edited by hand before each flash. They now come from
-// joint_cal.h, selected at COMPILE TIME by -D JOINT_ID=n from platformio.ini, so
-// flashing the wrong joint's constants requires typing the wrong ENVIRONMENT
-// rather than mistyping a number -- and the boot banner prints which one it is.
-//
-// With an ABSOLUTE sensor, ZEA is a fixed property of THIS motor + THIS magnet
-// mount, not a per-session measurement. That is the payoff: 'f' stops twitching
-// the rotor, and the ~3.4 deg elec of alignment scatter leaves the error budget
-// instead of being redrawn on every power-up.
-//
-// THE PRICE: nothing re-derives ZEA any more, so a slipped magnet or a
-// wrong-joint flash is SILENT. Press 'V' after every flash -- one forced
-// alignment, compared against the stored value. That check is not optional.
-//
-// An unfilled row (zea < 0, dir == 0) makes runInitFOC() fall back to a full
-// alignment, so an uncalibrated joint degrades to the old behaviour rather than
-// commutating on garbage.
+// ZEA is a stored constant on the absolute encoder, so a slipped magnet or a
+// wrong-joint flash is silent: press 'V' after every flash. An unfilled row
+// (zea < 0, dir == 0) falls back to a full alignment.
 const float ZEA_STORED = CAL.zea;
 const int   DIR_STORED = CAL.dir;
 
@@ -248,90 +121,22 @@ const int   DIR_STORED = CAL.dir;
 // ---------------------------------------------------------------------------
 // BUS VOLTAGE SENSING
 // ---------------------------------------------------------------------------
-// WHY: driver.voltage_power_supply is the DIVISOR SimpleFOC uses to convert a
-// requested voltage into a PWM duty cycle. It was a hardcoded 11.4 f -- a belief,
-// not a measurement. Bench pack measured 11.30 V (2026-__-__): 0.9% error, inside
-// the R_eff scatter, so the master table stands. On the robot at ~230 A the pack
-// sags 3-7 V and a hardcoded divisor causes:
-//   (a) delivered voltage != commanded voltage,
-//   (b) PID_current limits sitting ABOVE the achievable modulation ceiling, so
-//       the integrator winds up against a ceiling that does not physically exist,
-//   (c) every logged Uq becoming a REQUEST rather than a DELIVERY, which silently
-//       breaks the Uq = R*Iq + U0 + Ke*w cross-check. Same failure family as the
-//       stale motor.current in the voltage branch: a value nobody updates that
-//       reads exactly like data.
-//
-// PIN: PA0. CONFIRMED on the bench, not inferred -- 11.30 V -> 1351 counts,
-// 22.50 V -> 2694 counts. Voltage ratio 1.991, count ratio 1.994 (0.15% apart).
-// PA1 / PB12 were flat; PB14 moved the wrong way (it is the board thermistor).
-//
-// SCALE: measured, not from a datasheet -- the divider ratio is undocumented on
-// this clone. Pure proportional fit; the 33 mV offset from a 2-point line fit is
-// smaller than the +-0.05 V rounding in the 22.5 V meter reading, so it is not
-// resolvable and is discarded. Back-predicts both points to within 0.07%.
-// THAT 2-POINT FIT GAVE 0.008358 AND WAS 1.1% LOW -- not because the fit was
-// bad, but because the METER was: the DT9205A used for it has a measured ~1.11%
-// DCV gain error, and 0.008358 x 1.0111 lands 0.03% from the 2026-08-18 M1
-// re-measurement against a UT89X. The fit residual was never the problem.
-//   full scale  = 4095 * 0.008448 = 34.60 V bus   (B-SPI-01 / J01, M1 2026-08-18)
-//   resolution  = 8.45 mV / count
-// Both figures are PER BOARD. B-ABZ-01 / J02 measures 0.008516 -> 34.87 V full
-// scale, 8.52 mV/count: 0.80% apart, measured, not estimated.
-// LEFT AT 0.008516 AFTER 2026-08-20, DELIBERATELY. A later session read the
-// banner at 12.29 against a UT89X 12.27 -- 0.02 V, 0.16%, against that meter's
-// own +-(0.5%+2) = +-0.064 V at 12.3 V. The disagreement is a QUARTER of the
-// resolving power of the instrument being used to judge it. Chasing it would
-// move R_eff, U0, Ke and L by less than their own uncertainties on evidence the
-// meter cannot supply. It is folded into M2's error budget instead.
-//   6S at 25.2 V = 3015 counts = 74% of range -> NO PB10 / 48V_EN change needed.
-// Re-calibrate if PB10 (48V_EN) is ever driven: it switches the divider range.
-//
-// THE SCALE ITSELF IS PER-BOARD AND COMES FROM joint_cal.h. It used to be a
-// literal here, which made it look like a fleet constant. It is not: two boards
-// have now been MEASURED 0.80% apart (0.008448 / 0.008516, M1 2026-08-18), and
-// R_eff, U0 and Ke all scale linearly with it -- so that 0.80% lands straight on
-// every torque command. A literal here would also have silently overridden
-// whatever a future row said. M1 (multimeter, two bus voltages) is mandatory per
-// board, and it is the FIRST thing run on a new board, before AUTOCALIB.
-//
-// vbus_scale = 0 in the row disables this entire feature. Behaviour then is
-// byte-identical to a hardcoded divisor, which keeps rollback a one-field edit.
+// driver.voltage_power_supply is the divisor SimpleFOC uses to turn a voltage
+// request into a duty cycle; a wrong value makes delivered != commanded Uq and
+// breaks the Uq = R*Iq + U0 + Ke*w cross-check.
+// PIN PA0 (VBUS_ADC, ADC1 rank 5). The scale is PER BOARD, from joint_cal.h (M1,
+// run before AUTOCALIB). Full scale ~34.6 V, so 6S needs no PB10 / 48V_EN
+// change -- and driving PB10 moves the scale ~1.9x (HARDWARE §3).
+// vbus_scale = 0 in the row disables the feature (same as a fixed divisor).
 const uint32_t PIN_VBUS   = PA0;
 const float VBUS_SCALE    = CAL.vbus_scale;   // V per ADC count -- PER BOARD, M1
-// SEED-ONLY. Arduino analogRead() returns 0 on any pin of this ADC once
-// currentSense.init() has run -- confirmed 2026-__-__ by vraw=0 from an
-// isolated call in the print block, while the pre-init setup read works every
-// time. Not a contention-between-two-calls issue: ONE call fails.
-//
-// MECHANISM CORRECTED 2026-08-21 by the v1 'p' probe dump on J02. This block
-// previously said the current sense owned the INJECTED group, and that regular
-// and injected coexist by design (injected preempts, regular resumes). BOTH ARE
-// RETRACTED -- the dump shows JSQR = 0 and JADSTART = 0 on both instances, so
-// there is no injected group at all, and ADSTART = 1 on both, so the sense runs
-// on the REGULAR group. HAL_ADC_Start therefore returns BUSY because the
-// REGULAR group is already started. Same symptom, different owner.
-//
-// *** AFTER currentSense.init(), analogRead() IS FORBIDDEN ON THIS BOARD. ***
-// It fails safe TODAY (returns 0) only because ADSTART is already 1. It fails
-// by contending for the very sequence the current sense owns: a core or HAL
-// version that stops the ADC first would let it through, rewrite SQR1/SMPR and
-// destroy current sensing with no error and no symptom beyond garbage |I|/Iq.
-//
-// LIVE TRACKING NEEDS NO ADC CONFIGURATION -- CONFIRMED 2026-08-30, and that is
-// the whole of what the detour bought. PA0 is rank 5 of the regular sequence and
-// already lands in the DMA buffer every PWM period, so a live reading is a RAM
-// read (see 'p', and HARDWARE.md section 3 for the map).
-//
-// WHAT STILL BLOCKS IT is the number, not the mechanism: that buffer sits ~60
-// counts (0.51 V) below the seed because SimpleFOC's init never calibrates the
-// converter (CALFACT = 0 on both instances, every boot). The seed path is the
-// correct one -- validated against a UT89X at 12.24 / 12.25 / 22.73 V to better
-// than 0.16%. Calibrating the ADC earlier was tried and ABANDONED: at the only
-// point in boot where the ADC is idle there is no kernel clock at all
-// (RCC->CCIPR ADC12SEL = 0), so ADCAL cannot run, and arming it there leaves a
-// PENDING calibration that fires later inside currentSense.init(). See
-// CHANGELOG section 0. Do not re-attempt without reading that entry first.
-// Deferred -- the bench has no sag to track. See README 8.3.
+// SEED-ONLY. After currentSense.init(), analogRead() is FORBIDDEN: the current
+// sense owns the ADC regular group (ADSTART = 1), and a HAL that stopped the ADC
+// first would rewrite SQR1/SMPR and silently corrupt current sensing. A live
+// reading would be a RAM read of the DMA buffer, but that converter is
+// uncalibrated (CALFACT = 0, ~60 counts low) and cannot be calibrated before
+// init (no ADC kernel clock there). The seed matches a UT89X to < 0.16% at
+// 12-23 V. VBUS_LIVE stays false; promotion condition in CONSTANTS §8.3.
 const bool  VBUS_LIVE     = false;
 const float VBUS_TF       = 0.020f;     // 20 ms. Noise here becomes motor current.
 const float VBUS_MIN      = 8.0f;       // PLAUSIBILITY window only -- NOT a
@@ -345,23 +150,10 @@ const float VBUS_FALLBACK = 11.30f;     // measured bench pack, used if read fai
 // not be mistaken for, overvoltage protection.
 
 // ===========================================================================
-// VBUS ADC PROBE v3 -- 'p'.  PURE READ. No peripheral register is written.
-//
-// PREMISE CORRECTION (2026-08-21, from the v1 dump on J02):
-//   This board does NOT use the ADC injected group. JSQR = 0 and JADSTART = 0
-//   on BOTH instances; ADSTART = 1 on both. SimpleFOC's b_g431 path runs the
-//   current sense on the REGULAR group with circular DMA. The "regular and
-//   injected coexist" note in the SEED-ONLY block above is RETRACTED, and so is
-//   the claim that analogRead() fails on an injected-BUSY peripheral -- it
-//   fails because the REGULAR group is permanently started.
-//
-// WHAT THIS LOOKS FOR: ADC1 SQR1 shows a 5-conversion sequence (ranks 12,3,11,5)
-// and SMPR1 sets 47.5 cycles on channel 1 -- which is ADC1_IN1 = PA0 and is NOT
-// in ranks 1-4. If PA0 is rank 5, live Vbus needs no ADC configuration at all.
-//
-// v1's adcBringUp() and adcReadCh() are DELETED, not commented out: their
-// premise is dead, and adcReadCh's read-modify-write on CR was the one real
-// hazard in v1. Nothing here writes a peripheral register.
+// VBUS ADC PROBE -- 'p'.  PURE READ: no peripheral register is written.
+// Dumps the ADC kernel clock, both instances' sequence, offset and CALFACT
+// registers, PA0/PB12/PB14 GPIO state and the live DMA buffer -- the instrument
+// behind HARDWARE §3's sequence map.
 // ===========================================================================
 // RM0440 ADC_SMPR sample times, in TENTHS of an ADC clock cycle so the .5s stay
 // exact in integer arithmetic. Index is the raw 3-bit SMP field.
@@ -374,10 +166,7 @@ static uint8_t adcGetSmp(ADC_TypeDef* a, uint8_t ch) {
                    : ((a->SMPR2 >> (3u*(ch-10u))) & 0x7u);
 }
 
-// Kept from v1 and still CALLED: this is the only thing that prints CFGR, SMPR
-// and JSQR, and two of v2's failure branches ask for exactly those. The
-// JADSTART / JSQR fields now read as evidence that the injected group is empty
-// rather than as a description of how the sense works.
+// CFGR, SMPR and JSQR. The injected group (JSQR) is empty on this board.
 static void adcDump(const __FlashStringHelper* nm, ADC_TypeDef* a) {
   SerialUART.print(nm);
   SerialUART.print(F(" ADEN="));    SerialUART.print((a->CR & ADC_CR_ADEN)     ? 1:0);
@@ -463,9 +252,8 @@ static DMA_Channel_TypeDef* const PROBE_DMA[] = {
 #endif
 };
 
-// Index into PROBE_DMA of the channel feeding this ADC, or -1. Split out of
-// probeAdcDma so setup()'s seed-vs-DMA comparison can find the same buffer
-// without duplicating the walk -- one definition of "where the buffer is".
+// Index into PROBE_DMA of the channel feeding this ADC, or -1. Shared by the
+// probe and vbusDmaRaw() -- one definition of "where the buffer is".
 static int adcDmaIdx(ADC_TypeDef* a) {
   const uint32_t dr = (uint32_t)&a->DR;
   for (uint8_t i = 0; i < (uint8_t)(sizeof(PROBE_DMA)/sizeof(PROBE_DMA[0])); i++)
@@ -494,17 +282,9 @@ static int adcSlotOfCh(ADC_TypeDef* a, uint8_t ch) {
 
 // ---------------------------------------------------------------------------
 // Vdma -- the bus voltage as the DMA path sees it. RAW: one sample, no filter,
-// no plausibility window, NOT driver.voltage_power_supply. It exists to be
-// compared against Vb (the calibrated seed) while a run is putting real current
-// through the board, which is the ONLY thing that tests H7: a reference shift
-// that scales with return current. Flat Vdma-Vb from 0.2 A to 3.0 A bounds H7
-// at bench scale; growth is disqualifying and is a board-layout finding.
-//
-// NAN, not 0, when the buffer is unreachable -- a zero would read as a real
-// measurement of a collapsed bus, and Print emits "nan" which parses as NaN
-// offline. KEPT after the 2026-08-30 cleanup: CONSTANTS.md section 8.3 names
-// Vdma-vs-terminal-meter as the promotion condition for live Vbus, and this
-// field plus the M2 column are what make that test free. Nothing reads it.
+// no plausibility window, NOT driver.voltage_power_supply. Diagnostic only;
+// kept because the live-Vbus acceptance test is Vdma vs a terminal meter
+// (CONSTANTS §8.3). NAN (printed "--") when the buffer is unreachable.
 // ---------------------------------------------------------------------------
 
 static float vbusDmaRaw() {
@@ -579,23 +359,9 @@ static void probeAdcDma(const __FlashStringHelper* nm, ADC_TypeDef* a, uint16_t 
 }
 
 // ===========================================================================
-// PROBE v3 REGISTER BLOCK -- hunting the 62-count DMA-vs-seed subtraction.
-//
-// Measured 2026-08-21, two bus voltages: buf[4] sits 62.3 +/- 3.0 counts BELOW
-// the pre-init analogRead() seed, gain 1.006 (unity within meter resolution),
-// thermally inert. H1 (charge sharing from rank 4) is dead -- PB14 swung 60.7
-// counts at a fixed bus while PA0 moved 1.0, a coupling of 0.017 against the
-// 0.474 required. What is left is a FIXED SUBTRACTION, and three mechanisms can
-// produce one:
-//   H6  ADC1->OFRn programmed on channel 1. The register's literal function is
-//       DR = raw - OFFSET. Exact signature match. <- adcOffsetDump()
-//   H5  ADC-wide offset from a bad CALFACT (calibrated with the opamps live).
-//       62 LSB is ~12x the datasheet offset error, so this is a stretch.
-//   H4  PA0's divider node is physically loaded after init. The seed is the ONLY
-//       reading taken pre-driver.init(), and the seed block's own comment
-//       ("detach digital buffer, unload divider") predicts exactly this.
-//       <- gpioPinDump(): if PA0's MODER left 0b11, H4 moves to a physical probe
-// All pure reads. Nothing here writes a peripheral register.
+// OFFSET REGISTERS, CALFACT, GPIO STATE -- pure reads. Measured 2026-08-21/30:
+// OFR all 0, CALFACT 0 on both instances, PA0 analog with no pull. The ~60-count
+// DMA offset is the uncalibrated converter (HARDWARE §3).
 // ===========================================================================
 static void adcOffsetDump(const __FlashStringHelper* nm, ADC_TypeDef* a) {
   const __IO uint32_t* ofr[4] = { &a->OFR1, &a->OFR2, &a->OFR3, &a->OFR4 };
@@ -634,9 +400,8 @@ static void adcOffsetDump(const __FlashStringHelper* nm, ADC_TypeDef* a) {
   SerialUART.print(F(" GCOMP=")); SerialUART.println((c2 & ADC_CFGR2_GCOMP_Msk) ? 1 : 0);
 }
 
-// MODER 11 = analog, which is what the pre-init pinMode(INPUT_ANALOG) sets and
-// what H4 says something later undoes. PUPDR must be 00: a pull on a divider
-// node IS the loading mechanism, and it would be a fixed, bus-independent shift.
+// MODER 11 = analog (set before init); PUPDR must be 00 -- a pull on a divider
+// node would load it.
 static void gpioPinDump(const __FlashStringHelper* nm, GPIO_TypeDef* g, uint8_t pin) {
   const uint8_t m = (uint8_t)((g->MODER >> (2u*pin)) & 0x3u);
   const uint8_t p = (uint8_t)((g->PUPDR >> (2u*pin)) & 0x3u);
@@ -757,14 +522,9 @@ uint16_t print_ms = 300;   // 'q' toggles 300 <-> 3000 for the loop-rate test
 // ---------------------------------------------------------------------------
 #define LOG_N 1000
 struct LogSample {
-  uint16_t dt_us;         // us since the PREVIOUS sample. logDump() used to
-                          // reconstruct t = k * dt_mean, which ASSUMES uniform
-                          // sampling. The sense guard's extra ADC read (every 30
-                          // loops), the LED blink and handleSerial all jitter the
-                          // loop; an inertia fit against an assumed-uniform clock
-                          // is biased by exactly that jitter. Also the decisive
-                          // datum for the 57 kHz vs 15.5 kHz lps discrepancy.
-                          // Saturates at 65.5 ms; decim 8 @15.5 kHz is ~516 us.
+  uint16_t dt_us;         // us since the PREVIOUS sample. Fit against this, not
+                          // k * dt_mean: the sense-guard read, LED blink and
+                          // handleSerial all jitter the loop. Saturates at 65.5 ms.
   int16_t  vel_x50;       // rad/s * 50 -- FILTERED by LPF_velocity (Tf=20 ms).
                           // Do NOT fit inertia from this column; use cnt.
   int16_t  iq_x1000;      // A * 1000
@@ -777,10 +537,8 @@ struct LogSample {
   int16_t  raw_x100;      // RAW unsynchronised |I| * 100 -- sees PWM-rate ripple that
                           // the synchronously sampled dq path is blind to
   uint16_t cnt;           // raw 14-bit MT6816 angle (ground truth for velocity).
-                          // uint16, wraps at 16383 = one motor revolution: UNWRAP
-                          // in post-processing before differentiating.
-                          // 1 count = 0.02197 deg mech = 0.1538 deg elec
-                          // (was 0.0879 / 0.6152 on the 4096-count ABZ path).
+                          // Wraps at 16383 = one motor rev: UNWRAP before
+                          // differentiating. 1 count = 0.02197 deg mech.
 };
 LogSample logbuf[LOG_N];
 volatile uint16_t log_i = 0;
@@ -791,10 +549,8 @@ uint8_t  log_decim = 1;
 uint8_t  log_skip  = 0;
 uint32_t log_t0 = 0, log_t1 = 0;
 uint32_t log_t_prev = 0;        // timestamp of the previous stored sample
-// Conditions the capture was taken under. Gate D was invalidated by a capture
-// taken with the motor disarmed -- the STATS line showed a stale Uq=2.0 and
-// vel=2.0 and looked entirely healthy. Record the state so a capture can never
-// be separated from the conditions that produced it.
+// Conditions the capture was taken under, recorded with it: a capture taken
+// disarmed once showed stale Uq and vel and looked entirely healthy.
 Mode     log_mode = MODE_OPENLOOP;
 bool     log_running = false;
 // Step between two NONZERO currents: stepping from 0 puts the 532 us dead-zone
@@ -811,23 +567,11 @@ const float KICKV_BASE = 0.20f;   // V -- pre-step hold voltage
 const float KICKV_A    = 0.80f;   // V -- post-step voltage
 uint32_t kick_at = 0;           // scheduled kick (two-stage: zero -> settle -> step)
 bool kick_zero = false;
-// DIRECTION OF THE KICK. Added 2026-09-05: every ring capture in the belt
-// stiffness campaign stepped POSITIVE, because 'k' overwrote target with
-// +KICKV_BASE regardless of which way the shaft had been jogged first. Four
-// captures were taken believing two of them were negative-going. A drive with
-// dead-time asymmetry (+0.2093 / -0.2239 ohm, 7% apart) and one-sided tooth
-// engagement has no reason to be symmetric, so this was a real blind spot and
-// not a cosmetic one. 'k' steps positive, 'K' steps negative; the sign is
-// applied to BOTH the hold and the step so the whole excitation mirrors.
+// 'k' steps positive, 'K' negative; the sign applies to the hold AND the step.
 float kick_sign = +1.0f;
 
-// Capture serial number and dump counter. Added 2026-09-05 after a ring-test
-// session archived FOUR dumps of which only THREE were unique: a 'k' press was
-// refused (wrong mode), no capture was armed, and the following 'd' re-dumped
-// the previous buffer byte-for-byte. Nothing in the CSV said so. The sequence
-// number is printed in the dump HEADER precisely so it survives into the
-// archived file -- two rows with the same cap= is unmistakable offline, which a
-// "check the console for CAPTURE start" habit is not.
+// Capture serial number (printed in the dump header) and dump count, so a
+// re-dump of an old buffer is recognisable offline.
 uint16_t log_seq   = 0;         // increments per capture armed
 uint8_t  log_dumps = 0;         // times THIS capture has been dumped
 
@@ -841,18 +585,11 @@ uint8_t  log_dumps = 0;         // times THIS capture has been dumped
 // ===========================================================================
 #include "mit_law.h"
 
-// ---- C2: THE BENCH ENVELOPE -- harness policy, not fleet fact. Moves after B10.
-// INNER clamp = the DEMONSTRATED envelope: D3's 1.6 A, proven by the swing
-// ladder in REPORTED amps (BELT_DRIVE 22.4.14 / 22.6.3). Compile-time and not
-// settable over serial: it is the clamp a wrong conversion constant cannot pass.
-//
-// NOT RAISED FOR B12a, decided 2026-10-01. With the output BARE the belt carries
-// almost nothing at any current (the output pulley is ~1% of the rotor's
-// inertia), so a higher cap would not endanger the belt. It would also buy
-// little -- a4 times the first half-cycle, which Coulomb friction does not
-// move -- and it would create a SECOND envelope that must be switched back
-// before B12b loads the belt, where forgetting it exceeds D3. That forgotten
-// switch is exactly the error this clamp exists to stop. Raise it through B10.
+// ---- C2: THE BENCH ENVELOPE -- harness policy. Raise only through B10.
+// INNER clamp = the DEMONSTRATED envelope, D3's 1.6 A_rep (swing ladder,
+// BELT_DRIVE §22.4.9). Compile-time: the clamp a wrong conversion cannot pass.
+// Set any future envelope >= 6% below the demonstrated-safe current (measured
+// Iq overshoots the clamped command by up to 6%, B12a a5).
 const float MIT_ENV_A_rep = 1.6f;
 // OUTER clamp, contract units. 0.39 sits just under the inner clamp's 0.403
 // N.m (J01), so the OUTER binds first in normal use and an INNER hit is a
@@ -867,8 +604,8 @@ const float MIT_TAU_MAX_CEIL_Nm = 1.0f;
 // chain is what bounds torque. |v_des| 5 rad/s out = 45 rad/s at the motor,
 // well inside the ~81-91 rad/s Uq ceiling at VOLT_LIMIT 2.0.
 const MitRanges MIT_RANGES = { 200.0f, 2.0f, 6.2832f, 5.0f, 1.0f };
-// Velocity filter. 1 ms is a PLACEHOLDER until a0 picks Tf_mit from measurement.
-// Rules: lateness <= 15 deg at 25 Hz -> Tf <= 1.7 ms; noise x kd <= 7 mN.m.
+// Velocity filter Tf_mit: 1.0 ms, chosen by B12a a0 (BELT_DRIVE §22.7.2).
+// Bounds: lateness <= 15 deg at 25 Hz -> Tf <= 1.7 ms; noise x kd <= 7 mN.m.
 const float MIT_TF_DEFAULT_S = 0.001f;
 const float MIT_TF_MIN_S     = 0.00005f;
 const float MIT_TF_MAX_S     = 0.050f;
@@ -878,13 +615,9 @@ const uint16_t MIT_SW_PRETRIG = 50;
 
 MitEstimator mit_est   = {};
 MitCmd   mit_cmd       = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};   // LIVE command ("A")
-// STAGED CHANGES ("B"), redesigned 2026-10-02. B is no longer a second full
-// command: it is a set of FIELD CHANGES, applied to the live A at the moment
-// `m go` fires (B = A + changes). The full-command B was a trap: `m b vd 2`
-// edited whatever B last held -- all zeros after a reboot -- so a3 part 2 ran
-// vd 2 with kd 0 and commanded exactly zero torque. Each `m b` line REPLACES
-// the previous changes (no stale ff from an earlier test survives); `m b`
-// alone clears them.
+// STAGED CHANGES ("B"): field changes applied to the live A when `m go` fires
+// (B = A + changes). Each `m b` line replaces the previous changes; `m b` alone
+// clears them.
 enum : uint8_t { MIT_F_PD = 1, MIT_F_VD = 2, MIT_F_KP = 4, MIT_F_KD = 8, MIT_F_FF = 16 };
 MitCmd   mit_stage      = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};  // values of the staged fields
 uint8_t  mit_stage_mask = 0;                               // which fields are staged
@@ -933,15 +666,10 @@ void mitOnArm() {
   mit_clamp = IQ_CLAMP_NONE; mit_tau_law_Nm = 0.0f;
 }
 
-// Once per loop in MIT mode, after loopFOC() (fresh encoder) and BEFORE
-// motor.move(target). Disarmed, it only tracks p and v so the filter is
-// converged at arm. Armed, it is the whole law: estimate -> law -> clamp chain.
-// Its own cost is measured (mit_svc_cyc_max -> svc_us= on the status line):
-// the 2026-10-01 a2 loop-rate deviation cost several times the instruction
-// count, and the first fix for it (flash prefetch) was falsified on the bench,
-// so the number that matters is measured on the target, not estimated.
-// svc_us is a MAX per status window and includes interrupt preemption; the
-// MEAN cost is the lps difference vs TORQUE(I) (BELT_DRIVE §22.7.7).
+// Once per loop in MIT mode, after loopFOC() and BEFORE motor.move(target).
+// Disarmed it only tracks p and v, so the filter is converged at arm. Its cost
+// is measured: svc_us= is the MAX per status window (includes interrupt
+// preemption); the mean cost is the lps difference vs TORQUE(I) (§22.7.7).
 static void mitServiceBody(uint32_t c0) {
   const int8_t dir = mitDir();
   const float  dt  = (float)(uint32_t)(c0 - mit_cyc_prev) * mit_s_per_cyc;
@@ -964,7 +692,7 @@ static void mitServiceBody(uint32_t c0) {
   // tau is NOT computed here: the law does not use it, and removing it (with the
   // micros() -> DWT change) is what took the MIT deficit from -8.2% to -4.7%
   // (2026-10-02). The status line and the dump compute the measured
-  // tau themselves (irepToTorqueOut(Iq)); Tier 0 will compute it per CAN frame.
+  // tau themselves (irepToTorqueOut(Iq)); Tier 0 computes it per CAN frame.
   const MitState s = { mitEstP(mit_est, dir), mit_est.v_out_rads, 0.0f };
   mit_tau_law_Nm = mitLawTau(mit_cmd, s);
   const IqCmd r = tauOutCmdToIq(mit_tau_law_Nm, mit_tau_max_Nm, MIT_ENV_A_rep);
@@ -1046,8 +774,8 @@ static void mitWarnInert(const MitCmd& c) {
     SerialUART.println(F("  !! pd does nothing while kp = 0  (tau = kp*(pd - p))"));
 }
 
-// MIT capture body (C6). The LogSample struct is NOT enlarged: RAM is at 75%
-// and the buffer is already 18 KB (9 x 2 B x 1000). In MIT captures three
+// MIT capture body (C6). The LogSample struct is NOT enlarged (the buffer is
+// already 18 KB, 9 x 2 B x 1000). In MIT captures three
 // slots carry MIT data:
 //   vel_x50   -> v_mit x 1000   (OUTPUT rad/s, the law's own filtered speed)
 //   ud_x1000  -> tau_law x 1e4  (N.m, BEFORE clamps; saturates at +-3.2767)
@@ -1227,18 +955,9 @@ bool isCurrentMode(Mode m){ return (m == MODE_TORQUE_CURRENT || m == MODE_MIT); 
 // ---------------------------------------------------------------------------
 void encoderSelfTest() {
   if (running) { SerialUART.println(F("stop first (x)")); return; }
-  // N RAISED 2000 -> 20000 on 2026-09-20, and the verdict now includes span.
-  // 'e' was reporting "ENC PASS: link clean" on an assembly that 'E' showed
-  // failing in bursts, and both halves of that were its own fault:
-  //   SAMPLE SIZE. 2000 reads is ~13 ms. The observed fault is BURSTY -- clean
-  //   for tens of seconds, then thousands of errors inside one 250 ms window.
-  //   A 13 ms probe usually lands in the quiet. At the 2026-09-20 "clean" run's
-  //   own rate (2 errors in 1,441,635 reads) 'e' expects 0.003 errors per press,
-  //   so it reads PASS about 99.7% of the time REGARDLESS of the link.
-  //   VERDICT. span was printed but was NOT in the pass condition, so a run with
-  //   a visibly corrupted angle could still print "link clean".
-  // 20000 reads is ~133 ms -- still instant to a human, 10x the detection floor.
-  // It is still a SNAPSHOT: for a bursty fault use 'E' and let it soak.
+  // 20000 reads (~133 ms): the link fault seen on the bench was bursty, and a
+  // short probe usually landed in the quiet. Still a SNAPSHOT -- for a bursty
+  // fault use 'E' and let it soak.
   const uint16_t N = 20000;
   uint32_t err0 = encoder.spi_err, ok0 = encoder.spi_ok;
   uint16_t lo = 0xFFFF, hi = 0;
@@ -1263,10 +982,8 @@ void encoderSelfTest() {
   SerialUART.print(F(" span="));        SerialUART.print(hi - lo);
   SerialUART.print(F(" no_mag="));      SerialUART.print(nmg);
   SerialUART.print(F(" over_speed="));  SerialUART.println(encoder.over_speed);
-  // span is in the verdict now. On a STATIONARY shaft raw must not move, and a
-  // nonzero span is a corrupted frame that PASSED parity -- the failure parity
-  // structurally cannot see. Reporting it and then ignoring it was worse than
-  // not measuring it, because it made a bad link print the word "clean".
+  // On a STATIONARY shaft raw must not move: a nonzero span is a corrupted frame
+  // that PASSED parity.
   const uint16_t span = (hi > lo) ? (uint16_t)(hi - lo) : 0;
   // ALL-ZERO FRAMES: a dead MISO passed every check above (J03, 2026-10-08).
   // zero_run counts consecutive 0x0000 frames (mt6816.h); >= N = every read.
@@ -1284,10 +1001,8 @@ void encoderSelfTest() {
 // ---------------------------------------------------------------------------
 // 'E' -- CONTINUOUS HARNESS MONITOR. The instrument for the wiggle test.
 // ---------------------------------------------------------------------------
-// 'e' is one-shot: 2000 reads, ~13 ms, print, done. Useless for flexing a
-// conductor, because you cannot press a key and wiggle a wire at the same time
-// and the answer arrives after you have stopped. This repeats until a key is
-// pressed, so both hands are free and the console is a live readout.
+// 'e' is a one-shot snapshot. This repeats until a key is pressed, so both
+// hands are free to flex a conductor while watching the console.
 //
 // TWO DETECTORS, and the second one is the point:
 //   perr   PARITY. One bit over a 16-bit word, so it catches an ODD number of
@@ -1391,7 +1106,7 @@ void startMotor() {
   SerialUART.print(F(" target=")); SerialUART.println(target);
 }
 
-#include "safety.h"   // stopMotor() -- the single disable path, extracted verbatim
+#include "safety.h"   // stopMotor() -- the single disable path
 
 void setMode(Mode m) {
   if (running) { SerialUART.println(F("stop first (x)")); return; }
@@ -1447,8 +1162,7 @@ void adjustTarget(float dir) {
 // in autocalib.h). Deliberately narrow: only a '5' arriving within
 // AC_CHORD_WINDOW_MS of a '-'/'_' arms the swap, so a '-' typed minutes
 // earlier for ordinary target jogging can never silently swap a later,
-// unrelated phase-5 run -- the exact stale-flag mislabeling class the belt
-// banner bug already cost this project twice.
+// unrelated phase-5 run.
 static char     ac_last_key    = 0;
 static uint32_t ac_last_key_ms = 0;
 static const uint32_t AC_CHORD_WINDOW_MS = 800;
@@ -1464,9 +1178,8 @@ static const uint32_t AC_CHORD_WINDOW_MS = 800;
 // it. Both cases of 'm' open the line, so a lowercase slip cannot fall through.
 // ESC cancels; a line idle for MIT_LINE_TIMEOUT_MS is abandoned, loudly.
 //
-// LINE ENDINGS -- fixed 2026-10-01 after a0: "m test" echoed and then did
-// nothing, because the monitor sent NO line ending (VS Code Serial Monitor
-// "None", or a paste with no Enter). A line now ends on ANY of:
+// LINE ENDINGS. Some monitors send none (VS Code Serial Monitor "None", or a
+// paste with no Enter). A line ends on ANY of:
 //   CR, LF, or ';'                  explicit -- works in every terminal
 //   a whole-line BURST, then idle   the "send line, no ending" monitors: every
 //                                   char of the line arrived within
@@ -1529,7 +1242,7 @@ static void mitPrintStatus() {
 // properties that do not depend on the conversion constant (clamp code, sign,
 // bounds, round trip). The magnitudes are printed so they can also be checked
 // by hand -- J01 expects 0.10 N.m -> 0.397 A_rep and 0.39 N.m -> 1.549 A_rep.
-// On an uncalibrated row (-e J03, Ke = 0) EVERY torque case must REJECT.
+// On an unbuilt row (e.g. -e J04, Ke = 0) EVERY torque case must REJECT.
 static void mitClampTest() {
   if (running) { SerialUART.println(F("m test: stop first (x) -- this runs disarmed")); return; }
   const bool  uncal = !(calKtCmd() > 0.0f);
@@ -1826,7 +1539,7 @@ void handleSerial() {
       case 'V': acVerifyZea();          break;   //   it verifies the stored ZEA
       case 'f': runInitFOC(false, running, foc_ready, target, SerialUART); break;   // uses STORED ZEA when available
       case 'F': runInitFOC(true,  running, foc_ready, target, SerialUART);  break;   // force a fresh alignment
-      case 'e': encoderSelfTest(); break;              // one-shot, 2000 reads
+      case 'e': encoderSelfTest(); break;              // one-shot, 20000 reads
       case 'E': encoderMonitor();  break;              // continuous -- harness wiggle test
       case 'p': vbusProbe(); break;    // VBUS ADC probe -- read-only, motor disabled
       case 'l': logStart(1); break;                     // fast capture (~65 ms)
@@ -1910,14 +1623,9 @@ void setup() {
   motor.velocity_limit = VEL_MAX;
   motor.current_limit  = CURR_LIMIT_A_rep;
 
-  // 2.3.1 defaults foc_modulation to SinePWM; this sketch inherited that silently.
-  // SVPWM raises the linear ceiling from V_bus/2 to V_bus/sqrt(3) (+15.5% of usable
-  // voltage). Only the CEILING changes: at bench modulation depth (2 V of 11.4 V)
-  // the fundamental phase voltage for a given Uq is identical, so the phase
-  // currents should NOT change. The zero-sequence component SVPWM adds is
-  // common-mode; with no neutral connection the phase currents are unaffected, so
-  // the |I|/Iq = 1.225 integrity check still holds. A/B this against the ammeter
-  // baseline before trusting anything downstream of it.
+  // 2.3.1 defaults foc_modulation to SinePWM. SVPWM raises the linear ceiling
+  // from V_bus/2 to V_bus/sqrt(3) (+15.5%); at bench modulation depth the phase
+  // currents are unchanged and the |I|/Iq = 1.225 check still holds.
   motor.foc_modulation = FOCModulationType::SpaceVectorPWM;
 
   motor.PID_velocity.P = VEL_P;
@@ -1939,12 +1647,8 @@ void setup() {
 
   printCfgBanner(SerialUART, DRIVER_VOLT_LIMIT, CURR_MAX_A_rep);
 
-  // DIRECTION IS NOT PRESET ON THIS BOARD. The ABZ build hardcoded CCW because
-  // the TIM4 count convention had been confirmed; the MT6816 SPI angle runs on
-  // its own convention (ROT_DIR register, CCW-increasing by default) and the
-  // magnet mount orientation may differ on this assembly. Let initFOC detect it
-  // once, then pin DIR_STORED. Copying CCW across untested would silently
-  // invert the torque sign.
+  // Direction comes from the row once measured; DIR_STORED = 0 lets initFOC
+  // detect it.
   motor.sensor_direction = (DIR_STORED > 0) ? Direction::CW
                          : (DIR_STORED < 0) ? Direction::CCW
                                             : Direction::UNKNOWN;
@@ -1963,9 +1667,9 @@ void loop() {
   if (VBUS_SCALE > 0.0f && VBUS_LIVE) {
     static uint32_t vbus_last_us = 0;
     uint32_t now_us = micros();
-    // Cast handles micros() wraparound at ~71 min. Rate-limited to 1 kHz because
-    // analogRead() blocks for a few us; once per 12.5 loops is 0.5% overhead,
-    // once per loop would be ~6%. The cost lands in dt_us, which is logged.
+    // Cast handles micros() wraparound. Rate-limited to 1 kHz (analogRead()
+    // blocks for a few us). DORMANT, and NOT valid as written: analogRead() is
+    // forbidden after currentSense.init() -- read the DMA buffer before enabling.
     if ((uint32_t)(now_us - vbus_last_us) >= 1000) {
       vbus_last_us = now_us;
       (void)analogRead(PIN_VBUS);
@@ -1983,13 +1687,8 @@ void loop() {
         // limit ABOVE that is not a limit: the integrator winds up against a
         // ceiling that does not exist, then dumps the windup when the bus
         // recovers.
-        // THE RAIL IS NOT THE BUS. setPhaseVoltage() normalises against
-        // driver.voltage_limit and setPwm() clamps each phase to it, so the
-        // binding rail is min(driver.voltage_limit, V_bus). This used to read
-        // vbus_filt * 0.57735, which at DRIVER_VOLT_LIMIT = 6.0 on a 12.5 V bus
-        // claims 7.19 V against a real 3.46 V -- a 2x-optimistic "limit", i.e.
-        // exactly the failure this block exists to prevent. Dormant while
-        // VBUS_LIVE = false; fixed now rather than the day it is switched on.
+        // THE RAIL IS NOT THE BUS: setPhaseVoltage() normalises against
+        // driver.voltage_limit, so the binding rail is min(DRIVER_VOLT_LIMIT, V_bus).
         float rail    = (DRIVER_VOLT_LIMIT < vbus_filt) ? DRIVER_VOLT_LIMIT : vbus_filt;
         float ceiling = rail * 0.57735f;
         float lim = (VOLT_LIMIT < ceiling) ? VOLT_LIMIT : ceiling;
@@ -2012,13 +1711,9 @@ void loop() {
   // velocity behavior, so it only costs additional loop time.
 
   // 2.3.1's loopFOC() refreshes motor.current ONLY in the dc_current and
-  // foc_current branches; the voltage branch returns without touching it. In
-  // TORQUE(V), Iq/Id were therefore STALE -- left behind by initFOC or the last
-  // TORQUE(I) run -- and every Uq-vs-Iq measurement would have read a frozen
-  // number that looks exactly like data. (|I| from getPhaseCurrents() was always
-  // live, which is why this never showed up before.)
-  // Unfiltered on purpose: LPF_current (Tf = 500 us) is ~2x the electrical time
-  // constant and would dominate any current rise-time fit.
+  // foc_current branches, so in TORQUE(V) Iq/Id would be STALE. Refreshed here,
+  // unfiltered on purpose: LPF_current (Tf = 250 us) is longer than tau_e
+  // (~200 us) and would dominate any current rise-time fit.
   if (cs_linked && mode == MODE_TORQUE) {
     motor.current = currentSense.getFOCCurrents(motor.electrical_angle);
   } else if (mode == MODE_OPENLOOP) {
@@ -2156,10 +1851,7 @@ void loop() {
     // 'seed' not 'vok': with VBUS_LIVE=false, Vb is the boot measurement and is
     // NOT tracking. Printed so no capture can be read as if it were live.
     SerialUART.print(F(" Vb_src=")); SerialUART.print(VBUS_LIVE ? F("live") : F("seed"));
-    // DIAGNOSTIC -- the DMA path's raw view of the same pin, so every routine
-    // that already runs (phase 3, M2, free spin, burst captures) carries the
-    // H7 load test for free. Vdma-Vb flat across current bounds H7; growth
-    // disqualifies live Vbus. Delete with the rest of the DMA-offset work.
+    // DIAGNOSTIC: the DMA path's raw view of the same pin (see Vdma above).
     printVdma();
     // SPI link health. perr is CUMULATIVE since boot: any nonzero value means
     // frames are being corrupted and the angle was stale for that many cycles.
