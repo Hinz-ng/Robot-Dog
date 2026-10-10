@@ -2,9 +2,6 @@
 // ============================================================================
 // mt6816.h -- MT6816 14-bit absolute encoder, 4-wire SPI, bit-banged.
 // ============================================================================
-// EXTRACTED VERBATIM from open_test.cpp (2026-09-10). Byte-identical binary was
-// the acceptance gate for the move, so nothing here changed behaviour.
-//
 // Layer: bottom. Depends ONLY on Arduino GPIO, SimpleFOC's Sensor base and
 // ENC_RAD_PER_COUNT / ENC_CPR from fleet_config.h. It includes NOTHING upward --
 // in particular it does not touch SerialUART, motor, driver or currentSense, so
@@ -41,10 +38,7 @@ const uint8_t SPI_SCK_BIT  = 8;    // PB8  (chip pin 7, was ABZ 'Z') -- BOOT0
 // TSCKL/TSCKH 30 ns each. Measured frame times (2 frames per angle read):
 //    8 NOPs -> SCK 7.7 MHz, 2.1 us/frame     20 NOPs -> 3.7 MHz, 4.3 us/frame
 //   30 NOPs -> SCK 2.6 MHz, 6.2 us/frame     40 NOPs -> 2.0 MHz, 8.1 us/frame
-// START CONSERVATIVE. Dupont wire next to a 25 kHz inverter switching 10 A is a
-// worse signal-integrity problem than 15 kHz quadrature was; slow is free here
-// because 2 frames at 30 NOPs cost 12.4 us of a 74 us loop. Only speed up if
-// the loop rate actually hurts, and re-run 'e' after every change.
+// If parity errors appear, slow down and re-run 'e'.
 const uint8_t SPI_HALF_NOPS = 1; // 6.65 us/read measured.
 
 static inline void spiHalf() {
@@ -58,19 +52,10 @@ static inline void spiHalf() {
 // error rate from 'e' is known to be zero.
 const bool  SPI_JUMP_GUARD  = false;
 const float SPI_MAX_JUMP    = 1.0f;    // rad mechanical between consecutive reads
-// *** THE GUARD COULD LATCH, AND THAT IS WHY IT IS STILL OFF. Found 2026-09-20. ***
-// On rejection last_ok_rad was NOT updated, so once the shaft parked further than
-// SPI_MAX_JUMP from the last accepted sample, EVERY later sample was more than
-// SPI_MAX_JUMP away too and the angle froze until reboot. Not hypothetical: the
-// wrap keeps |d| <= PI, so any rest position >1.0 rad from last_ok is a permanent
-// lockout. A 600 ms logDump() with the shaft at 96 rad/s is enough to enter it.
-// A frozen angle with the motor ARMED is the §12 frozen-vector case -- the field
-// stops tracking the rotor and back-EMF comes into anti-phase. That is the worst
-// outcome available here, and the guard would have caused it.
-//
-// So the guard now FORCE-ACCEPTS after this many consecutive rejections. Worst
-// case a corrupted sample is held for SPI_JUMP_MAX_RUN loops (~0.2 ms) instead
-// of forever, and the mechanism cannot latch.
+// The guard FORCE-ACCEPTS after this many consecutive rejections. Without it, a
+// rest position more than SPI_MAX_JUMP from the last accepted sample froze the
+// angle until reboot -- with the motor armed, a frozen commutation vector
+// (FAILURE_MODES §12). A corrupted sample is held at most ~0.2 ms.
 const uint8_t SPI_JUMP_MAX_RUN = 3;
 
 class MT6816SPI : public Sensor {
@@ -96,8 +81,7 @@ public:
     GPIOB->BSRR = (1UL << SPI_CSN_BIT) | (1UL << SPI_SCK_BIT);
     GPIOB->BSRR = (1UL << (SPI_MOSI_BIT + 16));
 
-    // TPwrUp is 16 ms from VDD. setup() has already burned 2 s on the serial
-    // delay, so the chip is long ready -- but be explicit rather than lucky.
+    // TPwrUp is 16 ms from VDD: wait explicitly rather than rely on boot delays.
     delay(20);
 
     last_ok_rad = 0.0f;

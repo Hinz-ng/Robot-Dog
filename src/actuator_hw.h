@@ -5,39 +5,19 @@
 #include "joint_cal.h"
 #include "mt6816.h"
 // ============================================================================
-// actuator_hw.h -- the actuator's hardware objects.
+// actuator_hw.h -- the actuator's hardware objects and init order.
 // ============================================================================
-// EXTRACTED VERBATIM from open_test.cpp (2026-09-10) as stage 3a: a pure
-// RELOCATION, gated on identical section sizes and an unchanged symbol table.
-// Stage 3b then moved the init ORDER, the boot Vbus seed and the CFG banner
-// here (actuatorInitHw / actuatorInitMotor / printCfgBanner / runInitFOC). That
-// was a restructure, so its gate was the bench, not a hash: BENCH-ACCEPTED on
-// J01, 2026-10-01 -- CFG fields all match, parity 0/20000 at 6.65 us, V 2.51
-// deg elec, locked |I|/Iq 1.222 at 1.0 A, auto-stop at 20 s (README 15).
+// Shared by the bench harness and Tier 0. Include it AFTER VBUS_FALLBACK is
+// defined (vbus_filt is initialised from it).
 //
-// Include point is DERIVED, not chosen: it must sit AFTER VBUS_FALLBACK (which
-// vbus_filt is initialised from) and BEFORE vbusProbe(), which uses `motor`.
+// UNIT RISK: every current crossing this boundary is REPORTED amps
+// (current_limit, PI limits, the banner's Imax). i_scale enters only through
+// joint_cal.h's torque boundary; a torque in N.m must never reach motor.target
+// or current_limit by any other route.
 //
-// ---------------------------------------------------------------------------
-// *** UNIT RISK -- EVERY CURRENT THAT CROSSES THIS BOUNDARY IS REPORTED AMPS. ***
-// ---------------------------------------------------------------------------
-// And that is the permanent rule, not a pending fix (fleet_config.h, decided
-// 2026-10-01). Every limit below -- current_limit, the PI limits, the Imax
-// passed to printCfgBanner() -- is A_rep and is never converted. i_scale
-// (J01 0.9621, J02 0.9690) enters ONLY through joint_cal.h's torque boundary,
-// torqueOutToIrep() / irepToTorqueOut(), and tauOutCmdToIq() for commands. A
-// torque in N.m must never reach motor.target or current_limit by any other
-// route: that is the exact place a silent 3-4% error would enter the robot.
-//
-// ---------------------------------------------------------------------------
-// ODR -- READ BEFORE INCLUDING THIS FROM A SECOND TRANSLATION UNIT.
-// ---------------------------------------------------------------------------
-// This header DEFINES these objects rather than declaring them. That is correct
-// and harmless while open_test.cpp is the only TU, and it is a MULTIPLE
-// DEFINITION error the first time Tier-0 includes it from two. The fix is an
-// .h/.cpp pair -- which reopens the static-allocation question this refactor
-// deliberately leaves closed (RAM is at 73.9%, ~8.5 kB headroom), so it is
-// sequenced after Tier-0 starts, not now.
+// ODR: this header DEFINES its objects. Fine while each build has one
+// translation unit (open_test.cpp, tier0_main.cpp); a second TU including it
+// needs an .h/.cpp split.
 // ============================================================================
 
 BLDCMotor motor = BLDCMotor(MOTOR_POLE_PAIRS);
@@ -46,7 +26,7 @@ BLDCDriver6PWM driver = BLDCDriver6PWM(
     A_PHASE_VH, A_PHASE_VL,
     A_PHASE_WH, A_PHASE_WL
 );
-// Clone sense chain is gain-compensated -> genuine constants. Do not change.
+// 3 mOhm shunts (R003), same as the genuine board. The absolute scale error is i_scale (M2), not this constructor.
 LowsideCurrentSense currentSense = LowsideCurrentSense(0.003f, -64.0f/7.0f, A_OP1_OUT, A_OP2_OUT, A_OP3_OUT);
 
 MT6816SPI encoder = MT6816SPI();           // ENC_BITS-bit absolute, ENC_CPR counts/rev
@@ -70,9 +50,8 @@ bool  vbus_valid          = false;
 // forbidden on this board. See the SEED-ONLY block in open_test.cpp.
 // ---------------------------------------------------------------------------
 
-// Everything the caller must decide. Bench policy does NOT live in this header:
-// open_test.cpp's envelope is a harness envelope and the robot will not inherit
-// it (claude.md's three-homes table), so it is passed in rather than defined.
+// Everything the caller must decide. Policy is passed in, not defined here: the
+// harness envelope is not the robot's (CLAUDE.md, three homes).
 struct ActuatorHwCfg {
   float    driver_volt_limit;  // SVPWM MODULATION REFERENCE, not a safety limit
   float    dead_zone;
@@ -96,23 +75,11 @@ static bool actuatorInitHw(const ActuatorHwCfg& cfg, Print& out) {
   // it afterwards (see the |I|/Iq gate in the verification procedure).
   analogReadResolution(12);                  // default is 10-bit; 2 bits for free
   pinMode(cfg.pin_vbus, INPUT_ANALOG);           // detach digital buffer, unload divider
-  // THE SEED IS ALREADY AVERAGED, AND THAT MATTERS FOR HOW ITS SCATTER IS READ.
-  // 64 samples with the first conversion discarded. So when 5 back-to-back power
-  // cycles on J02 (2026-08-20) gave four boots at 12.29 V and ONE at 12.34 --
-  // 5.9 counts, 0.05 V -- that outlier CANNOT be per-sample ADC noise: white
-  // noise is suppressed 8x by this mean, and 5.9 counts of it would need a
-  // per-sample sd of ~47 counts, which nothing here shows. The "unaveraged seed"
-  // explanation offered for it is therefore WRONG, and README section 24.14 has
-  // been corrected. Whatever moves it -- pack recovery between power cycles is
-  // the leading candidate, since the pack is unplugged each time -- is a real
-  // per-boot offset common to all 64 samples, and averaging harder cannot touch
-  // it.
-  // WHY IT IS NOT COSMETIC: this value IS driver.voltage_power_supply, which is
-  // the divisor velocityOpenloop() uses, so it lands 1:1 on M2's g. A boot at
-  // 12.34 instead of 12.19 would have biased J02's g by +1.23% -- larger than
-  // J01's entire error budget, with NO symptom in the data. The mitigation is
-  // procedural and it is in CALIBRATION.md's M2 row: compare the banner against
-  // the meter at session start, and REBOOT if they differ by more than 0.03 V.
+  // 64 samples, first conversion discarded. The remaining boot-to-boot scatter
+  // (up to 0.05 V on J02) is a real per-boot offset, not ADC noise, so more
+  // averaging cannot remove it. This value is driver.voltage_power_supply and
+  // lands 1:1 on M2's g: compare banner vs meter at session start and reboot if
+  // they differ by more than 0.03 V.
   {
     uint32_t acc = 0;
     (void)analogRead(cfg.pin_vbus);   // discard: first conversion carries residue
@@ -126,37 +93,16 @@ static bool actuatorInitHw(const ActuatorHwCfg& cfg, Print& out) {
     }
   }
   driver.voltage_power_supply = vbus_filt;
-  // driver.voltage_limit is NOT a safety limit -- it is the SVPWM MODULATION
-  // REFERENCE. setPhaseVoltage() normalises Ud/Uq against it and (with the
-  // library default modulation_centered = 1) centres the modulation at
-  // driver.voltage_limit/2. So this one number sets BOTH the achievable phase
-  // voltage, rail/sqrt(3) = 3.46 V, AND the common-mode duty centre,
-  // 6.0/12.46 = 24% rather than 50%.
-  //
-  // WHAT RAISING IT WOULD AND WOULD NOT INVALIDATE (an earlier note here said
-  // "it invalidates R_eff and U0" -- the R_eff half of that was WRONG):
-  //   R_eff, Ke  IMMUNE. Ua = Ta*driver_vl while Ta ~ Uout = Uq/driver_vl, so
-  //              the factor cancels: the DIFFERENTIAL phase voltage depends on
-  //              commanded Uq alone. The star point floats, so only the
-  //              differential drives current. Both were fit against commanded
-  //              Uq, so both survive unchanged.
-  //   U0         AFFECTED. It is the dead-time / body-diode intercept, and
-  //              moving the duty centre 24% -> 50% changes the regime it was
-  //              measured in. Re-run phase 3 (which re-checks R_eff too, and
-  //              so tests the cancellation argument above rather than assuming
-  //              it).
-  //   LOW-SIDE   AFFECTED, and this is the one to watch. LowsideCurrentSense
-  //   SENSING    samples while the low-side FETs conduct. At a 24% centre the
-  //              low side is on ~76% of the time -- a comfortable window. At a
-  //              50% centre with high modulation that window shrinks, which is
-  //              a known failure mode on this board family. Confirm phase 1 and
-  //              the phase-5 |I| ratio after any change.
+  // driver.voltage_limit is the SVPWM MODULATION REFERENCE, not a safety limit:
+  // it sets the phase-voltage ceiling (6.0/sqrt(3) = 3.46 V) and, with
+  // modulation_centered, the duty centre (6.0/12.46 = 24%). Raising it leaves
+  // R_eff and Ke unchanged (the factor cancels in the differential voltage) but
+  // changes U0 and the low-side current-sense window: afterwards re-run phase 3
+  // and check phase 1 and the phase-5 |I| ratio (CONSTANTS §8.3).
   driver.voltage_limit = cfg.driver_volt_limit;
   driver.dead_zone     = cfg.dead_zone;
-  // Assigned explicitly so the CFG banner prints a NUMBER. Left unset it stays
-  // at NOT_SET and the banner printed -12345 -- a sentinel that reads like data.
-  // The STM32 HAL substitutes exactly 25000 when unset, so this changes nothing
-  // but the banner. "A library default is a decision nobody made."
+  // Assigned so the banner prints a number (NOT_SET reads -12345); the HAL uses
+  // exactly 25000 when it is unset.
   driver.pwm_frequency = cfg.pwm_hz;
   const bool driver_ok = driver.init();
   out.println(driver_ok ? F("driver OK") : F("driver FAILED"));
@@ -233,18 +179,13 @@ static void printCfgBanner(Print& out, float driver_volt_limit, float curr_max_A
   else                  out.print(F("? R_eff NOT MEASURED"));
   out.print(F("A) spi_nops=")); out.print(SPI_HALF_NOPS);
   out.print(F(" jump_guard=")); out.print(SPI_JUMP_GUARD ? 1 : 0);
-  // Read back from the register, not from the flag: the fetch path can set the
-  // loop rate in every mode (fleet_config.h, FLASH_PREFETCH), so a capture must
-  // be traceable to the one it ran under. Pre-2026-10-01 builds: prefetch=0
-  // flash_ws=8. (Prefetch itself measured no loop-rate effect, 2026-10-02.)
+  // Read back from the register, not the flag, so every capture is traceable to
+  // the fetch path it ran under (FLASH_PREFETCH, fleet_config.h).
   out.print(F(" prefetch=")); out.print((FLASH->ACR & FLASH_ACR_PRFTEN) ? 1 : 0);
   out.print(F(" flash_ws="));  out.println((uint32_t)(FLASH->ACR & FLASH_ACR_LATENCY));
 }
 
-// Alignment. Reads CAL.zea / CAL.dir from joint_cal.h directly rather than
-// open_test.cpp's ZEA_STORED / DIR_STORED aliases, so this stays one-directional.
-// foc_ready and target are references because the original mutated the harness
-// globals of those names; behaviour is unchanged, the coupling is not.
+// Alignment. Reads CAL.zea / CAL.dir directly so this header stays one-directional.
 static void runInitFOC(bool force_align, bool is_running, bool& foc_ready, float& target, Print& out) {
   if (is_running) { out.println(F("stop first (x)")); return; }
   bool use_stored = (!force_align && CAL.zea >= 0.0f && CAL.dir != 0);
@@ -255,8 +196,7 @@ static void runInitFOC(bool force_align, bool is_running, bool& foc_ready, float
     out.println(F("initFOC: STORED ZEA -- no alignment, no twitch."));
   } else {
     motor.zero_electric_angle = NOT_SET;
-    // Direction must be DETECTED on this board: the SPI angle convention is not
-    // the TIM4 count convention. Pin it only once CAL.dir has been measured.
+    // Direction is detected unless CAL.dir has been measured.
     motor.sensor_direction = (CAL.dir > 0) ? Direction::CW
                            : (CAL.dir < 0) ? Direction::CCW
                                               : Direction::UNKNOWN;
