@@ -1268,11 +1268,15 @@ void encoderSelfTest() {
   // structurally cannot see. Reporting it and then ignoring it was worse than
   // not measuring it, because it made a bad link print the word "clean".
   const uint16_t span = (hi > lo) ? (uint16_t)(hi - lo) : 0;
-  if (errs == 0 && oks == N && span == 0) {
+  // ALL-ZERO FRAMES: a dead MISO passed every check above (J03, 2026-10-08).
+  // zero_run counts consecutive 0x0000 frames (mt6816.h); >= N = every read.
+  const bool all_zero = (encoder.zero_run >= N);
+  if (errs == 0 && oks == N && span == 0 && !all_zero) {
     SerialUART.println(F("ENC PASS: link clean (SNAPSHOT -- blind to a bursty fault, use E to soak)"));
   } else {
     SerialUART.println(F("ENC FAIL: check wiring / slow SPI_HALF_NOPS down"));
     if (span) SerialUART.println(F("  span != 0 on a still shaft = corruption that PASSED parity"));
+    if (all_zero) SerialUART.println(F("  every frame 0x0000 = MISO dead, or shaft at exactly count 0: turn it a few degrees, re-run"));
   }
   if (nmg) SerialUART.println(F("!! No_Mag_Warning -- magnet too weak or too far. Angle is GARBAGE."));
 }
