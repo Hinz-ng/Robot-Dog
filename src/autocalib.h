@@ -507,8 +507,7 @@ static bool acNeed(uint8_t n) {
 // acM4Breakaway() already reasons exactly this way; this generalises it.
 static bool acHaveCommutation() {
   if (foc_ready) return true;
-  SerialUART.println(F("refused: no valid alignment. Press 'f' or 'V' to install the stored"));
-  SerialUART.println(F("         ZEA, or run phase 2 to measure a fresh one."));
+  SerialUART.println(F("refused: no valid alignment -- press 'f' or 'V' (stored ZEA) or run phase 2."));
   return false;
 }
 
@@ -540,7 +539,7 @@ static void acP1() {
   if (nmg)  SerialUART.println(F("    !! No_Mag_Warning: magnet weak or far. The angle is garbage."));
   if (errs) SerialUART.println(F("    !! parity errors: raise SPI_HALF_NOPS, check CSN and HVPP->3V3."));
   ac_done[1] = (ac_v_link == AC_PASS);
-  if (ac_done[1]) SerialUART.println(F("    next: hand-spin the shaft and press 1 again, then press 2"));
+  if (ac_done[1]) SerialUART.println(F("    next: 2 (optional: hand-spin the shaft and press 1 again)"));
 }
 
 // ===========================================================================
@@ -626,8 +625,7 @@ static void acP2() {
       SerialUART.print(F(" deg from the FLASHED row, dir "));
       SerialUART.print(ac_dir > 0 ? F("CW") : F("CCW"));
       SerialUART.print(F(" vs ")); SerialUART.println(DIR_STORED > 0 ? F("CW") : F("CCW"));
-      SerialUART.println(F("    *** The binary carries ANOTHER JOINT'S constants. Measured values"));
-      SerialUART.println(F("    *** below are still valid; phase 7 will BLOCK the carried ones."));
+      SerialUART.println(F("    *** Constants in this binary belong to ANOTHER JOINT. Measured values are valid; phase 7 blocks the carried ones."));
     }
   }
 
@@ -689,7 +687,7 @@ static void acP3() {
       ac_rdrop++;
       SerialUART.print(F("    DROP U=")); SerialUART.print(AC_R_V[k], 3);
       SerialUART.print(F(" -- rotor moved ")); SerialUART.print(moved);
-      SerialUART.println(F(" counts (back-EMF would corrupt this point)"));
+      SerialUART.println(F(" counts"));
       continue;
     }
     float I = (float)(acc / n);
@@ -861,9 +859,7 @@ static void acP4() {
   SerialUART.print(F(" drift=")); SerialUART.print(moved);
   SerialUART.print(F("   ")); SerialUART.println(acVs(ac_v_L));
   if (ac_v_L == AC_WARN) SerialUART.println(F("    !! rotor drifted, I_inf weak, or t_d implausible -- refit the bins offline."));
-  SerialUART.println(F("    NOTE: L is measured at 0.9 -> 3.2 A, so it is the INCREMENTAL"));
-  SerialUART.println(F("    inductance near the operating point. Partial saturation and eddy"));
-  SerialUART.println(F("    currents make it legitimately LOWER than a small-signal value."));
+  SerialUART.println(F("    L is the INCREMENTAL inductance at 0.9-3.2 A (lower than small-signal)."));
   ac_done[4] = (ac_v_L != AC_FAIL);
   if (ac_done[4]) SerialUART.println(F("    next: 5"));
 }
@@ -1058,8 +1054,7 @@ static void acP5() {
   SerialUART.print(F("    |I| ratio ")); SerialUART.print(ac_ratio_lo, 3);
   SerialUART.print(F(" .. ")); SerialUART.print(ac_ratio_hi, 3);
   SerialUART.print(F(" (theory 1.2247, squared-domain)   ")); SerialUART.println(acVs(ac_v_ratio));
-  SerialUART.println(F("    NOTE: this is a GROSS-SANITY band only. The tight 1.22-1.23 check"));
-  SerialUART.println(F("    is a LOCKED-ROTOR measurement -- do it by hand in 'c' mode."));
+  SerialUART.println(F("    gross-sanity band only; the tight 1.22-1.23 check is locked-rotor, by hand in 'c'."));
   for (uint8_t d = 0; d < 2; d++) {
     SerialUART.print(d == 0 ? F("    drag fwd  ") : F("    drag rev  "));
     SerialUART.print(F("Iq = ")); SerialUART.print(ac_drag_c[d], 4);
@@ -1070,8 +1065,7 @@ static void acP5() {
   }
   SerialUART.print(F("    ")); SerialUART.println(acVs(ac_v_drag));
   // Belt-off breakaway is far larger than drag_c; belt-on it is ~equal.
-  SerialUART.println(F("    DYNAMIC drag only. STATIC breakaway is a separate number (belt-off"));
-  SerialUART.println(F("    far larger, belt-on ~equal) -- press B / b (M4/B4), fill breakaway_A."));
+  SerialUART.println(F("    Dynamic drag only. Static breakaway: B / b (M4), fill breakaway_A."));
   ac_done[5] = (ac_v_Ke != AC_FAIL);
   if (ac_done[5]) SerialUART.println(F("    next: 6"));
 }
@@ -1242,41 +1236,24 @@ static void acP7() {
   SerialUART.print(F(" vbus_scale=")); SerialUART.print(VBUS_SCALE, 6);
   SerialUART.print(F(" mod=")); SerialUART.println(
       motor.foc_modulation == FOCModulationType::SpaceVectorPWM ? F("SVPWM") : F("SinePWM"));
-  // F2 -- VBUS_SCALE is PER-BOARD and cannot be measured without an external
-  // reference, but every voltage-derived constant scales with it:
-  //     R_measured = R_true * (V_assumed / V_true)
-  // and the same factor lands on U0 and Ke. This is the one input the routine
-  // cannot self-check, so it is demanded explicitly rather than assumed.
   if (ac_zea_mismatch) {
     SerialUART.println();
-    SerialUART.println(F("*** ZEA VERIFY FAILED THIS SESSION. The flashed row is a DIFFERENT JOINT."));
-    SerialUART.println(F("*** Measured values below are VALID -- phase 2 installed a fresh ZEA and"));
-    SerialUART.println(F("*** every phase ran against it. CARRIED values are NOT: id, board_sn,"));
-    SerialUART.println(F("*** motor_sn, vbus_scale, i_scale and breakaway_A all belong to the OTHER"));
-    SerialUART.println(F("*** joint and must be entered by hand. They are blocked in the row below."));
-    SerialUART.println();
+    SerialUART.println(F("*** ZEA VERIFY FAILED: the flashed row is a DIFFERENT JOINT. Measured values are valid."));
+    SerialUART.println(F("*** Carried id, board_sn, motor_sn, vbus_scale, i_scale, breakaway_A are blocked below."));
   }
-  SerialUART.print(F("!! WRITE IN: multimeter Vbus = ______ V   (firmware read "));
-  SerialUART.print(driver.voltage_power_supply, 2); SerialUART.println(F(")"));
-  // > 0.5%: two boards measured 0.80% apart, and J01's own M1 error was 1.08%.
-  SerialUART.println(F("   >0.5% apart -> recalibrate VBUS_SCALE for THIS BOARD before"));
-  SerialUART.println(F("   trusting R_EFF, U0 or KE. They all scale with it."));
-  SerialUART.println(F("   Two boards MEASURED 0.80% apart 2026-08-18: this is not a formality."));
-  SerialUART.println(F("   USE A METER YOU HAVE CHECKED. The original scale was 1.1% low"));
-  SerialUART.println(F("   because of the METER, not the fit, and it stood for eleven days."));
   SerialUART.println();
 
   // ---- verdict table: read this BEFORE pasting anything -------------------
-  SerialUART.println(F("---- MEASURED (read every verdict before you paste) ----"));
+  SerialUART.println(F("---- MEASURED ----"));
   acPrintVal(F("zea    "), ac_zea, 4, ac_done[2], ac_v_zea, F("rad elec, wrap-safe median"));
   SerialUART.print(F("  dir    "));
   if (ac_done[2]) SerialUART.print(ac_dir > 0 ? F("CW (+1)") : F("CCW (-1)"));
   else            SerialUART.print(F("--"));
   SerialUART.print(F("\t[")); SerialUART.print(ac_done[2] ? acVs(ac_v_zea) : F("MISSING"));
   SerialUART.println(F("]  inverts torque if wrong"));
-  acPrintVal(F("R_eff  "), ac_R,  5, ac_done[3], ac_v_R,  F("ohm, slope of the self-locked sweep"));
-  acPrintVal(F("U0     "), ac_U0, 5, ac_done[3], ac_v_U0, F("V, INTERCEPT -- the weak parameter of that fit"));
-  acPrintVal(F("Ke     "), ac_Ke, 6, ac_done[5], ac_v_Ke, F("V/(rad/s), both directions in one fit"));
+  acPrintVal(F("R_eff  "), ac_R,  5, ac_done[3], ac_v_R,  F("ohm, locked-sweep slope"));
+  acPrintVal(F("U0     "), ac_U0, 5, ac_done[3], ac_v_U0, F("V, intercept (weak)"));
+  acPrintVal(F("Ke     "), ac_Ke, 6, ac_done[5], ac_v_Ke, F("V/(rad/s), both directions"));
   acPrintVal(F("L (uH) "), ac_L*1e6f, 2, ac_done[4], ac_v_L, F("incremental at ~3 A"));
   if (ac_done[5]) {
     acPrintVal(F("drag_c_fwd "), ac_drag_c[0], 4, true, ac_v_drag, F("A"));
@@ -1287,12 +1264,12 @@ static void acP7() {
     // cannot check vbus_scale (Ke is computed through it); it does exclude a
     // grossly wrong KV (KV380 lands 7-8% out).
     SerialUART.print(F("  Kt     ")); SerialUART.print(KT_PER_KE*ac_Ke, 6);
-    SerialUART.print(F("\tDERIVED = 1.5*Ke, never stored. vs nameplate KV"));
+    SerialUART.print(F("\tderived 1.5*Ke; vs KV"));
     SerialUART.print(MOTOR_KV_NAMEPLATE, 0); SerialUART.print(F(" = "));
     SerialUART.print(60.0f/(_2PI*MOTOR_KV_NAMEPLATE), 6);
     SerialUART.print(F("  ("));
     SerialUART.print(100.0f*(KT_PER_KE*ac_Ke*_2PI*MOTOR_KV_NAMEPLATE/60.0f - 1.0f), 2);
-    SerialUART.println(F("%) -- NAMEPLATE check only. It CANNOT check vbus_scale: Ke comes from it. Run M1."));
+    SerialUART.println(F("%) nameplate check only, not vbus_scale"));
   }
   SerialUART.println();
 
@@ -1334,8 +1311,7 @@ static void acP7() {
   // into a pasteable row is how one joint's calibration silently becomes two.
   SerialUART.print(F("     "));
   if (ac_zea_mismatch) {
-    SerialUART.print(F("0.0f, 1.0f,   // vbus_scale, i_scale  *** CARRY BLOCKED --"));
-    SerialUART.println(F(" ZEA VERIFY FAILED, these were ANOTHER JOINT'S. Run M1 and M2. ***"));
+    SerialUART.println(F("0.0f, 1.0f,   // vbus_scale, i_scale  *** CARRY BLOCKED -- run M1, M2 ***"));
   } else {
     SerialUART.print(CAL.vbus_scale, 6);
     SerialUART.print(F("f, ")); SerialUART.print(CAL.i_scale, 4);
@@ -1353,8 +1329,7 @@ static void acP7() {
 
   SerialUART.print(F("     "));
   if (ac_zea_mismatch) {
-    SerialUART.print(F("0.0f },  // breakaway_A  *** CARRY BLOCKED -- was ANOTHER"));
-    SerialUART.println(F(" JOINT'S. Run M4. ***"));
+    SerialUART.println(F("0.0f },  // breakaway_A  *** CARRY BLOCKED -- run M4 ***"));
   } else {
     SerialUART.print(CAL.breakaway_A, 4);
     SerialUART.print(F("f },                   // breakaway_A  CARRIED (M4)"));
@@ -1363,7 +1338,7 @@ static void acP7() {
   }
   SerialUART.println();
 
-  SerialUART.println(F("---- DIAGNOSTICS (not per-unit constants) ----"));
+  SerialUART.println(F("---- DIAGNOSTICS ----"));
   if (ac_done[1]) {
     SerialUART.print(F("SPI link       ")); SerialUART.print(ac_link_us, 2);
     SerialUART.print(F(" us/read, ")); SerialUART.print(ac_link_err);
@@ -1378,16 +1353,14 @@ static void acP7() {
     if (fl > 1.0f) {
       SerialUART.print(F(" -> T/T_loop=")); SerialUART.print(ac_T[AC_BIN_SPEEDS-1]*fl, 3);
       SerialUART.println(F("  (expect ~0.95-0.98: T is ONE loop period)"));
-      SerialUART.println(F("  T is NOT per-unit. It scales with 1/f_loop, so the sketch's own"));
-      SerialUART.println(F("  T = T/T_loop divided by the sketch's f_loop, not this number."));
     } else SerialUART.println();
     SerialUART.print(F("  torque loss at 270 rad/s = "));
     SerialUART.print(100.0f*(1.0f - cosf((float)MOTOR_POLE_PAIRS*270.0f*ac_T[AC_BIN_SPEEDS-1])), 3);
     SerialUART.println(F(" %"));
     SerialUART.print(F("INL pk-pk      ")); SerialUART.print(ac_inl_pp/(float)MOTOR_POLE_PAIRS, 3);
-    SerialUART.println(F(" deg MECH -- fit 1/rev vs 2/rev offline from the bins below"));
+    SerialUART.println(F(" deg mech (fit 1/rev vs 2/rev offline)"));
     SerialUART.print(F("ZEA residual   ")); SerialUART.print(ac_zea_resid, 3);
-    SerialUART.println(F(" deg elec -- independent check on the installed ZEA"));
+    SerialUART.println(F(" deg elec"));
   }
   if (ac_done[5]) {
     SerialUART.print(F("|I| ratio      ")); SerialUART.print(ac_ratio_lo, 3);
@@ -1435,7 +1408,7 @@ static void acP7() {
     float Td = (fl > 1.0f) ? tDelayAt(fl) : 0.0f;
     if (Td > 0.0f) { SerialUART.print(1.0f/(3.0f*Td), 0); SerialUART.print(F(" Hz")); }
     else           { SerialUART.print(F("(run 6 for f_loop)")); }
-    SerialUART.println(F("  -- the formula above ignores it. Do not apply blind."));
+    SerialUART.println(F("  -- not in the formula above. Do NOT paste these gains."));
   }
 
   if (ac_done[6]) {
@@ -1507,18 +1480,15 @@ void acVerifyZea() {
   SerialUART.println();
   if (mdir != DIR_STORED) {
     ac_zea_mismatch = true;
-    SerialUART.println(F("    *** FAIL: DIRECTION MISMATCH. Wrong joint's constants, or the"));
-    SerialUART.println(F("    *** magnet mount has been rebuilt. Do NOT run this firmware."));
+    SerialUART.println(F("    *** FAIL: DIRECTION MISMATCH -- wrong joint's constants or rebuilt magnet mount."));
   } else if (ddeg > 15.0f) {
     ac_zea_mismatch = true;
-    SerialUART.println(F("    *** FAIL: >15 deg. Almost certainly the WRONG JOINT's constants,"));
-    SerialUART.println(F("    *** or the magnet has slipped on the shaft. Re-run autocalib."));
+    SerialUART.println(F("    *** FAIL: >15 deg -- wrong joint's constants or slipped magnet."));
   } else if (ddeg > 8.0f) {
     // WARN deliberately does NOT set ac_zea_mismatch. 8-15 deg is "check the
     // magnet mount", not "this is a different joint" -- blocking the carry here
     // would make the routine cry wolf on a slightly disturbed mount.
-    SerialUART.println(F("    !! WARN: >8 deg, well outside alignment scatter (sd ~3.4 deg)."));
-    SerialUART.println(F("    !! Check the magnet mount before trusting torque numbers."));
+    SerialUART.println(F("    !! WARN: >8 deg (scatter sd ~3.4 deg) -- check the magnet mount."));
   } else {
     SerialUART.println(F("    OK: within alignment scatter. Stored ZEA is good."));
   }
@@ -1530,7 +1500,7 @@ void acVerifyZea() {
   acExit(true);
   SerialUART.println(F("    stored ZEA reinstalled."));
   if (ac_zea_mismatch)
-    SerialUART.println(F("    *** phase 7 will now BLOCK the carried fields. See its header. ***"));
+    SerialUART.println(F("    *** phase 7 will BLOCK the carried fields. ***"));
 }
 
 // ===========================================================================
@@ -1570,11 +1540,8 @@ static void acM2Assist() {
   // Needs valid commutation only for comparability with phase 3 (same gate).
   if (!acHaveCommutation()) return;
 
-  SerialUART.println(F("[M2] BUS-POWER LADDER.  Rotor self-locks -- HANDS OFF THE SHAFT."));
-  SerialUART.println(F("     At each point: let the meter settle (~10 s), write down Vbus and"));
-  SerialUART.println(F("     Ibus next to the I_reported line, then press any key for the next."));
-  SerialUART.println(F("     Press 3 immediately BEFORE and AFTER this run -- cold and hot R_eff"));
-  SerialUART.println(F("     bracket the thermal drift instead of leaving it in the fit."));
+  SerialUART.println(F("[M2] BUS-POWER LADDER. Rotor self-locks -- HANDS OFF THE SHAFT."));
+  SerialUART.println(F("     Run 3 just before and after (cold/hot R_eff). At each point write Vbus and Ibus (0.1 mA) beside its M2, line, then any key."));
   acEnter();
   mode = MODE_OPENLOOP;
   motor.controller = MotionControlType::velocity_openloop;
@@ -1638,22 +1605,15 @@ static void acM2Assist() {
     SerialUART.print(',');      SerialUART.print(moved);
     SerialUART.print(',');      SerialUART.print(vd_mean, 4);
     SerialUART.print(',');      SerialUART.println(vd_n);
-    SerialUART.print(F("    Uq=")); SerialUART.print(AC_M2_V[k], 3);
-    SerialUART.print(F(" I_reported=")); SerialUART.print(n ? (float)(acc / n) : 0.0f, 4);
-    SerialUART.print(F(" A, Vdma=")); SerialUART.print(vd_mean, 4);
-    SerialUART.print(F(", drift ")); SerialUART.print(moved);
-    SerialUART.println(F(" cnt   <- write Vbus and Ibus against THIS line"));
+    SerialUART.print(F("    I_reported=")); SerialUART.print(n ? (float)(acc / n) : 0.0f, 4);
+    SerialUART.print(F(" A  drift=")); SerialUART.print(moved);
+    SerialUART.println(F(" cnt"));
     if (acAbs32(moved) > AC_R_STILL_CNT)
-      SerialUART.println(F("    !! rotor MOVED -- this point is invalid, redo it"));
+      SerialUART.println(F("    !! rotor MOVED -- point invalid, redo it"));
   }
   acExit(true);
   if (ac_abort) SerialUART.println(F("[M2] ABORTED by a guard, not by you -- discard the last point."));
-  SerialUART.println(F("[M2] done. Press 3 NOW for hot R_eff (the thermal bracket)."));
-  SerialUART.println(F("     Fit BOTH offline, from THIS run's own data:"));
-  SerialUART.println(F("       P_bus = a + b*I + c*I^2      and      U_del = U0 + R*I"));
-  SerialUART.println(F("       g = 1.5*R/c   <- R is the SELF-FIT slope above, NOT a phase-3 R."));
-  SerialUART.println(F("     U_del uses the meter burden: V_term = V_s - Ibus*R_b, R_b UNPOWERED."));
-  SerialUART.println(F("     See CALIBRATION.md M2 for the full procedure and the error budget."));
+  SerialUART.println(F("[M2] done. Press 3 NOW (hot R_eff). Fit offline: g = 1.5*R/c, R = this ladder's own slope (CALIBRATION M2)."));
 }
 
 // ===========================================================================
@@ -1685,17 +1645,14 @@ static void acM4Breakaway(float sgn) {
   // installed by 'f'/'V', or a fresh phase 2. acNeed(2) would wrongly refuse
   // the first and acNeed(1) would wrongly allow neither.
   if (!foc_ready) {
-    SerialUART.println(F("refused: no valid alignment. Press 'f' or 'V' (stored ZEA), or run"));
-    SerialUART.println(F("         phase 2. This ramp is FOC current -- a wrong ZEA invalidates it."));
+    SerialUART.println(F("refused: no valid alignment -- press 'f' or 'V' (stored ZEA) or run phase 2."));
     return;
   }
-  SerialUART.print(F("[M4] BREAKAWAY ramp, direction "));
+  SerialUART.print(F("[M4] breakaway "));
   SerialUART.print(sgn > 0 ? F("+") : F("-"));
-  SerialUART.print(F("   pulley bare, LEG NOT ATTACHED.  Row says belt="));
+  SerialUART.print(F("  output free, leg off, row belt="));
   SerialUART.print(CAL.belt);
-  SerialUART.print(F(" -- the reading describes whatever is ACTUALLY fitted, so"));
-  SerialUART.println(F(" tag it. start raw="));
-  SerialUART.print(F("     ")); SerialUART.println(encoder.raw);
+  SerialUART.print(F("  start raw=")); SerialUART.println(encoder.raw);
   acEnter();
   mode = MODE_TORQUE_CURRENT;                       // 'c' mode -- FOC current
   motor.torque_controller = TorqueControlType::foc_current;
@@ -1727,8 +1684,7 @@ static void acM4Breakaway(float sgn) {
   if (ac_abort) { SerialUART.println(F("    aborted -- discard")); return; }
   if (!moved) {
     SerialUART.print(F("    NO MOTION up to ")); SerialUART.print(AC_M4_ABORT_A_rep, 3);
-    SerialUART.println(F(" A -- something is rubbing. Check bearing preload and"));
-    SerialUART.println(F("    that the magnet is not skimming the sensor (gap 0.5-1.0 mm, NEVER zero)."));
+    SerialUART.println(F(" A -- check bearing preload and magnet gap (0.5-1.0 mm)."));
     return;
   }
   // Machine-readable, alone on its line and fully comma-delimited, so a whole
@@ -1750,17 +1706,13 @@ static void acM4Breakaway(float sgn) {
   // ~0.01 A per 200 counts; creep speed is not recorded, so do not subtract it).
   if (acAbs32(travel) > AC_M4_WARN_CNT) {
     SerialUART.print(F("    !! long pre-slide creep (")); SerialUART.print(travel);
-    SerialUART.println(F(" cnt) -- reading is biased HIGH. Compare against the other positions."));
+    SerialUART.println(F(" cnt) -- biased HIGH, redo this position."));
   }
   if (i > AC_M4_WARN_A_rep) {
     SerialUART.print(F("    !! > ")); SerialUART.print(AC_M4_WARN_A_rep, 2);
-    SerialUART.println(F(" A -- outside the measured plant spread (+5 sigma on J01). Investigate."));
+    SerialUART.println(F(" A -- +5 sigma outlier. Investigate."));
   }
-  SerialUART.println(F("    Rotate the shaft ~40 deg by hand and repeat -- 5 positions per direction."));
-  SerialUART.println(F("    Let it SETTLE into a cogging detent before the next reading -- a rotor"));
-  SerialUART.println(F("    left mid-creep is still elastically loaded and will break away far too"));
-  SerialUART.println(F("    easily in the OPPOSITE direction (J02 gave 0.0350 A that way, 1/4 of"));
-  SerialUART.println(F("    the truth, after 583 counts of unexplained forward motion)."));
+  SerialUART.println(F("    Next: turn ~40 deg by hand (5 positions per direction), let go, wait 2 s to settle into a detent."));
 }
 
 // ===========================================================================
@@ -1772,9 +1724,7 @@ static void acStatus() {
     F("2 ALIGN  ZEA + direction"), F("3 R/U0   self-locked, still"),
     F("4 L      step train, locked"), F("5 SPIN   free-spin both dirs (~50 s)"),
     F("6 T/INL  computation only") };
-  SerialUART.println(F("  ('-' then '5' within 0.8s runs phase 5 reverse-first, for the"));
-  SerialUART.println(F("   swapped-order repeat -- fwd/rev asymmetry was confounded with"));
-  SerialUART.println(F("   warm-up ordering when every run went forward-first.)"));
+  SerialUART.println(F("  ('-' then '5' within 0.8 s: phase 5 reverse-first)"));
   const uint8_t pre[7] = { 0, 0, 1, 2, 3, 3, 5 };
   for (uint8_t n = 1; n <= 6; n++) {
     SerialUART.print(ac_done[n] ? F("  [x] ") : F("  [ ] "));
@@ -1785,17 +1735,12 @@ static void acStatus() {
   }
   SerialUART.println(F("  Any key aborts a running phase."));
   // Belt-on, 5 is B3 (drag only) and 6's T/T_loop is invalid (BELT_DRIVE §22.1).
-  SerialUART.println(F("  FREE SHAFT is needed by 2, 5 and 6. Belt ON: 5 = drag only (Ke is"));
-  SerialUART.println(F("      contaminated, never carry it); 6's T/T_loop is invalid."));
-  SerialUART.println(F("  1, 3 are LOCKED-ROTOR and belt-agnostic. Leg links off throughout."));
-  SerialUART.println(F("  4 is BELT-OFF ONLY: belt friction makes its step train ratchet the lock"));
-  SerialUART.println(F("      (drift WARN). L is a motor constant -- carry the belt-off value."));
-  SerialUART.println(F("  --- manual-assist, NOT part of the 1..7 chain ---"));
-  SerialUART.println(F("  N = M2 bus-power ladder. BELT-AGNOSTIC (locked rotor). Needs 2 and an"));
-  SerialUART.println(F("      external METER; bracket it with 3. Rotor must not creep -- watch drift."));
-  SerialUART.println(F("  B / b = M4 breakaway ramp, + / - . Needs a valid alignment. Output FREE."));
-  SerialUART.println(F("      Belt-off = M4, belt-on = B4; tag which. 5 positions x 2 dirs."));
-  SerialUART.println(F("  w = swing ladder (B6a). Needs a valid alignment. Output LOCKED. ~80 s."));
+  SerialUART.println(F("  Leg off. 2, 5, 6 need a FREE shaft; 1, 3 are locked-rotor, belt-agnostic."));
+  SerialUART.println(F("  Belt ON: 5 = drag only (never carry Ke), 6's T/T_loop invalid. 4 is belt-off only."));
+  SerialUART.println(F("  --- manual-assist (need a valid alignment) ---"));
+  SerialUART.println(F("  N = M2 bus-power ladder: locked rotor, external meter, bracket with 3."));
+  SerialUART.println(F("  B / b = M4 breakaway +/-: output free, 5 positions x 2 dirs."));
+  SerialUART.println(F("  w = swing ladder: output LOCKED, ~80 s."));
   SerialUART.print(F("  stored: ZEA=")); SerialUART.print(ZEA_STORED, 4);
   SerialUART.print(F(" DIR=")); SerialUART.print(DIR_STORED);
   SerialUART.println(F("   ('V' verifies them against a fresh alignment)"));
@@ -1896,8 +1841,7 @@ static int32_t acSwLeg(float amps, uint16_t ref, const __FlashStringHelper* tag)
 static void acSwingLadder() {
   if (!acReady()) return;
   if (!foc_ready) {
-    SerialUART.println(F("refused: no valid alignment. Press 'f' or 'V' (stored ZEA), or run"));
-    SerialUART.println(F("         phase 2. The swing is FOC current -- a wrong ZEA invalidates it."));
+    SerialUART.println(F("refused: no valid alignment -- press 'f' or 'V' (stored ZEA) or run phase 2."));
     return;
   }
   // Printed FROM AC_SW_I_A_rep, never typed, so the banner cannot drift from it.
@@ -1906,9 +1850,8 @@ static void acSwingLadder() {
     SerialUART.print(k ? '/' : ' ');
     SerialUART.print(AC_SW_I_A_rep[k], 1);
   }
-  SerialUART.println(F(" A. OUTPUT MUST BE LOCKED (clamped or bonded)."));
-  SerialUART.print(F("        belt row says ")); SerialUART.print(CAL.belt);
-  SerialUART.println(F(" -- the reading describes what is ACTUALLY fitted. Tag it."));
+  SerialUART.println(F(" A. Output LOCKED."));
+  SerialUART.print(F("        row belt=")); SerialUART.println(CAL.belt);
   SerialUART.print(F("        1 cnt = ")); SerialUART.print(BELT_MM_PER_COUNT * 1000.0f, 4);
   SerialUART.print(F(" um of belt,  1 tooth = ")); SerialUART.print(ENC_CNT_PER_TOOTH, 1);
   SerialUART.println(F(" cnt"));
@@ -1974,8 +1917,7 @@ static void acSwingLadder() {
       // been mangled by the edit path before (CLAUDE.md grep rule).
       SerialUART.println();
       SerialUART.print(F("  LADDER STOPPED at ")); SerialUART.print(amps, 2);
-      SerialUART.println(F(" A -- the mesh let go. Higher points are not measurable"));
-      SerialUART.println(F("  on this plant, and the belt has moved one tooth. Re-seat before re-running."));
+      SerialUART.println(F(" A -- the mesh let go and the belt moved a tooth. Re-seat before re-running."));
       break;
     }
   }
@@ -2023,10 +1965,9 @@ static void acSwingLadder() {
     const float k_true_kNm = 2.0f * F_per_A / slope_m / 1000.0f;
     SerialUART.print(F("    k_beltline = ")); SerialUART.print(k_true_kNm, 1);
     SerialUART.print(F(" kN/m true   (")); SerialUART.print(k_true_kNm * CAL.i_scale, 1);
-    SerialUART.println(F(" in the pre-2026-10-01 archive conv., Kt x I_rep)"));
+    SerialUART.println(F(" archive conv.)"));
   } else {
-    SerialUART.println(F("    k_beltline: not computable -- slope <= 0 (check the lock) or Ke = 0 (uncalibrated row)."));
+    SerialUART.println(F("    k_beltline: n/a (slope <= 0 or Ke = 0)"));
   }
-  SerialUART.println(F("  NOTE: the SW, rows are the measurement. This fit is a convenience --"));
-  SerialUART.println(F("        refit offline before any constant moves."));
+  SerialUART.println(F("  (SW, rows are the measurement; refit offline.)"));
 }
