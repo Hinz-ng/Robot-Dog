@@ -1,4 +1,4 @@
-# Quadruped Actuator
+# Robot Dog
 
 I'm building a robot dog that can sprint, jump and eventually backflip: 4 kg, 12 joints, every
 part designed and built from scratch. A robot like that is only as good as its leg motors, so
