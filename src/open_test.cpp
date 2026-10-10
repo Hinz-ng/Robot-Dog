@@ -381,8 +381,8 @@ static void adcOffsetDump(const __FlashStringHelper* nm, ADC_TypeDef* a) {
       SerialUART.print((v & ADC_OFR1_SATEN_Msk)     ? F(" SAT]") : F("]"));
     }
   }
-  SerialUART.println(any ? F("   <<< AN OFFSET IS ENABLED -- H6")
-                         : F("   (none enabled -- H6 dead on this instance)"));
+  SerialUART.println(any ? F("   <<< AN OFFSET IS ENABLED")
+                         : F("   (none enabled)"));
 
   const uint32_t cf = a->CALFACT, c2 = a->CFGR2;
   SerialUART.print(nm);
@@ -470,7 +470,7 @@ static void vbusProbe() {
 
   const uint16_t seed_cnt = (VBUS_SCALE > 0.0f)
                           ? (uint16_t)(vbus_filt / VBUS_SCALE + 0.5f) : 0;
-  SerialUART.println(F("\n---- VBUS ADC PROBE v3 (pure read) ----"));
+  SerialUART.println(F("\n---- VBUS ADC PROBE (read-only) ----"));
   SerialUART.print(F("seed Vb=")); SerialUART.print(vbus_filt, 4);
   SerialUART.print(F(" V  scale=")); SerialUART.print(VBUS_SCALE, 6);
   SerialUART.print(F(" -> seed_cnt=")); SerialUART.println(seed_cnt);
@@ -488,7 +488,7 @@ static void vbusProbe() {
   SerialUART.println();
   probeAdcDma(F("ADC1"), ADC1, seed_cnt);
   probeAdcDma(F("ADC2"), ADC2, seed_cnt);
-  SerialUART.println(F("---- end probe v3 ----\n"));
+  SerialUART.println(F("---- end probe ----\n"));
 }
 
 
@@ -838,7 +838,7 @@ void logDump() {
   if (log_dumps > 1) {
     SerialUART.print(F("!! RE-DUMP of capture ")); SerialUART.print(log_seq);
     SerialUART.print(F(" (dump #")); SerialUART.print(log_dumps);
-    SerialUART.println(F(") -- NO new capture since the last dump. Identical data."));
+    SerialUART.println(F(") -- no new capture since the last dump."));
   }
   SerialUART.println(F("# BURST DUMP"));
   SerialUART.print(F("# cap=")); SerialUART.print(log_seq);
@@ -989,11 +989,11 @@ void encoderSelfTest() {
   // zero_run counts consecutive 0x0000 frames (mt6816.h); >= N = every read.
   const bool all_zero = (encoder.zero_run >= N);
   if (errs == 0 && oks == N && span == 0 && !all_zero) {
-    SerialUART.println(F("ENC PASS: link clean (SNAPSHOT -- blind to a bursty fault, use E to soak)"));
+    SerialUART.println(F("ENC PASS (snapshot; use E to soak a bursty fault)"));
   } else {
     SerialUART.println(F("ENC FAIL: check wiring / slow SPI_HALF_NOPS down"));
     if (span) SerialUART.println(F("  span != 0 on a still shaft = corruption that PASSED parity"));
-    if (all_zero) SerialUART.println(F("  every frame 0x0000 = MISO dead, or shaft at exactly count 0: turn it a few degrees, re-run"));
+    if (all_zero) SerialUART.println(F("  every frame 0x0000: MISO dead (or shaft at count 0 -- turn it, re-run)"));
   }
   if (nmg) SerialUART.println(F("!! No_Mag_Warning -- magnet too weak or too far. Angle is GARBAGE."));
 }
@@ -1021,9 +1021,8 @@ void encoderSelfTest() {
 // ---------------------------------------------------------------------------
 void encoderMonitor() {
   if (running) { SerialUART.println(F("stop first (x)")); return; }
-  SerialUART.println(F("ENC MONITOR -- shaft STATIONARY. Flex ONE conductor at a time,"));
-  SerialUART.println(F("  near the connector then at the breakout: PB5 CSN, PB6 MOSI, PB7 MISO,"));
-  SerialUART.println(F("  PB8 SCK, then VCC and GND. Any key stops."));
+  SerialUART.println(F("ENC MONITOR -- shaft still. Flex one conductor at a time (connector, then breakout):"));
+  SerialUART.println(F("  PB5 CSN, PB6 MOSI, PB7 MISO, PB8 SCK, VCC, GND. Any key stops."));
   const uint16_t WIN_MS = 250;
   const uint32_t e0_all = encoder.spi_err;
   uint32_t n_all = 0, win = 0, worst_err = 0;
@@ -1077,7 +1076,7 @@ void printHelp() {
   SerialUART.println(F("--- manual: N=M2 bus-power ladder  B/b=M4 breakaway ramp +/- ---"));
   SerialUART.println(F("--- w: SWING LADDER 0.6/1.0/1.4/1.6 A -- OUTPUT LOCKED, ~80 s, stops on tooth skip ---"));
   SerialUART.println(F("--- '-' then '5' (within 0.8s): phase 5 runs REVERSE first, not forward ---"));
-  SerialUART.println(F("--- m: MIT line commands (B12a). m<Enter> = MIT mode / status, m ? = help ---"));
+  SerialUART.println(F("--- m: MIT line commands. m<Enter> = MIT mode / status, m ? = help ---"));
 }
 
 void startMotor() {
@@ -1207,7 +1206,7 @@ static const uint32_t MIT_LINE_IDLE_MS    = 250;
 static const uint32_t MIT_LINE_HINT_MS    = 2000;
 
 static void mitHelp() {
-  SerialUART.println(F("--- MIT (B12a). Output side, SI: rad, rad/s, N.m, N.m/rad, N.m.s/rad ---"));
+  SerialUART.println(F("--- MIT. Output side, SI: rad, rad/s, N.m, N.m/rad, N.m.s/rad ---"));
   SerialUART.println(F("  m                 enter MIT mode (stopped) / print MIT status"));
   SerialUART.println(F("  m kp 41 kd 0.157  set LIVE fields: pd vd kp kd ff, tf <ms>, tmax <N.m>"));
   SerialUART.println(F("  end a line with Enter or ;  (a monitor with no line ending: use ;)"));
@@ -1466,7 +1465,7 @@ static void mitExec(char* line) {
   if (!running && (c.p_des_rad != 0.0f || c.v_des_rads != 0.0f || c.tau_ff_Nm != 0.0f))
     SerialUART.println(F("  note: stopped -- g clears A pd/vd/ff. Set them after g, or stage them: m b vd 2"));
   if (mit_tau_max_Nm > irepToTorqueOut(MIT_ENV_A_rep))
-    SerialUART.println(F("  !! tmax is above the 1.6 A_rep envelope: the INNER clamp binds first (a5 run 2 only)"));
+    SerialUART.println(F("  !! tmax is above the 1.6 A_rep envelope: the INNER clamp binds first"));
 }
 
 static void mitLineFinish() {
@@ -1603,7 +1602,7 @@ void setup() {
   SerialUART.begin(921600);
   _delay(2000);
   SimpleFOCDebug::enable(&SerialUART);
-  SerialUART.println(F("=== actuator + current mode + MT6816 SPI (bit-banged) ==="));
+  SerialUART.println(F("=== bench harness: MT6816 SPI, FOC current ==="));
   printJointCal(SerialUART);
 
   // ---- HARDWARE BRING-UP, PHASE 1 -- the order lives in actuator_hw.h ----

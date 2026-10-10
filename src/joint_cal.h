@@ -401,7 +401,7 @@ static inline void printJointCal(Print& out) {
   // measured. i_scale = 1.0 puts an undetected common-mode error straight on
   // torque; breakaway = 0 silently zeroes the largest transparency term.
   if (built && CAL.i_scale == 1.0f)
-    out.println(F("  !! i_scale = 1.0 (NOT MEASURED) on a BUILT joint -- run M2. Both built boards read ~0.96."));
+    out.println(F("  !! i_scale = 1.0 (NOT MEASURED) on a BUILT joint -- run M2 (built boards read 0.96-0.98)."));
   // vbus_scale = 0 is the correct state for an UNBUILT row and a defect on a
   // built one: R_eff, U0 and Ke were all measured THROUGH it, so a built joint
   // without M1 is carrying constants scaled by someone else's divider. That is
@@ -413,7 +413,7 @@ static inline void printJointCal(Print& out) {
   // next to i_scale so a built joint says out loud that BOTH are outstanding,
   // rather than one being visible and the other buried in a header.
   if (built)
-    out.println(F("  !! DRIVETRAIN_ETA is BACK-SOLVED, not measured (circular -- see fleet_config.h). M14 replaces it."));
+    out.println(F("  !! DRIVETRAIN_ETA is back-solved, not measured (M14)."));
   if (built && CAL.breakaway_A == 0.0f)
     out.println(F("  !! breakaway_A = 0 on a BUILT joint -- run M4, stiction threshold."));
 }
