@@ -79,7 +79,7 @@ Press **`Y 1 2 3 4 5 6 7`**, one at a time, waiting for each result line. `2` tw
 
 Save the full phase-7 output **verbatim** as `docs/cal/J03/J03_<date>_autocalib (bare motor).csv`.
 
-> **Then¹:** paste the phase-7 row over the J03 row; fill `board_sn`, `motor_sn`, date and `"OFF"`; check `vbus_scale` is the M1 value. Flash `-e J03`, press **`V`**: **≤ 8° elec** and direction matches. 8–15° = check the magnet; > 15° = wrong row or magnet slipped. Commit `joint_cal.h`.
+> **Then:** paste the phase-7 row over the J03 row; fill `board_sn`, `motor_sn`, date and `"OFF"`; check `vbus_scale` is the M1 value. Flash `-e J03`, press **`V`**: **≤ 8° elec** and direction matches. 8–15° = check the magnet; > 15° = wrong row or magnet slipped.
 
 ## Step 4: M2, current scale → `i_scale` (25 min)
 
@@ -112,8 +112,6 @@ Wire this **before powering up**, and leave it in place for all of Step 4. The c
 | `drift=` | within ±3 cnt (encoder jitter; J01 1, J02 3, J03 2 accepted). Creep shows as tens |
 | `g` | 0.95–0.98 (J01 0.9621, J02 0.9690) |
 
-Fleet `i_scale` for later boards is decided at milestone close, not here. Record `g ±` only.
-
 ## Step 5: M4, breakaway → `breakaway_A` (10 min)
 
 Static breakaway (~0.3 A), not phase-5 dynamic drag (~0.1 A). References, motor-alone: J01 0.2923, motor_2 0.2983 A.
@@ -130,19 +128,13 @@ Static breakaway (~0.3 A), not phase-5 dynamic drag (~0.1 A). References, motor-
 
 Store the mean (with n, sd and date) as `breakaway_A`. Save the 10 `M4,` rows as `docs/cal/J03/J03_<date>_M4 (bare motor).csv`. Their raw positions are what later checks repeat, pairwise.
 
-## Step 6: Tier-0 ID, then commit (10 min)
+## Step 6: Tier-0 ID (10 min)
 
 1. `pio run -e T0_J03 -t upload`, then open the monitor on `T0_J03`. From the boot text:
    - `can_proto self-test: PASS`, and `CAN: HSE ready ... NBTP=0x500 ... DAR=1`.
    - **`cs gains after align`: −36.458333 ×3.** This is the evidence for skipping the boot pulses at leg boot.
    - The **`{ "J03", { 0x…, 0x…, 0x… } },`** line → paste into `JOINT_UID[]` (J03 entry).
 2. Flash the harness back: `pio run -e J03 -t upload`.
-3. Commit. `docs/cal/` is git-ignored (`cal*`), so it needs `-f`:
-   ```
-   git add src/joint_cal.h
-   git add -f "docs/cal/J03/"
-   git commit -m "J03 belt-off baseline: M1, AUTOCALIB, M2, M4, Tier-0 UID"
-   ```
 
 ---
 
@@ -159,4 +151,3 @@ Store the mean (with n, sd and date) as `breakaway_A`. Save the 10 `M4,` rows as
 | M4: mean / sd (n = 10) | | 0.20–0.40 / ≤ 0.12 A |
 | cs gains · UID row | | −36.458333 ×3 · recorded |
 
-¹ The former "Step 4" (store the row, `V`) is a follow-on to Step 3, not a separate step.
