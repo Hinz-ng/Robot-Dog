@@ -9,7 +9,7 @@
 // platformio.ini, so the constants are never hand-edited before a flash -- you
 // pick an ENVIRONMENT, not a number:
 //
-//     pio run -e J02 -t upload
+//     pio run -e J01 -t upload
 //
 // WHY HAND-ENTERED AND NOT AUTO-SAVED
 //   AUTOCALIB prints a pasteable row; YOU paste it. Deliberately manual:
@@ -68,6 +68,33 @@ struct JointCal {
                            //   measured it. The stored values are the 0.46 V
                            //   ladder. M2 is immune: it uses its own
                            //   range-matched R_M2 from the same session
+                           //
+                           //   QUANTIFIED 2026-08-30 on J02, two independent
+                           //   phase-3 runs. A quadratic fits the ladder at
+                           //   1.1 mV rms against the straight line's 3.6:
+                           //       U = -0.00439*I^2 + 0.23600*I + 0.01514
+                           //       (repeat run -0.00451 / 0.23683 / 0.01434)
+                           //   The I^2 term reproduces to 2.7% across runs, so
+                           //   it is a real term. Local slope 0.2316 ohm at
+                           //   0.5 A -> 0.2097 at 3.0 A: R_eff falls ~9.5%
+                           //   across the ladder's own range, and the effect on
+                           //   J02 is -2.35% between ladder tops, LARGER than
+                           //   the -1.59% recorded above.
+                           //   TWO CONSEQUENCES:
+                           //   * A straight-line fit's U0 absorbs the curvature.
+                           //     The quadratic's intercept (0.01514 / 0.01434)
+                           //     lands on the stored U0 = 0.014937; the 9-point
+                           //     linear fit inflates it to 0.023. Neither stored
+                           //     constant was ever wrong.
+                           //   * DO NOT EXTRAPOLATE. The fit spans 0.28-2.98 A.
+                           //     The design point is 30 A, ten times beyond it.
+                           //   Mechanism NOT established -- static nonlinearity
+                           //   (dead time / sense INL) and a self-heating
+                           //   transient in the descending ladder's first, and
+                           //   largest, point both predict this shape. The test
+                           //   that separates them is repeating AC_R_V[0] at the
+                           //   END of the ladder. Deliberately not run: it moves
+                           //   no constant today.
 
   // ---- BOARD ----
   float  U0;               // V dead-time offset. Scales with Vbus AND vbus_scale.
@@ -88,7 +115,8 @@ struct JointCal {
                            //   the stored R_eff or L, and you must NOT rescale
                            //   them or the current-loop gains -- see the calKtCmd()
                            //   note below for why. It is applied in exactly ONE
-                           //   place: the torque -> current conversion.
+                           //   place: the torque boundary pair
+                           //   torqueOutToIrep() / irepToTorqueOut(), both ways.
                            //   The DIFFERENT case, easily confused with it: if
                            //   the sense gain is corrected AT SOURCE (in the
                            //   LowsideCurrentSense constructor) then the
@@ -104,7 +132,9 @@ struct JointCal {
                            //              and a single mean field discarded it
   float  breakaway_A;      // A  M4, STATIC threshold. Mean over rotor positions;
                            //    min/max and the direction split go in the row
-                           //    comment. Expect > drag_c, which is DYNAMIC
+                           //    comment. Belt-OFF expect > drag_c, which is
+                           //    DYNAMIC. Belt-ON it need not be: J01's mean
+                           //    equalled drag_c (BELT_DRIVE.md 22.5, R16)
 };
 
 // !!! vbus_scale IS NOT A FLEET CONSTANT -- NOW MEASURED, NOT ESTIMATED !!!
@@ -263,14 +293,72 @@ const JointCal JOINTS[] = {
   //    still (12.24 -> 12.34 moves g by 0.0004), because a uniform voltage-scale
   //    error cancels exactly -- which is also why the 0.02 V banner-vs-meter gap
   //    does NOT justify touching vbus_scale.
-  { "J01", "B-SPI-01", "M-SPI-01", "2026-08-07", "OFF",
-     6.0542f, +1, 0.22346f,        // zea, dir, R_eff      M1-rescaled, see below
-     0.01037f,                     // U0                   M1-rescaled
-     0.017941f, 43.77e-6f,         // Ke, L   (Kt = calKt() = 0.026912)  M1-rescaled
-     0.008448f, 0.9621f,           // vbus_scale (M1 2026-08-18), i_scale (M2 2026-08-20)
-     0.0750f, 0.0816f,             // drag_c fwd, rev      unchanged (reported A)
-     9.33e-4f, 7.27e-4f,           // drag_v fwd, rev      unchanged (reported A)
-     0.292f },                     // breakaway_A          unchanged (reported A)
+  //
+  // ==== B11: J01 BELT-ON. THIS is what -e J01 flashes. Written 2026-09-28, ====
+  // ==== updated 2026-09-30 for pulley RECIPE B (BELT_DRIVE.md 22.6).       ====
+  //    The belt-OFF row that the comments above describe used to sit here. It is NOT
+  //    edited or deleted -- it is a baseline that can never be re-measured -- it
+  //    MOVED, verbatim, to the END of this table (index 13, after A1) so that no
+  //    other row's JOINT_ID shifts. The DRAG and BREAKAWAY paragraphs above
+  //    describe THAT row; everything electrical above describes BOTH.
+  //
+  //    PLANT (BELT_DRIVE.md 22.6 -- the pulley of record):
+  //      belt   10 mm GT2 116T, caliper jig 104.85 (104.9 at 0.1 mm). Same
+  //             plate assembly and belt as 2026-09-28 -- only the pulley changed
+  //             (owner-confirmed 2026-09-30), so the A -> B comparison is clean.
+  //      output pulley 108T J01-P12B, RECIPE B: slicer X-Y contour comp -0.12 mm
+  //             + precise wall, sliced under the 0.4 nozzle machine profile.
+  //             Boss CAD 15.26, printed 14.95. Identity = G-code md5 (V22).
+  //             Recipe A (same settings under the 0.6 nozzle profile -- every
+  //             pulley printed before this one) read G 31-48 counts and is
+  //             SUPERSEDED.
+  //      idlers 2x 3x9x5 ZZ per side, fixed holes (1.72, +-10.00) mm
+  //      pinion top screw/support OFF. Leg links OFF.
+  //    Every field below except the last five is CARRIED from the belt-off row:
+  //      zea/dir   B1 on this plant: 1.98 deg (09-28), 0.62 deg elec (09-30, recipe
+  //                B), gate 8 deg
+  //      R_eff     B2 on this plant: 0.21883 (09-28), 0.22404 ohm (09-30); gate
+  //                0.215-0.230. Different chords of the same curved R, NOT a
+  //                reason to edit (see the R_eff field note and the J02 R_eff note)
+  //      Ke        belt-on Ke is DRAG-CONTAMINATED (BELT_DRIVE 22.1 Finding 3):
+  //                never carry it. The belt-off value stays.
+  //      U0, L, vbus_scale, i_scale   motor/board properties, belt-independent
+  //    DRAG (recipe B, B3 2026-09-30, BELT_DRIVE.md 22.6.6): phase 5 run twice,
+  //    forward-first and reverse-first ('-' then '5'), firmware 5-point fits:
+  //        run 1 (fwd first)   fwd 0.2265 + 0.004009*|w|   rev 0.3576 + 0.002597*|w|
+  //        run 2 (rev first)   rev 0.3084 + 0.002730*|w|   fwd 0.4072 + 0.002466*|w|
+  //    In BOTH runs the direction run SECOND reads 0.10-0.13 A higher: an ORDER
+  //    effect, larger than the direction effect (5% after pooling). Stored values
+  //    are each direction POOLED ACROSS BOTH ORDERS, which cancels it (the J02
+  //    convention, BELT_DRIVE 22.4.8). CONVENTION CHANGE vs the recipe-A row,
+  //    which stored the FIRST run only (0.291). On that basis recipe B's first
+  //    run reads 0.292 -- unchanged. Pooled it is 0.325 (J01 band 0.30-0.40 OK).
+  //    Pooled is stored because the robot runs warm and reverses constantly.
+  //    Ke from these runs (0.018064 / 0.018070, +0.7% on belt-off) is
+  //    DRAG-CONTAMINATED and not carried; R 0.22404 (+0.26%) and U0 0.01462 in
+  //    the same session are tripwires only.
+  //    BREAKAWAY (recipe B, 2026-09-30, docs/cal/pulley acceptance/): B4, 10
+  //    positions x 2 directions over ~1 motor rev, mean 0.295 A, SEM 0.027,
+  //    range 0.080-0.475; + 0.314 / - 0.277 (difference not significant).
+  //    Position dominates (pair means 0.12-0.42, sd 0.095). One reading
+  //    (raw 8411, -, 0.475, travel -240) is over the 200-count creep flag;
+  //    without it the mean is 0.286 -- stored value keeps all 20.
+  //    Recipe A was 0.288 (5x2). Belt-on, breakaway sits ~= drag_c (R16):
+  //    0.295 vs first-run 0.292 / pooled 0.325 -- it is NOT larger here.
+  //    BACKLASH (not a field): G 5.8 counts (3 ladders, 2 boots, I_f 0.295)
+  //    = 0.014 deg at the output. B6a <= 20 gate PASSED. The recipe-A gate
+  //    exception (G 31-48) is CLOSED.
+  //    STIFFNESS (not a field): ladder k 64.7 kN/m at its clamp (2x M3x10
+  //    countersunk into the top plate, perpendicular); clamp-dependent ~+-10%.
+  //    Ring f_d 65.0 Hz, f_n 69.8, zeta 0.36.
+  { "J01", "B-SPI-01", "M-SPI-01", "2026-09-30", "10mm-9:1",
+     6.0542f, +1, 0.22346f,        // zea, dir, R_eff      CARRIED (B1, B2 pass)
+     0.01037f,                     // U0                   CARRIED
+     0.017941f, 43.77e-6f,         // Ke, L                CARRIED -- belt-on Ke never
+     0.008448f, 0.9621f,           // vbus_scale, i_scale  CARRIED
+     0.3169f, 0.3330f,             // drag_c fwd, rev      RECIPE B, B3 pooled over both orders
+     3.24e-3f, 2.66e-3f,           // drag_v fwd, rev      RECIPE B, B3 pooled over both orders
+     0.295f },                     // breakaway_A          RECIPE B, B4 n=20 (reported A)
 
   // -- J02 -- WAS A1, the legacy ABZ assembly. Same motor and same board: the
   //    lost-count fault was diagnosed as mechanical jitter from a RUBBING encoder
@@ -454,8 +542,20 @@ const JointCal JOINTS[] = {
   //    compromise across the range. That biases g HIGH -- true g is likely
   //    slightly FURTHER below unity, not closer to it. Does not threaten either
   //    verdict.
+  // ⚠ R_eff IS A CHORD SLOPE, NOT A CONSTANT -- see the R_eff field note above.
+  //   0.22810 is the fit over 0.28-1.96 A (the AC_R_V[0] = 0.46 V ladder in
+  //   force on 2026-08-08). The ladder now tops out at 2.98 A and returns
+  //   0.2219 on the SAME hardware, twice. Both are right; different chords.
+  //   A phase 3 reading ~0.222 today is NOT a fault and NOT a reason to edit
+  //   this row -- that was chased once already (CHANGELOG section 0).
+  // ⚠ J02's MT6816 ENCODER BOARD IS DEAD -- found 2026-10-08 when moved to J03:
+  //   MISO stuck low (every read = all-zero frame, which passes parity and
+  //   No_Mag). VDD, HVPP, CSN and SCK all good; a new encoder on the same
+  //   harness works, so the J03 driver board and wiring are fine. Consistent
+  //   with damage in the J02 board failure (BELT_DRIVE 22.4.12), not proven.
+  //   Replaced. This row's zea/dir belong to the old encoder + this magnet.
   { "J02", "___", "___", "2026-08-08", "OFF",
-     0.3482f, +1, 0.22810f,        // zea, dir, R_eff      M1-rescaled x1.018904
+     0.3482f, +1, 0.22810f,        // zea, dir, R_eff  @ 0.28-1.96 A  M1-rescaled x1.018904
      0.014937f,                    // U0   M1-rescaled -- weak, see the U0 note below
      0.018097f, 46.25e-6f,         // Ke, L   (Kt = calKt() = 0.027145)  M1-rescaled
      0.008516f, 0.9690f,           // vbus_scale (M1 2026-08-18, UT89X -- see the
@@ -464,7 +564,9 @@ const JointCal JOINTS[] = {
      0.1061f, 0.1074f,             // drag_c fwd, rev      unchanged (reported A)
      0.000948f, 0.000845f,         // drag_v fwd, rev      unchanged (reported A)
      0.2983f },                    // breakaway_A  M4, n=18, +-8.7%  (reported A)
-  // -- J03 .. J12 -- NOT BUILT. EVERY MEASURABLE FIELD IS 0.0f = NOT MEASURED.
+  // -- J04 .. J12 -- NOT BUILT. EVERY MEASURABLE FIELD IS 0.0f = NOT MEASURED.
+  //    (J03 sits here for JOINT_ID order but is BUILT since 2026-10-08 -- see
+  //    its own comment below.)
   //    zea = -1 and dir = 0 still make runInitFOC() fall back to a full
   //    alignment, so selecting one of these is safe -- just uncalibrated, and
   //    now loudly so: the boot banner prints R=0.00000 Ke=0.000000, which
@@ -486,8 +588,48 @@ const JointCal JOINTS[] = {
   //    1.0 (inert multiplier), not 0.
   //    ORDER: M1 first, then AUTOCALIB, then paste. Not the other way round --
   //    R_eff, U0 and Ke are all measured THROUGH vbus_scale.
-  { "J03", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
-    0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+  // J03 vbus_scale = 0.008357 -- M1 2026-10-08, SEED path, UT89X at the board
+  //   pads: banner 11.94 / 22.55 V (at a provisional 0.008302) vs meter
+  //   12.02 / 22.70 V -> seed counts 1438.2 / 2716.2, slope 0.0083568. The two
+  //   single-point ratios agree to 0.005%; seed offset +0.2 counts (~0).
+  //   1.1% below J01 (0.008448), 1.9% below J02 (0.008516): divider spread.
+  //   SUPERSEDED same day: 0.008302, a 2-point slope from the DMA buffer
+  //   (1383 / 2667 counts) taken because the first flash had 0.0 (seed
+  //   ignored). It was 0.66% LOW: the uncalibrated DMA path is NOT offset-only
+  //   on this board (offset -58 counts at 12 V, -49 at 22.7 V), contrary to
+  //   CALIBRATION 21's "vbus_scale transfers to the DMA path unchanged". Do
+  //   not derive M1 from the DMA buffer.
+  //
+  // J03 = board_3 (new) + motor_2 (J02's motor) + a NEW MT6816 encoder board
+  //   (J02's was dead, see the J02 row). BARE MOTOR, belt off, not in the
+  //   plate. AUTOCALIB 2026-10-08, banner 11.98 V vs UT89X 11.97 V.
+  //   zea 0.3866 sd 3.5 deg (n=7); R_eff 0.23068 +-0.75%; U0 0.01919;
+  //   L 45.75 uH (J02 46.25); drag_c 0.0935 / 0.1058 A (J02 0.106 / 0.107);
+  //   T/T_loop 0.939 / 0.971; INL 1.42 deg mech (1/rev dominant -> new
+  //   encoder's centring, M8; not a blocker).
+  //   Ke 0.017900 is 1.09% BELOW J02's 0.018097 on the SAME motor, just
+  //   outside the +-1% sheet gate. Read as J02's reference being high, not
+  //   J03 low: J03's vbus_scale has two-point (0.005%) and banner (0.01 V)
+  //   support, while J02's carries the unresolved 0.32% ambiguity of README
+  //   24.14b, whose alternative moves J02's Ke TOWARD this value. J03's own
+  //   Ke is therefore stored. Magnet temperature (phase 5 runs after the
+  //   locked phases) may account for part of it.
+  // J03 M2 2026-10-09 -- i_scale 0.9797 +-1.73%, 1.2 sigma from 1.0 -> PROVISIONAL
+  //   (as J02). Self-fit R 0.21609, c 0.33086; a, b, U0 checks all pass.
+  //   Ibus read to 1 mA (0.71% of the budget); Vterm at pts 1-2 extrapolated
+  //   from the meter's own 2.30-ohm line. docs/cal/J03/J03_M2.csv.
+  // J03 M4 2026-10-10 -- breakaway 0.2545 A reported, n=10, sd 0.078 (31%),
+  //   SE 9.7%; fwd 0.243 / rev 0.266. Bare motor, so compare motor-alone:
+  //   J02 (same motor_2) 0.2983 +-8.7%, -15%, 1.2 sigma -- not distinguishable.
+  //   In true amps 0.2598 A (/0.9797). docs/cal/J03/J03_M4.txt.
+  { "J03", "board_3", "motor_2", "2026-10-08", "OFF",
+     0.3866f, +1, 0.23068f,        // zea, dir, R_eff
+     0.01919f,                     // U0
+     0.017900f, 45.75e-6f,         // Ke, L   (Kt = calKt() = 0.026850)
+     0.008357f, 0.9797f,           // vbus_scale (M1 2026-10-08), i_scale (M2 2026-10-09, PROVISIONAL)
+     0.0935f, 0.1058f,             // drag_c fwd, rev   (reported A, belt OFF, bare motor)
+     0.001143f, 0.000713f,         // drag_v fwd, rev
+     0.2545f },                    // breakaway_A  (M4 2026-10-10, bare motor)
   { "J04", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
   { "J05", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
@@ -576,9 +718,64 @@ const JointCal JOINTS[] = {
      1.05f, 1.05f,                 // drag_c fwd, rev   -- belt ON, not split
      0.0f, 0.0f,                   // drag_v fwd, rev   -- not fitted
      0.0f },                       // breakaway_A       -- band 0.34-1.34 A, no mean
+
+  // -- J01, BELT OFF -- HISTORICAL BASELINE, index 13 (JOINT_ID 14). MOVED here
+  //    VERBATIM from index 0 by B11 on 2026-09-28; not one field changed. It is
+  //    the belt-off baseline that cannot be re-measured once the belt is on, and
+  //    every belt-on figure in BELT_DRIVE.md is a DIFFERENCE against it. Its full
+  //    commentary (M1 rescale, U0, Ke, drag asymmetry, breakaway, M2) stays at
+  //    the top of the table, above the belt-on J01 row. No platformio.ini env
+  //    points here: add one with -D JOINT_ID=14 only to re-read this plant.
+  { "J01", "B-SPI-01", "M-SPI-01", "2026-08-07", "OFF",
+     6.0542f, +1, 0.22346f,        // zea, dir, R_eff      M1-rescaled, see below
+     0.01037f,                     // U0                   M1-rescaled
+     0.017941f, 43.77e-6f,         // Ke, L   (Kt = calKt() = 0.026912)  M1-rescaled
+     0.008448f, 0.9621f,           // vbus_scale (M1 2026-08-18), i_scale (M2 2026-08-20)
+     0.0750f, 0.0816f,             // drag_c fwd, rev      unchanged (reported A)
+     9.33e-4f, 7.27e-4f,           // drag_v fwd, rev      unchanged (reported A)
+     0.292f },                     // breakaway_A          unchanged (reported A)
 };
 
 static constexpr uint8_t JOINT_COUNT = (uint8_t)(sizeof(JOINTS) / sizeof(JOINTS[0]));
+
+// ---------------------------------------------------------------------------
+// BOARD IDENTITY -- the STM32 96-bit unique ID of the board each row was
+// measured on. (CAN-T0, 2026-10-03)
+// ---------------------------------------------------------------------------
+// WHY: with stored ZEA there is no per-boot alignment to catch a wrong-joint
+// flash (see 'V' above), and Tier 0 never aligns. J01's binary on J03's board
+// commutates on J01's ZEA -- a reduced or REVERSED torque constant inside a
+// position loop, i.e. a runaway. Tier 0 refuses to ARM unless the running MCU's
+// UID matches this table, and prints its own UID at boot so a new row is a
+// paste, not a lookup. {0,0,0} = NOT RECORDED -> Tier 0 refuses to arm, loudly.
+//
+// A PARALLEL TABLE, not a JointCal field, on purpose: only Tier 0 references it,
+// so the linker drops it from the bench harness and the harness stays
+// byte-identical. The cost of a parallel table is that it can drift out of
+// step with JOINTS[] -- hence the size static_assert below AND the .id string,
+// which Tier 0 compares against CAL.id before trusting the words.
+struct JointUid {
+  const char* id;          // must equal JOINTS[same index].id
+  uint32_t    w[3];        // HAL_GetUIDw0/1/2(), as printed in the Tier-0 banner
+};
+const JointUid JOINT_UID[] = {
+  { "J01", { 0x460030, 0x34354B0F, 0x30373336 } },  // B-SPI-01 -- T0_J01 boot banner, 2026-10-04 (N1)
+  { "J02", { 0, 0, 0 } },  // B-ABZ-01 -- board failed after P8 (7d)
+  { "J03", { 0x52003E, 0x34354B0C, 0x33383735 } },   // T0 boot 2026-10-10, board_3
+  { "J04", { 0, 0, 0 } },
+  { "J05", { 0, 0, 0 } },
+  { "J06", { 0, 0, 0 } },
+  { "J07", { 0, 0, 0 } },
+  { "J08", { 0, 0, 0 } },
+  { "J09", { 0, 0, 0 } },
+  { "J10", { 0, 0, 0 } },
+  { "J11", { 0, 0, 0 } },
+  { "J12", { 0, 0, 0 } },
+  { "A1",  { 0, 0, 0 } },  // historical, not flashable
+  { "J01", { 0x460030, 0x34354B0F, 0x30373336 } },  // J01 belt-off baseline: same board (B-SPI-01) as index 0
+};
+static_assert(sizeof(JOINT_UID) / sizeof(JOINT_UID[0]) == JOINT_COUNT,
+              "JOINT_UID[] must have exactly one entry per JOINTS[] row");
 
 #ifndef JOINT_ID
   #error "Build with -D JOINT_ID=n (see platformio.ini). Refusing a joint-agnostic binary."
@@ -596,8 +793,23 @@ static const JointCal& CAL = JOINTS[JOINT_ID - 1];
 static inline float calKt() { return calKt(CAL); }
 
 // ---------------------------------------------------------------------------
-// THE ONE PLACE i_scale IS ALLOWED TO BE APPLIED
+// THE TORQUE BOUNDARY -- THE ONE PLACE i_scale IS ALLOWED TO BE APPLIED
 // ---------------------------------------------------------------------------
+// UNIT RULE, decided 2026-10-01 (option A; fleet_config.h has the decision and
+// what would reopen it). Two units exist and they meet ONLY here:
+//   A_rep   the REPORTED amp -- what the current sense says. The firmware's
+//           current unit, permanently. Every MEASURED constant (R_eff, L, drag,
+//           breakaway, the PI gains) and every bench-DEMONSTRATED limit is in
+//           A_rep and is never converted.
+//   N.m     PHYSICAL torque at the OUTPUT, tau = GEAR_RATIO * Kt * I_true.
+//           DRIVETRAIN_ETA is EXCLUDED (back-solved, circular, M14) and friction
+//           is NOT subtracted. That is the contract's definition of tau; keeping
+//           eta out keeps it fixed while M14 refines a separate estimate.
+// torqueOutToIrep() / irepToTorqueOut() are the only crossing, and BOTH
+// directions use it: commands AND feedback. If only the command path converted,
+// a commanded tau and a measured tau would disagree by g for no physical reason
+// -- and the RL observation would learn that disagreement.
+//
 // i_scale = g = I_reported / I_true, from M2.
 //
 // The current LOOP needs no correction and must not be given one. R_eff and L
@@ -607,27 +819,91 @@ static inline float calKt() { return calKt(CAL); }
 // right, and the PI gains were tuned in those same units. Dividing R_eff, L or
 // the gains by i_scale would DOUBLE-count g and detune a loop that is correct.
 //
-// g leaks in exactly one place: the torque command. Real torque is Kt * I_true
-// = Kt * I_reported / g, and Kt itself is clean (Ke is fit from voltage and
-// speed, so it is independent of current-sense gain -- which is why the +0.38%
-// Kt-vs-KV agreement confirms the VOLTAGE scale and says nothing about this).
-// To actually deliver tau you must therefore ask for g*tau/Kt reported-amps:
+// g leaks wherever a current becomes a torque or a torque becomes a current --
+// command AND feedback. Real torque is Kt * I_true = Kt * I_reported / g, and Kt
+// itself is clean (Ke is fit from voltage and speed, so it is independent of
+// current-sense gain -- which is why the +0.38% Kt-vs-KV agreement confirms the
+// VOLTAGE scale and says nothing about this). So, at the motor shaft:
 //
-//     I_command [reported A] = tau_desired / calKtCmd()
+//     Iq [A_rep] = tau_motor / calKtCmd()     tau_motor = Iq [A_rep] * calKtCmd()
+//
+// and torqueOutToIrep() / irepToTorqueOut() below are exactly these, with
+// GEAR_RATIO applied so the caller works in the contract's output frame.
 //
 // i_scale = 1.0 makes this identical to calKt(). *** IT IS NO LONGER INERT: ***
 // M2 ran 2026-08-20 and both built rows carry g ~ 0.962-0.969, so calKtCmd()
 // now differs from calKt() by ~3-4% on J01 and J02.
 //
-// AND IT CURRENTLY HAS NO CONSUMER. Nothing in open_test.cpp converts a torque
-// to a current -- the bench harness commands voltage or reported amps directly,
-// so storing i_scale changes NOTHING at runtime today except the boot banner.
-// State it plainly rather than let a stored constant imply a correction that is
-// not being applied: TIER-0 IS THE FIRST CONSUMER, and the day it computes
-// I_command it must divide by calKtCmd(), not calKt(). That is the whole reason
-// this function exists ahead of its caller.
+// CONSUMERS TODAY: the boot banner, and acSwingLadder()'s k_beltline print (a
+// FEEDBACK-direction conversion: measured reported amps -> belt force). No
+// torque COMMAND exists in this harness yet -- the bench commands volts or
+// reported amps directly. B12a's MIT law is the first command-side caller, and
+// it goes through tauOutCmdToIq() below, never through calKtCmd() directly.
+//
+// calKtCmd() is the implementation of the pair and the banner's print. Do not
+// call it from control code: a bare "/ calKtCmd()" silently drops GEAR_RATIO.
+// Units: N.m of MOTOR torque (true) per A_rep.
 static inline float calKtCmd() {
   return (CAL.i_scale > 0.0f) ? (calKt() / CAL.i_scale) : calKt();
+}
+
+// Output torque [N.m] <-> Iq [A_rep]. An unbuilt row has Ke = 0, so Kt_cmd = 0:
+// the pair returns 0 (no torque on an uncalibrated joint) rather than inf/NaN,
+// and tauOutCmdToIq() flags it. Sign: a belt does not reverse direction, so
+// positive motor Iq = positive output torque. Any per-joint MOUNTING sign
+// (mirrored legs) is a contract question for the leg, not applied here.
+static inline float torqueOutToIrep(float tau_out_Nm) {
+  const float nm_per_A_rep = GEAR_RATIO * calKtCmd();
+  return (nm_per_A_rep > 0.0f) ? (tau_out_Nm / nm_per_A_rep) : 0.0f;
+}
+static inline float irepToTorqueOut(float iq_A_rep) {
+  return iq_A_rep * GEAR_RATIO * calKtCmd();
+}
+
+// THE COMMAND CLAMP CHAIN. Every torque command reaches the current loop through
+// this and nothing else:
+//
+//   tau_out_Nm --[non-finite, bad limit or uncalibrated -> 0]
+//              --> clamp |tau| <= tau_max_Nm        (OUTER: the contract, N.m)
+//              --> torqueOutToIrep()
+//              --> clamp |Iq|  <= iq_cap_A_rep      (INNER: the demonstrated envelope)
+//              --> current loop
+//
+// The inner clamp is in the unit the envelope was DEMONSTRATED in: D3's 1.6 A
+// was proven by the swing ladder in reported amps (BELT_DRIVE 22.4.14). It sits
+// LAST so that a wrong Kt, i_scale or gear ratio can never command beyond what
+// the bench has actually survived. Set tau_max so the OUTER clamp binds first;
+// then an inner hit (IQ_CLAMP_IQ) means the conversion and the envelope
+// disagree, which is a finding, not a saturation -- log it as such.
+//
+// A COMMAND LIMIT, NOT A STOP. It never disarms and it adds no e-stop call
+// site: faults still go through safety.h's stopMotor() and nowhere else.
+// Limits are passed, never defaulted -- the bench harness and Tier-0 each own
+// their envelope. A limit that is not finite and > 0 yields zero torque.
+enum IqClamp : uint8_t {
+  IQ_CLAMP_NONE   = 0,
+  IQ_CLAMP_TAU    = 1,   // outer clamp bound (expected under saturation)
+  IQ_CLAMP_IQ     = 2,   // inner clamp bound (conversion vs envelope -- a finding)
+  IQ_CLAMP_REJECT = 3,   // non-finite command, bad limit, or Kt_cmd = 0 -> 0 A_rep
+};
+struct IqCmd {
+  float   iq_A_rep;
+  IqClamp clamp;
+};
+static inline IqCmd tauOutCmdToIq(float tau_out_Nm, float tau_max_Nm, float iq_cap_A_rep) {
+  IqCmd r = { 0.0f, IQ_CLAMP_REJECT };
+  // `!(x > 0)` is deliberate: it is also true for NaN.
+  if (!isfinite(tau_out_Nm) || !isfinite(tau_max_Nm) || !isfinite(iq_cap_A_rep)
+      || !(tau_max_Nm > 0.0f) || !(iq_cap_A_rep > 0.0f) || !(calKtCmd() > 0.0f))
+    return r;
+  r.clamp = IQ_CLAMP_NONE;
+  if      (tau_out_Nm >  tau_max_Nm) { tau_out_Nm =  tau_max_Nm; r.clamp = IQ_CLAMP_TAU; }
+  else if (tau_out_Nm < -tau_max_Nm) { tau_out_Nm = -tau_max_Nm; r.clamp = IQ_CLAMP_TAU; }
+  float iq = torqueOutToIrep(tau_out_Nm);
+  if      (iq >  iq_cap_A_rep) { iq =  iq_cap_A_rep; r.clamp = IQ_CLAMP_IQ; }
+  else if (iq < -iq_cap_A_rep) { iq = -iq_cap_A_rep; r.clamp = IQ_CLAMP_IQ; }
+  r.iq_A_rep = iq;
+  return r;
 }
 
 // Print at boot so wrong-firmware-on-wrong-board is visible in ONE GLANCE
@@ -664,14 +940,21 @@ static inline void printJointCal(Print& out) {
     // is multiplied by i_scale (+5% at i_scale = 1.05). The 1/i_scale - 1 figure
     // is the torque ERROR you would have shipped uncorrected (-4.76% at 1.05).
     // Both are worth seeing; neither is a name for the other.
+    // The old label read "cmds now scaled", which claimed a correction was being
+    // applied while nothing called calKtCmd(). It is applied by the boundary
+    // pair, and only where a caller uses it -- the label now says that.
     out.print(F(" (uncorrected torque error "));
     out.print(100.0f*(1.0f/CAL.i_scale - 1.0f), 2);
-    out.print(F("%, cmds now scaled "));
+    out.print(F("%; the boundary scales cmds "));
     if (CAL.i_scale > 1.0f) out.print('+');
     out.print(100.0f*(CAL.i_scale - 1.0f), 2);
     out.print(F("%)"));
   }
   out.println();
+  // The boundary's conversion, printed as a number so a wrong gear ratio, Ke or
+  // i_scale is visible at boot instead of on the bench. J01 expects 0.2517.
+  out.print(F("  torque boundary: 1 A_rep = ")); out.print(irepToTorqueOut(1.0f), 4);
+  out.println(F(" N.m output (true; eta excluded)"));
 
   // Drag is stored as POSITIVE magnitudes per direction; the consumer applies
   // sign(omega). Printed per direction because the asymmetry is the finding.

@@ -4,7 +4,7 @@
 .vscode/launch.json
 .vscode/ipch
 
-docs*
+cal*
 
 *project_context.md*
 *claude.md*

@@ -44,21 +44,46 @@ static constexpr float MOTOR_KV_NAMEPLATE = 360.0f;   // rpm/V -- cross-check on
 static constexpr float KT_PER_KE = 1.5f;
 
 // ---------------------------------------------------------------------------
-// *** EVERY CURRENT AND TORQUE LIMIT IN THIS PROJECT IS IN *REPORTED* AMPS. ***
+// *** CURRENT UNITS -- DECIDED 2026-10-01: REPORTED AMPS INSIDE, ONE BOUNDARY ***
 // ---------------------------------------------------------------------------
 // M2, 2026-08-20, measured the current sense UNDER-reading on both built boards:
 //     J01  i_scale = 0.9621 +-1.2%   -> true current is 3.9% HIGHER than reported
 //     J02  i_scale = 0.9690 +-2.7%   -> 3.2% higher (PROVISIONAL, see joint_cal.h)
-// So a limit written as 6.0 A actually trips at ~6.24 A of real current, and a
-// torque commanded through calKt() at i_scale = 1.0 is delivered ~3-4% OVER.
-// Affected today: AC_IMAX_ABORT (autocalib.h), CURR_LIMIT / motor.current_limit
-// and the guard thresholds (open_test.cpp) -- all reported amps, all under-stated
-// by the same 3-4%. NOT dangerous at present bench margins. IT MUST BE RESOLVED
-// BEFORE TIER-0 SHIPS A TORQUE LIMIT, and the fix is one decision, not a sweep:
-// either keep reported amps everywhere and derate the limits, or correct the
-// sense gain AT SOURCE in the LowsideCurrentSense constructor -- in which case
-// the reported-amp UNIT itself moves, R_eff and L both shift by 1/g on every
-// row, and AUTOCALIB phases 3-4 must be re-run fleet-wide. Do not do half of it.
+// So a limit written as 6.0 A trips at ~6.24 A of real current, and a torque
+// commanded through plain calKt() would be delivered ~3-4% OVER.
+//
+// THE DECISION (option A). The REPORTED amp, suffixed _A_rep, is the firmware's
+// current unit and stays so. Physical torque meets it at exactly ONE boundary,
+// joint_cal.h's torqueOutToIrep() / irepToTorqueOut(), in BOTH directions
+// (commands and feedback). Every torque command goes through tauOutCmdToIq():
+// clamp tau_max [N.m] -> convert -> clamp the demonstrated envelope [A_rep].
+//
+// A LIMIT LIVES IN THE UNIT OF ITS SOURCE:
+//   measured on the bench    D3 1.6 A cap, ladder currents, AC_* aborts, the
+//                            sense guard, CURR_MAX/LIMIT  -> _A_rep, NEVER converted
+//   the control contract     tau_max, tau_ff, kp/kd       -> N.m (output), converted
+//                                                            once at the boundary
+//   physics / datasheet      board rating, thermal, B10   -> _A_true or N; convert
+//                                                            at init (I_rep = I_true
+//                                                            * i_scale). None exists yet
+// Both conversions run physical -> reported, at boundaries only, and NEVER touch
+// a measured constant -- see calKtCmd() for why R_eff, L and the gains must not
+// be rescaled.
+//
+// WHY NOT OPTION B (correct the sense gain AT SOURCE in the LowsideCurrentSense
+// constructor, so reported = true). It is the only option where a forgotten
+// conversion cannot happen -- but the reported-amp UNIT itself moves: R_eff, L,
+// drag, breakaway and every amp threshold shift by 1/g on every row, AUTOCALIB
+// phases 3-4 must be re-run fleet-wide, J01's belt-on phase 4 cannot be re-run
+// at all (BELT_DRIVE R25), and every archived log changes unit. That re-baseline
+// buys 3.9%, which is below eta's circularity, the +-20% friction spread and the
+// D18 run-order effect. Option A's risk (a forgotten conversion) is designed out
+// instead: one pair, one clamp chain, the unit in every identifier.
+//
+// REOPEN OPTION B ONLY WHEN BOTH HOLD: a fleet-wide re-characterisation is
+// happening anyway (e.g. the 12-board rework), AND M2 has shown g common across
+// 3-4 boards. Then correct at source and re-run phases 3-4 on every row in the
+// same pass. Do not do half of it.
 //
 // Two boards 0.72% apart, both ~3.5% low, points at the current-sense constant
 // assumed in the library rather than at per-board shunt tolerance -- which would
@@ -93,6 +118,24 @@ static constexpr float    ENC_RAD_PER_COUNT = 6.28318531f / (float)ENC_CPR;
 // decision nobody made" -- this makes the decision visible without changing it.
 // Byte-identical to leaving it unset: the HAL substitutes exactly this value.
 static constexpr uint32_t PWM_FREQ_HZ = 25000;
+
+// FLASH PREFETCH -- enabled 2026-10-01; MEASURED NO EFFECT 2026-10-02.
+// The B-G431B-ESC1 variant clocks the core at 170 MHz with FLASH_LATENCY_8 and
+// the STM32 core leaves PREFETCH_ENABLE = 0. It was enabled on the hypothesis
+// that the loop is instruction-fetch bound (B12a a2: MODE_MIT cost several times
+// its instruction count). The bench FALSIFIED that fix: with prefetch=1 the
+// TORQUE(I) loop rate did not move (armed 12,440 -> 12,481 lps, +0.3%; disarmed
+// 66,300 -> ~65,560, -1.1% -- both inside build-to-build layout noise). The MIT
+// deficit did shrink (-8.2% -> -4.7%), but that tracks the MIT code trim made in
+// the same build (micros() -> DWT, per-loop tau removed), not prefetch.
+// Kept enabled because it is harmless and today's captures (a3 part 1, the a2
+// pulse re-check) ran with it; the CFG banner prints the live FLASH->ACR bits
+// (prefetch=, flash_ws=) so every capture stays traceable.
+// NOT CHANGED: the 8 wait states. RM0440 allows 4 at 170 MHz in range-1 boost.
+// Prefetch only hides SEQUENTIAL misses; if the loop is bound by misses on
+// branch/call targets, only fewer wait states would show it. Deferred with
+// reason in BELT_DRIVE §22.7.7 -- not needed while MIT is inside the 5% gate.
+static constexpr bool FLASH_PREFETCH = true;
 
 // DEAD ZONE -- FINAL VALUE, set by argument and confirmed by measurement.
 // Board-family constant (EG2124A gate driver), not per-unit.
@@ -153,6 +196,22 @@ static inline float tDelayAt(float f_loop_hz) {
 // and deliberately does not live here -- see M14.
 static constexpr float GEAR_RATIO = 9.0f;    // 12T alu pinion -> 108T pulley
 
+// BELT-LINE GEOMETRY. Fleet by construction -- same pinion, same 2 mm GT2 pitch
+// on every joint. The PITCH is the primary quantity and the radius is derived
+// from it, not the other way round: 12 teeth x 2.000 mm = 24.000 mm of belt per
+// motor revolution, EXACTLY, which is why R_PINION_MM lands on 3.8197 and not on
+// a round number. Closed form confirmed against the CAD span to 3 um (README 8.2).
+static constexpr float BELT_PITCH_MM         = 2.0f;     // GT2
+static constexpr uint8_t PINION_TEETH        = 12;
+static constexpr float BELT_MM_PER_MOTOR_REV = BELT_PITCH_MM * (float)PINION_TEETH;  // 24.000
+static constexpr float R_PINION_MM           = BELT_MM_PER_MOTOR_REV / 6.28318531f;  // 3.8197
+// The encoder as a belt-travel gauge. This is what makes a swing test a LENGTH
+// measurement rather than an angle one.
+static constexpr float BELT_MM_PER_COUNT     = BELT_MM_PER_MOTOR_REV / (float)ENC_CPR;  // 1.4648 um
+// One pinion tooth, at the encoder. A swing or return reading that moves by this
+// -- or a multiple of it -- is a TOOTH SKIP, not compliance. 16384/12 = 1365.33.
+static constexpr float ENC_CNT_PER_TOOTH     = (float)ENC_CPR / (float)PINION_TEETH;
+
 // ---------------------------------------------------------------------------
 // ROTOR INERTIA -- measured 2026-08-08, belt off (M6a)
 // ---------------------------------------------------------------------------
@@ -197,6 +256,10 @@ static constexpr float GEAR_RATIO = 9.0f;    // 12T alu pinion -> 108T pulley
 // hundreds of ms behind the 'x', by which time the coast is nearly over. J02's
 // captured only the last 2.3 rad/s and returned 223e-6, i.e. nonsense. It is not
 // viable with keyboard timing and the driven step is the better measurement.
+// IN-SITU CONSISTENCY, belt on (J01, B12a a3, 2026-10-02): requiring the 14/turn
+// ripple torque (D19) to be the same in both directions gives J_motor = 20.2e-6,
+// i.e. this value. A consistency check, not an independent measurement: it
+// assumes the ripple is conservative (BELT_DRIVE §22.7.11).
 static constexpr float J_ROTOR_KGM2 = 20.2e-6f;      // +-2.4e-6 (12%), n = 2 joints
 
 // FRICTION VARIES +-20% TRIAL TO TRIAL on this plant, and that is not noise in
@@ -261,6 +324,11 @@ static constexpr float FRICTION_TRIAL_SPREAD = 0.20f;   // fractional, 1 sigma-i
 //    70    93.31   105.31    106.37    84.61   4.145        0.2892     <- stroke bottom
 // (F/I at Kt = 0.026621 and eta = 0.92; added mass = 2*J_rotor*G^2, i.e. per leg
 //  with BOTH motors reflected.)
+// STALE Kt, NOTED 2026-10-01, NOT RE-DERIVED: 0.026621 is the pre-M1 value. At
+// J01's calKt() = 0.026912 the F/I column is +1.1% per TRUE amp; per REPORTED
+// amp (what the firmware commands, via irepToTorqueOut) it is +5.1% -- e.g.
+// 5.000 -> 5.25 N/A_rep at the stroke top. The table is a design-level figure
+// carrying an unmeasured eta, and M14 replaces it, so it is flagged, not redone.
 //
 // NON-MONOTONIC: the Jacobian PEAKS at alpha = 63.44 deg and turns back, so G --
 // and force per amp -- has a MINIMUM mid-low stroke and RISES AT BOTH ENDS. Do

@@ -31,10 +31,20 @@
 // was actively misleading once M2 got deferred past the belt build:
 //     FREE SHAFT REQUIRED : 2 (the alignment must settle unloaded)
 //                           5, 6 (free spin)
-//     BELT-AGNOSTIC       : 1, 3, 4 and the M2 ladder -- all locked-rotor, the
-//                           rotor never turns, so the belt is not in the loop.
+//     BELT-AGNOSTIC       : 1, 3 and the M2 ladder -- locked-rotor, the rotor
+//                           never turns, so the belt is not in the loop.
 //                           The one thing that DOES matter there is that the
 //                           rotor must not creep: watch the drift column.
+//     BELT-OFF ONLY       : 4. It was listed as belt-agnostic until 2026-09-30,
+//                           by argument; the measurement says otherwise. Its
+//                           32-step train cycles the self-lock 0.8 <-> 3.2 A, and
+//                           belt friction (~0.3 A) plus belt wind-up let the rotor
+//                           sit off-axis at the weak hold and get pulled in at the
+//                           strong one, so it RATCHETS: J01 belt-on drifted -169
+//                           counts (WARN). Phase 3 is immune because it sweeps
+//                           strongest-first, and then friction holds it (drift 0
+//                           in the same session). L is a motor property: carry
+//                           the belt-off value, do not re-run 4 belt-on.
 //     BOTH, DELIBERATELY  : M4. Belt-off is the baseline; belt-on at M5 is the
 //                           number that decides impedance quality. Its banner
 //                           REPORTS the state instead of demanding one.
@@ -72,8 +82,10 @@
 //
 // EXCLUDED ON PURPOSE -- each would be WORSE automated than done by hand:
 //   J_rotor       geometric, ~1% between units, and needs friction subtraction
-//   breakaway     needs slow +-0.5 rad/s ramps through zero; different regime.
-//                 Has a HOME though -- JointCal.breakaway_A, filled by hand (M4)
+//   breakaway     needs a slow current ramp from REST at several hand-set rotor
+//                 positions (0.5 rad/s is only the "it moved" threshold). Manual-
+//                 assist 'B'/'b' (M4 belt-off, B4 belt-on); the mean is entered
+//                 by hand into JointCal.breakaway_A
 //   hot/cold R    needs a thermal soak, minutes not seconds
 //   cogging map   not used by any planned controller
 //   force-per-amp needs a load cell and the assembled leg
@@ -249,12 +261,12 @@ const float    AC_T_AGREE     = 0.25f;    // the two T estimates must agree
 
 const float    AC_RAMP_V      = 0.05f;
 const uint8_t  AC_RAMP_MS     = 10;
-// *** REPORTED AMPS, NOT TRUE AMPS. *** M2 2026-08-20 measured the sense
-// UNDER-reading by 3.9% (J01) / 3.2% (J02), so this trips at ~6.24 / 6.19 A of
-// real current. Every current limit in this project is in the same units -- see
-// the i_scale block in fleet_config.h. Not dangerous at these margins; it has
-// to be stated before anything ships a torque limit.
-const float    AC_IMAX_ABORT  = 6.0f;     // A amplitude: hard abort (REPORTED A)
+// *** REPORTED AMPS, NOT TRUE AMPS -- AND CORRECTLY SO. *** M2 2026-08-20
+// measured the sense UNDER-reading by 3.9% (J01) / 3.2% (J02), so this trips at
+// ~6.24 / 6.19 A of real current. Under the 2026-10-01 unit rule (fleet_config.h)
+// a limit lives in the unit of its SOURCE: this one is a bench threshold on the
+// sensed current, so it stays A_rep and is never converted.
+const float    AC_IMAX_ABORT_A_rep  = 6.0f;     // A amplitude: hard abort (REPORTED A)
 const float    AC_COAST_RADS  = 5.0f;
 // F1 -- the |I|/Iq gate. |I| = sqrt(ia^2+ib^2+ic^2) is ALWAYS POSITIVE, so
 // mean(|I|) > |mean(I)| whenever there is ripple, and the smaller the DC current
@@ -446,7 +458,9 @@ static void acExit(bool keep_align) {
                               motor.controller = MotionControlType::torque; break;
     case MODE_VELOCITY:       motor.torque_controller = TorqueControlType::foc_current;
                               motor.controller = MotionControlType::velocity;
-                              motor.PID_velocity.limit = CURR_LIMIT; break;
+                              motor.PID_velocity.limit = CURR_LIMIT_A_rep; break;
+    case MODE_MIT:            motor.torque_controller = TorqueControlType::foc_current;   // B12a
+                              motor.controller = MotionControlType::torque; break;
   }
 }
 
@@ -495,7 +509,7 @@ static void acService() {
   if (mode == MODE_OPENLOOP) ac_i_amp = acPhaseAmp();
   else                       ac_i_amp = sqrtf(motor.current.q*motor.current.q
                                             + motor.current.d*motor.current.d);
-  if (ac_i_amp > AC_IMAX_ABORT) {
+  if (ac_i_amp > AC_IMAX_ABORT_A_rep) {
     ac_abort = true;  ac_guard = true;
     SerialUART.print(F("\n  !! ABORT overcurrent: ")); SerialUART.print(ac_i_amp, 2);
     SerialUART.println(F(" A amplitude"));
@@ -853,6 +867,11 @@ static void acP3() {
 // Only samples in the 0.15-0.85 band are fitted: below that the lag dominates,
 // above it the noise on a small (Iinf - i) does.
 // R converts tau to L, so this phase needs phase 3 -- but only for that scaling.
+// BELT-OFF ONLY (see the BELT STATE note at the top). The whole phase takes
+// under a second -- the 600 ms lock "twitch" IS the run, not a failure to start.
+// Belt-on it completes but the lock ratchets (J01 2026-09-30: drift -169, WARN,
+// L 44.7 uH -- +2.1% vs the belt-off 43.77, the same +2.1% seen belt-on on
+// 2026-08-12). Nothing belt-on needs L re-measured.
 // ===========================================================================
 static void acP4() {
   if (!acNeed(3)) return;
@@ -1162,8 +1181,10 @@ static void acP5() {
     SerialUART.println(F(" mA"));
   }
   SerialUART.print(F("    ")); SerialUART.println(acVs(ac_v_drag));
-  SerialUART.println(F("    DYNAMIC drag only. The STATIC breakaway threshold is larger and"));
-  SerialUART.println(F("    is not measurable here -- run M4 by hand and fill breakaway_A."));
+  // Was "larger ... run M4 by hand": M4 has been the firmware 'B'/'b' ramp since
+  // it was written, and belt-ON J01 breakaway came out EQUAL to drag_c (R16).
+  SerialUART.println(F("    DYNAMIC drag only. STATIC breakaway is a separate number (belt-off"));
+  SerialUART.println(F("    far larger, belt-on ~equal) -- press B / b (M4/B4), fill breakaway_A."));
   ac_done[5] = (ac_v_Ke != AC_FAIL);
   if (ac_done[5]) SerialUART.println(F("    next: 6"));
 }
@@ -1817,8 +1838,12 @@ static void acM2Assist() {
 //
 // The current at which a STATIONARY rotor first moves. This is NOT phase 5's
 // drag_c: that is friction while ALREADY MOVING (0.075 A on J01). Breakaway is
-// the threshold to GET moving, it is always higher, and it varies around the
-// revolution because cogging adds and subtracts. It is the term that decides
+// the threshold to GET moving, and it varies around the revolution because
+// cogging adds and subtracts. Belt-OFF it is far higher (J01 0.2923 vs 0.075 A).
+// Belt-ON it is NOT reliably higher: J01, -0.12 pulley, 2026-09-28, the MEAN of
+// 5x2 equalled drag_c (0.288 vs 0.291 A) with single readings 0.085-0.49 A
+// (BELT_DRIVE.md 22.5). An earlier version of this comment said "always
+// higher"; the belt-on measurement overrode it. It is the term that decides
 // whether impedance control feels alive or dead near zero commanded force --
 // belt-on it was 46% of standing leg load on A1, five times every other loss
 // combined.
@@ -1833,22 +1858,22 @@ static void acM2Assist() {
 // which is why this is firmware-timed rather than typed by hand -- the elapsed
 // time is reported so that failure is visible instead of assumed away.
 // ===========================================================================
-const float    AC_M4_STEP_A    = 0.005f;   // A per step
+const float    AC_M4_STEP_A_rep    = 0.005f;   // A per step
 const uint16_t AC_M4_DWELL_MS  = 150;      // -> 0.033 A/s
 const float    AC_M4_MOVE_RADS = 0.5f;     // "it moved"
 // GIVE-UP LIMIT, and the WARN threshold below must stay strictly under it or it
-// can never fire -- the loop exits at i >= AC_M4_ABORT_A, so a warning set AT
+// can never fire -- the loop exits at i >= AC_M4_ABORT_A_rep, so a warning set AT
 // the abort value is unreachable. Raised 0.60 -> 0.80 so that the +5 sigma warn
 // point (0.60) is inside the range the ramp can actually reach and a legitimately
 // high reading gets RECORDED rather than reported as "NO MOTION". Thermally
 // free: 1.5 * 0.8^2 * 0.221 = 0.21 W.
-const float    AC_M4_ABORT_A   = 0.80f;
+const float    AC_M4_ABORT_A_rep   = 0.80f;
 // Warn, do not abort. J01 belt-off: mean 0.2923, sd 0.0611 (the +-20.9% is the
 // PLANT -- grease redistribution -- not the method).
 //   0.40 A = +1.76 sigma -> fires on ~4% of HEALTHY readings. It DID fire, on a
 //            0.4050 A reading, and that false alarm cost a teardown detour.
 //   0.60 A = +5.04 sigma -> a real outlier.
-const float    AC_M4_WARN_A    = 0.60f;
+const float    AC_M4_WARN_A_rep    = 0.60f;
 // Pre-slide creep indicator. J01 ran 107-146 counts; 200 is ~1.4x the worst
 // observed. See the note at the check itself for why TRAVEL and not elapsed time.
 const int32_t  AC_M4_WARN_CNT  = 200;
@@ -1882,8 +1907,8 @@ static void acM4Breakaway(float sgn) {
 
   uint32_t tramp = millis();
   float i = 0.0f; bool moved = false;
-  while (i < AC_M4_ABORT_A && !ac_abort) {
-    i += AC_M4_STEP_A;
+  while (i < AC_M4_ABORT_A_rep && !ac_abort) {
+    i += AC_M4_STEP_A_rep;
     target = sgn * i;
     uint32_t t0 = millis();
     while ((millis() - t0) < AC_M4_DWELL_MS && !ac_abort) {
@@ -1901,7 +1926,7 @@ static void acM4Breakaway(float sgn) {
 
   if (ac_abort) { SerialUART.println(F("    aborted -- discard")); return; }
   if (!moved) {
-    SerialUART.print(F("    NO MOTION up to ")); SerialUART.print(AC_M4_ABORT_A, 3);
+    SerialUART.print(F("    NO MOTION up to ")); SerialUART.print(AC_M4_ABORT_A_rep, 3);
     SerialUART.println(F(" A -- something is rubbing. Check bearing preload and"));
     SerialUART.println(F("    that the magnet is not skimming the sensor (gap 0.5-1.0 mm, NEVER zero)."));
     return;
@@ -1922,7 +1947,7 @@ static void acM4Breakaway(float sgn) {
   SerialUART.print(F(" s, travel ")); SerialUART.print(travel);
   SerialUART.println(F(" cnt"));
   // ELAPSED TIME CARRIES NO INDEPENDENT INFORMATION and the old `el < 1000` test
-  // was dead code. The ramp is deterministic: el = (i / AC_M4_STEP_A) *
+  // was dead code. The ramp is deterministic: el = (i / AC_M4_STEP_A_rep) *
   // AC_M4_DWELL_MS = i * 30000 ms/A, so el < 1000 ms is just i < 0.0333 A. At
   // J01's 0.2923 A the ramp takes 8.8 s and the test could never have fired.
   //
@@ -1937,8 +1962,8 @@ static void acM4Breakaway(float sgn) {
     SerialUART.print(F("    !! long pre-slide creep (")); SerialUART.print(travel);
     SerialUART.println(F(" cnt) -- reading is biased HIGH. Compare against the other positions."));
   }
-  if (i > AC_M4_WARN_A) {
-    SerialUART.print(F("    !! > ")); SerialUART.print(AC_M4_WARN_A, 2);
+  if (i > AC_M4_WARN_A_rep) {
+    SerialUART.print(F("    !! > ")); SerialUART.print(AC_M4_WARN_A_rep, 2);
     SerialUART.println(F(" A -- outside the measured plant spread (+5 sigma on J01). Investigate."));
   }
   SerialUART.println(F("    Rotate the shaft ~40 deg by hand and repeat -- 5 positions per direction."));
@@ -1969,13 +1994,19 @@ static void acStatus() {
     SerialUART.println();
   }
   SerialUART.println(F("  Any key aborts a running phase."));
-  SerialUART.println(F("  FREE SHAFT + BELT OFF is needed by 2, 5 and 6 only."));
-  SerialUART.println(F("  1, 3, 4 are LOCKED-ROTOR and belt-agnostic. Leg links off throughout."));
+  // Belt-on use of 5 is B3 (drag only); 6's T/T_loop is invalid belt-on
+  // (BELT_DRIVE.md 22.1 Findings 2-3). The old line said 5 needed BELT OFF.
+  SerialUART.println(F("  FREE SHAFT is needed by 2, 5 and 6. Belt ON: 5 = drag only (Ke is"));
+  SerialUART.println(F("      contaminated, never carry it); 6's T/T_loop is invalid."));
+  SerialUART.println(F("  1, 3 are LOCKED-ROTOR and belt-agnostic. Leg links off throughout."));
+  SerialUART.println(F("  4 is BELT-OFF ONLY: belt friction makes its step train ratchet the lock"));
+  SerialUART.println(F("      (drift WARN). L is a motor constant -- carry the belt-off value."));
   SerialUART.println(F("  --- manual-assist, NOT part of the 1..7 chain ---"));
   SerialUART.println(F("  N = M2 bus-power ladder. BELT-AGNOSTIC (locked rotor). Needs 2 and an"));
   SerialUART.println(F("      external METER; bracket it with 3. Rotor must not creep -- watch drift."));
-  SerialUART.println(F("  B / b = M4 breakaway ramp, + / - . Needs a valid alignment. Run it"));
-  SerialUART.println(F("      BELT-OFF for the baseline and again BELT-ON at M5; tag which."));
+  SerialUART.println(F("  B / b = M4 breakaway ramp, + / - . Needs a valid alignment. Output FREE."));
+  SerialUART.println(F("      Belt-off = M4, belt-on = B4; tag which. 5 positions x 2 dirs."));
+  SerialUART.println(F("  w = swing ladder (B6a). Needs a valid alignment. Output LOCKED. ~80 s."));
   SerialUART.print(F("  stored: ZEA=")); SerialUART.print(ZEA_STORED, 4);
   SerialUART.print(F(" DIR=")); SerialUART.print(DIR_STORED);
   SerialUART.println(F("   ('V' verifies them against a fresh alignment)"));
@@ -1998,4 +2029,274 @@ void acPhase(uint8_t n) {
     case 7: acP7(); break;
     default: acStatus(); break;
   }
+}
+
+// ===========================================================================
+// SWING LADDER -- key 'w'.  Manual-assist, NOT part of the 1..7 chain.
+// ===========================================================================
+// Separates the GEOMETRIC term (slack + mesh lost motion) from the ELASTIC term
+// by measuring swing at three currents instead of one:
+//
+//     swing(I) = [slack + lost motion] + 2*F(I)/k_beltline
+//
+// The intercept is the geometric term with the elastic part removed RIGOROUSLY,
+// instead of by subtracting a fixed count using a stiffness measured at some
+// other operating point -- which is what the single-current swing has had to do
+// (51 counts at the ring-derived 370 kN/m, 2026-09-17). The slope is the
+// belt-line stiffness at the swing's own operating point.
+//
+// WHY THIS IS A FIRMWARE COMMAND AND NOT A KEYSTROKE PROCEDURE. The manual
+// version is: c, g, +x15, read, -x30, read, +x15. Three currents triples that to
+// ~90 keystrokes, each one a chance to mis-count a jog, and the 5 s settle has to
+// be timed by hand on all six legs. The failure it prevents is not hypothetical:
+// this campaign has already archived four ring captures believing two of them
+// were negative-going, and four dumps of which only three were unique.
+//
+// PRECONDITIONS, and they are not optional:
+//   * OUTPUT LOCKED (clamped or bonded). A free output measures nothing.
+//   * Valid alignment. This is FOC current; a wrong ZEA invalidates the torque.
+//   * Idlers in whatever state is being characterised -- RECORD IT. The number
+//     describes the plant actually fitted, not the one in the row.
+//
+// THERMAL: six legs x AC_SW_SETTLE_MS stalled, the 3 A pair costing ~2.9 W.
+// ~30 J total. Do not extend the settle without re-reading section 16.
+// ---------------------------------------------------------------------------
+const uint8_t  AC_SW_N            = 4;
+// LADDER CURRENTS -- lowered 1/2/3 -> 0.6/1.0/1.4 on 2026-09-19 by measurement,
+// not by caution. J02, slicer+boss pulley, NO IDLERS:
+//     1.0 A = 7.1 N of belt force  -> held clean, return error 13 counts
+//     2.0 A = 14.2 N               -> RATCHETED CONTINUOUSLY through the mesh,
+//                                     |Iq| sagging to 1.7-1.9 A on back-EMF,
+//                                     ending one tooth displaced
+// So the skip threshold is between 7.1 and 14.2 N with 3.1 teeth in mesh and a
+// slack belt. The top point is set at 1.4 A = 9.9 N, 30% below the current that
+// demonstrably skips. THIS CEILING IS PLANT-SPECIFIC: it will rise once idlers
+// are fitted and the belt is tensioned, and this array should be re-raised then
+// -- a wider span is strictly better for the slope (see below).
+// The bottom is 0.6 A = 2x J02's 0.2983 A breakaway, so the traverse is not
+// fighting stiction; going lower biases the swing short.
+// 1.6 A ADDED 2026-09-19 as a FOURTH point, not as a new top of three. 1.6 A =
+// 11.4 N, 80% of the 14.2 N that skipped -- thinner margin than the rest of the
+// ladder, so it is placed where losing it costs least: the ladder stops on skip,
+// so if 1.6 goes the three proven-clean points below it survive and the run is
+// still usable. Four points also buy 2 dof, which is what makes the curvature
+// visible in the residuals testable rather than merely apparent (the 3-point
+// runs of 2026-09-19 showed a reproducible +9/-18/+9, i.e. SOFTENING with load,
+// consistent with the ring test -- but with 1 dof that pattern is unfalsifiable).
+const float    AC_SW_I_A_rep[AC_SW_N]   = { 0.6f, 1.0f, 1.4f, 1.6f };   // REPORTED amps
+// 5 s, not 1 s. ~10 counts of creep (15 um of belt) appear over the first ~4 s
+// at 2 A and then converge -- measured 2026-09-05. Reading early reads the creep.
+const uint16_t AC_SW_SETTLE_MS    = 5000;
+const uint16_t AC_SW_TICK_MS      = 1000;   // settling heartbeat, so creep is visible
+// Repeatability tolerance, applied to the two MINUS limits (legs 2 and 4).
+const int32_t  AC_SW_RETURN_CNT   = 25;
+
+// ---------------------------------------------------------------------------
+// FOUR LEGS, AND THE FIRST ONE IS THROWN AWAY. Corrected 2026-09-19.
+// ---------------------------------------------------------------------------
+// The 3-leg version (+, -, +ret) reported NOT REPEATABLE on 5 of 6 points across
+// two runs -- and it was right to, but the fault was here, not in the plant.
+// Each point takes its reference wherever the PREVIOUS point left the plant,
+// which is at that point's PLUS limit. So the first + leg of every point after
+// the first barely moves and never completes a traverse:
+//
+//     point        first + leg moved      return error
+//     0.6 A        359 / 179 counts       +6  / +9      <- real traverse
+//     1.0 A         28 /  28              +30 / +31     <- no traverse
+//     1.4 A         24 /  25              +37 / +37     <- no traverse
+//
+// The two runs agreed to +-1 count on those errors, so this was systematic, not
+// noise. A swing is the peak-to-peak of a HYSTERESIS LOOP: both limits have to
+// be reached by a full traverse or they are not the same loop. The old
+// swing = |cp - cm| was therefore biased LOW, and progressively so with current,
+// which drags the slope down and pushes the intercept up (287/576 measured,
+// against 324/564 from the matched pair).
+//
+// So: leg 1 CONDITIONS the plant and is discarded; legs 2, 3, 4 are all full
+// traverses and are the measurement. Two independent swings come out of them,
+// and their disagreement is a real repeatability figure instead of an artefact.
+// Cost: 5 s per point. Worth it -- once the idlers go in and the swing collapses
+// to lost motion alone (150-400 counts predicted), a 37-count bias would be
+// 10-25% of the entire signal.
+// ---------------------------------------------------------------------------
+
+// Re-reading the same leg is what turns "it moved" into "it skipped". A return
+// error near a multiple of one pinion tooth is a skip; anything else is drift.
+// Returns true if the error is tooth-scale, i.e. a skip rather than drift.
+static bool acSwTeeth(int32_t err) {
+  const float teeth = (float)acAbs32(err) / ENC_CNT_PER_TOOTH;
+  if (teeth < 0.5f) return false;
+  SerialUART.print(F("    !! ~")); SerialUART.print(teeth, 2);
+  SerialUART.println(F(" PINION TEETH -- suspected SKIP. DISCARD this point."));
+  return true;
+}
+
+// One leg: command a current, hold it, report the settled count. Returns the
+// wrap-safe count relative to this point's own reference.
+static int32_t acSwLeg(float amps, uint16_t ref, const __FlashStringHelper* tag) {
+  target = amps;
+  uint32_t t0 = millis(), tp = millis();
+  int32_t last = acCntDelta(ref, encoder.raw);
+  while ((millis() - t0) < AC_SW_SETTLE_MS && !ac_abort) {
+    acService();
+    if ((millis() - tp) > AC_SW_TICK_MS) {
+      tp = millis();
+      const int32_t now = acCntDelta(ref, encoder.raw);
+      SerialUART.print(F("      ")); SerialUART.print(tag);
+      SerialUART.print(' ');                 SerialUART.print(amps, 2);
+      SerialUART.print(F(" A  cnt_rel="));   SerialUART.print(now);
+      SerialUART.print(F("  d="));           SerialUART.print(now - last);
+      SerialUART.print(F("  Iq="));          SerialUART.println(motor.current.q, 3);
+      last = now;
+    }
+  }
+  return acCntDelta(ref, encoder.raw);
+}
+
+static void acSwingLadder() {
+  if (!acReady()) return;
+  if (!foc_ready) {
+    SerialUART.println(F("refused: no valid alignment. Press 'f' or 'V' (stored ZEA), or run"));
+    SerialUART.println(F("         phase 2. The swing is FOC current -- a wrong ZEA invalidates it."));
+    return;
+  }
+  // Printed FROM AC_SW_I_A_rep, not typed: a literal "1/2/3 A" here survived the
+  // 2026-09-19 change to 0.6/1.0/1.4/1.6 A and put the wrong currents in every
+  // ladder log until 2026-09-28.
+  SerialUART.print(F("[SWING] ladder"));
+  for (uint8_t k = 0; k < AC_SW_N; k++) {
+    SerialUART.print(k ? '/' : ' ');
+    SerialUART.print(AC_SW_I_A_rep[k], 1);
+  }
+  SerialUART.println(F(" A. OUTPUT MUST BE LOCKED (clamped or bonded)."));
+  SerialUART.print(F("        belt row says ")); SerialUART.print(CAL.belt);
+  SerialUART.println(F(" -- the reading describes what is ACTUALLY fitted. Tag it."));
+  SerialUART.print(F("        1 cnt = ")); SerialUART.print(BELT_MM_PER_COUNT * 1000.0f, 4);
+  SerialUART.print(F(" um of belt,  1 tooth = ")); SerialUART.print(ENC_CNT_PER_TOOTH, 1);
+  SerialUART.println(F(" cnt"));
+
+  acEnter();
+  mode = MODE_TORQUE_CURRENT;                       // 'c' mode -- FOC current
+  motor.torque_controller = TorqueControlType::foc_current;
+  motor.controller        = MotionControlType::torque;
+  motor.PID_current_q.reset(); motor.PID_current_d.reset();
+  target = 0.0f;
+  motor.enable(); running = true; run_started = millis();
+
+  // Keep the current WITH its swing. Compacting only the swings while indexing
+  // the fit off AC_SW_I_A_rep would silently pair point 3 with 2 A if point 2 failed.
+  float sw_y[AC_SW_N], sw_x[AC_SW_N];
+  uint8_t n_ok = 0;
+
+  for (uint8_t k = 0; k < AC_SW_N && !ac_abort; k++) {
+    const float amps = AC_SW_I_A_rep[k];
+    SerialUART.print(F("\n  point ")); SerialUART.print(k + 1);
+    SerialUART.print('/');             SerialUART.print(AC_SW_N);
+    SerialUART.print(F("   +-"));      SerialUART.print(amps, 2);
+    SerialUART.println(F(" A"));
+    const uint16_t ref = encoder.raw;               // per-point reference
+
+    // Leg 1 CONDITIONS only -- it starts from wherever the last point left the
+    // plant, so it is not a full traverse and is not a limit. Discarded.
+    (void)acSwLeg(+amps, ref, F("+cond (discarded)"));
+    const int32_t m1 = acSwLeg(-amps, ref, F("-"));
+    const int32_t p1 = acSwLeg(+amps, ref, F("+"));
+    const int32_t m2 = acSwLeg(-amps, ref, F("-rpt"));
+    if (ac_abort) break;
+
+    // Two swings from three fully-traversed limits. They share p1, so they are
+    // not independent -- but their difference is |m2 - m1|, which IS the honest
+    // repeatability of a limit, and that is the number worth gating on.
+    const int32_t sa    = acAbs32(p1 - m1);
+    const int32_t sb    = acAbs32(p1 - m2);
+    const int32_t swing = (sa + sb) / 2;
+    const int32_t rep   = m2 - m1;            // 0 = the plant came back exactly
+    const bool    good  = (acAbs32(rep) <= AC_SW_RETURN_CNT);
+    // Machine-readable, alone on its line and fully comma-delimited, so a whole
+    // session pastes straight into docs/cal/*.csv. SCHEMA CHANGED 2026-09-19 --
+    // the old 7-field row carried a conditioning leg as if it were a limit:
+    //     SW,<amps>,<minus1>,<plus>,<minus2>,<swing_a>,<swing_b>,<swing>,<repeat>
+    SerialUART.print(F("SW,")); SerialUART.print(amps, 2);
+    SerialUART.print(',');      SerialUART.print(m1);
+    SerialUART.print(',');      SerialUART.print(p1);
+    SerialUART.print(',');      SerialUART.print(m2);
+    SerialUART.print(',');      SerialUART.print(sa);
+    SerialUART.print(',');      SerialUART.print(sb);
+    SerialUART.print(',');      SerialUART.print(swing);
+    SerialUART.print(',');      SerialUART.println(rep);
+    SerialUART.print(F("    swing=")); SerialUART.print(swing);
+    SerialUART.print(F(" cnt = "));    SerialUART.print(swing * BELT_MM_PER_COUNT, 4);
+    SerialUART.print(F(" mm   repeat=")); SerialUART.print(rep);
+    SerialUART.println(good ? F("  OK") : F("  !! NOT REPEATABLE"));
+    const bool skipped = acSwTeeth(rep);
+    if (good) { sw_x[n_ok] = amps; sw_y[n_ok] = (float)swing; n_ok++; }
+    // STOP CLIMBING once the mesh has let go. Every higher point would skip too,
+    // and worse, the plant has MOVED -- the belt is now sitting one tooth over,
+    // so the remaining points would not even be measuring the same assembly.
+    // Found the hard way 2026-09-19: the 2 A point ratcheted and the 3 A point
+    // had to be aborted by hand while the shaft was still spinning at 72 rad/s.
+    if (skipped) {
+      // Blank line as its own println: a "\n" inside F() has now been mangled
+      // three times by the edit path (claude.md, the standing grep rule). Not
+      // worth re-escaping something that can just be a separate call.
+      SerialUART.println();
+      SerialUART.print(F("  LADDER STOPPED at ")); SerialUART.print(amps, 2);
+      SerialUART.println(F(" A -- the mesh let go. Higher points are not measurable"));
+      SerialUART.println(F("  on this plant, and the belt has moved one tooth. Re-seat before re-running."));
+      break;
+    }
+  }
+
+  target = 0.0f;
+  acExit(true);
+  if (ac_abort) { SerialUART.println(F("  aborted -- discard the last point")); return; }
+
+  // Straight-line fit over the points that passed their own return check.
+  // Printed as a CONVENIENCE: the SW, rows above are the measurement, and an
+  // offline refit is what should feed any constant.
+  if (n_ok < 2) {
+    SerialUART.println(F("\n  < 2 repeatable points -- no fit. Fix the seating and re-run."));
+    return;
+  }
+  float sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (uint8_t k = 0; k < n_ok; k++) {
+    sx  += sw_x[k];            sy  += sw_y[k];
+    sxx += sw_x[k] * sw_x[k];  sxy += sw_x[k] * sw_y[k];
+  }
+  const float den = (float)n_ok * sxx - sx * sx;
+  if (fabsf(den) < 1e-6f) { SerialUART.println(F("\n  degenerate fit -- points not distinct")); return; }
+  const float slope = ((float)n_ok * sxy - sx * sy) / den;   // counts per amp
+  const float icpt  = (sxx * sy - sx * sxy) / den;           // counts at I = 0
+
+  SerialUART.print(F("\n  FIT over ")); SerialUART.print(n_ok);
+  SerialUART.println(F(" pts:   swing = intercept + slope*I"));
+  SerialUART.print(F("    intercept = ")); SerialUART.print(icpt, 1);
+  SerialUART.print(F(" cnt = "));          SerialUART.print(icpt * BELT_MM_PER_COUNT, 4);
+  SerialUART.println(F(" mm    <- GEOMETRIC: slack + mesh lost motion"));
+  SerialUART.print(F("    slope     = ")); SerialUART.print(slope, 1);
+  SerialUART.print(F(" cnt/A = "));        SerialUART.print(slope * BELT_MM_PER_COUNT, 4);
+  SerialUART.println(F(" mm/A  <- ELASTIC"));
+  // k_beltline from the slope: swing_mm = geom + 2*F/k, with F = tau_motor/r_pinion.
+  // A FEEDBACK-direction crossing of the torque boundary (measured A_rep -> force),
+  // so it goes through irepToTorqueOut() like any other -- joint_cal.h.
+  //
+  // TWO numbers, on purpose. Every k archived before 2026-10-01 (BELT_DRIVE
+  // 22.5 / 22.6, e.g. recipe B's 64.7) was computed as calKt() * I_reported,
+  // which is the true value TIMES i_scale (3.9% low on J01). Printing only the
+  // true k would make the same plant read 3.9% stiffer than its own archive.
+  // Compare against the archive with the "archive conv." figure; quote physics
+  // with the true one.
+  const float F_per_A = irepToTorqueOut(1.0f) / GEAR_RATIO
+                        / (R_PINION_MM * 1e-3f);                   // N (true) per A_rep
+  const float slope_m = slope * BELT_MM_PER_COUNT * 1e-3f;         // m per A_rep
+  if (slope_m > 1e-9f && F_per_A > 0.0f) {
+    const float k_true_kNm = 2.0f * F_per_A / slope_m / 1000.0f;
+    SerialUART.print(F("    k_beltline = ")); SerialUART.print(k_true_kNm, 1);
+    SerialUART.print(F(" kN/m true   (")); SerialUART.print(k_true_kNm * CAL.i_scale, 1);
+    SerialUART.println(F(" in the pre-2026-10-01 archive conv., Kt x I_rep)"));
+  } else {
+    SerialUART.println(F("    k_beltline: not computable -- slope <= 0 (check the lock) or Ke = 0 (uncalibrated row)."));
+  }
+  SerialUART.println(F("  NOTE: the SW, rows are the measurement. This fit is a convenience --"));
+  SerialUART.println(F("        refit offline before any constant moves."));
 }
