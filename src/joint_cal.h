@@ -761,7 +761,7 @@ struct JointUid {
 const JointUid JOINT_UID[] = {
   { "J01", { 0x460030, 0x34354B0F, 0x30373336 } },  // B-SPI-01 -- T0_J01 boot banner, 2026-10-04 (N1)
   { "J02", { 0, 0, 0 } },  // B-ABZ-01 -- board failed after P8 (7d)
-  { "J03", { 0, 0, 0 } },
+  { "J03", { 0x52003E, 0x34354B0C, 0x33383735 } },   // T0 boot 2026-10-10, board_3
   { "J04", { 0, 0, 0 } },
   { "J05", { 0, 0, 0 } },
   { "J06", { 0, 0, 0 } },
