@@ -1,44 +1,41 @@
-# `docs/cal/` — raw AUTOCALIB records
+# `docs/cal/` — raw calibration records
 
-One file per joint per session: **`<JOINT>_<YYYY-MM-DD>.csv`**, e.g. `J01_2026-08-07.csv`.
+Raw serial output, verbatim, so a fit can be redone offline against exactly what the firmware
+emitted. Summary constants do not go here; they go in the `JointCal` row in `src/joint_cal.h`.
+Nothing in the firmware reads this directory.
 
-**What goes in:** the `BIN,` and `LSB,` blocks from the phase-7 report, **verbatim**, plus the `DRAG,` lines. Do not reformat, do not round, do not drop the header comment lines — the point of this directory is that a fit can be redone offline months later against exactly the bytes the firmware emitted.
+**Naming:** `docs/cal/Jnn/Jnn_<what> (<plant>).csv`, e.g. `J03/J03_autocalib (bare motor).csv`.
+New-joint procedure: [`BELT_OFF_BASELINE.md`](BELT_OFF_BASELINE.md).
 
-**What does not go in:** the summary constants. Those belong in the `JointCal` row in `src/joint_cal.h`, where they are one reviewable git diff with a date on it.
+**What goes in:** the full phase-7 output (including the `BIN,` and `LSB,` blocks and `DRAG,` lines),
+`M2,` and `M4,` rows, capture dumps — unedited, with a header line giving joint, date, plant state,
+pack voltage and meter reading.
 
-## Why these two blocks specifically
-
-| Block | Columns | What it is for |
+| Block | Columns | Use |
 |---|---|---|
-| `BIN,` | `bin, fwd_deg, rev_deg, even, odd` | The 32-bin parity separation. The **odd** part gives `T_delay`; the **even** part is the INL profile plus the ZEA residual. The 1/rev vs 2/rev harmonic split — eccentricity vs channel-gain mismatch — can only be fitted **offline**, and it is too large to store in the struct. |
-| `LSB,` | `t_us_centre, I_mean, n, frac` | The inductance step trace, binned by time. This is what made the τ bias visible: the `n` column peaking every third bin is the un-dithered loop-phase grid showing through. **An independent refit of this block is the only check on the firmware's own `L` fit** — on `J01_2026-08-07` it reproduced τ to 195.92 vs 195.9 µs. |
+| `BIN,` | `bin, fwd_deg, rev_deg, even, odd` | 32-bin parity separation: odd → `T_delay`; even → INL + ZEA residual (1/rev vs 2/rev fitted offline) |
+| `LSB,` | `t_us_centre, I_mean, n, frac` | inductance step trace binned by time; the only independent check on the firmware's `L` fit |
 
-> ## 🔴 2026-08-18 — EVERY CSV IN HERE PREDATES THE M1 CORRECTION. DO NOT PASTE FROM ONE.
->
-> These captures are **raw and deliberately unedited**, which means their `CFG` banners still read `vbus_scale=0.008358` and their phase-7 **"PASTE THIS ROW"** blocks still emit the pre-correction constants. M1 measured the dividers per board — `B-SPI-01` **0.008448**, `B-ABZ-01` **0.008516** — so:
->
-> | To reuse a value from a file in here | Multiply by |
-> |---|---|
-> | any `J01` / `B-SPI-01` capture (`R_eff`, `U0`, `Ke`, `L`, `Kt`, any newton) | **1.010768** |
-> | any `J02` / `B-ABZ-01` capture | **1.018904** |
-> | any **ampere**, **radian**, `τ_e = L/R`, or ratio | **1** — these never pass through the voltage belief |
->
-> **And since 2026-08-20 there is a SECOND factor on forces only.** M2 measured the current sense under-reading, so any **torque or newton** taken from a file in here needs `i_scale` as well:
->
-> | | M1 (`vbus_scale`) | M2 (`i_scale`) | **net on a newton** |
-> |---|---|---|---|
-> | J01 / `B-SPI-01` | ×1.010768 | ÷0.9621 | **×1.0505** |
-> | J02 / `B-ABZ-01` | ×1.018904 | ÷0.9690 | **×1.0515** |
->
-> The amperes still do not move under either. **That invariance is the only reason two independent corrections could be applied to this archive without re-running anything** — which is also the argument for gating bench decisions on amps rather than on percentages of standing load.
->
-> **`src/joint_cal.h` is the corrected source of truth.** The `BIN,` and `LSB,` blocks — the reason this directory exists — are unaffected as *shapes*: harmonic amplitudes in degrees and the τ fit are both immune. Offline refits stay valid; only absolute volts-derived constants move.
+⚠ `cal*` in `.gitignore` matches this directory: new files need `git add -f`.
 
-## Status
+### Files captured before the M1/M2 corrections
 
-| File | Present | Note |
+J01 and J02 files from before 2026-08-18 carry `vbus_scale=0.008358` in their banners and emit
+uncorrected "PASTE THIS ROW" blocks. **Do not paste from them.** To reuse a value:
+
+| | Volts-derived (`R_eff`, `U0`, `Ke`, `L`, `Kt`) | Newtons / torque |
 |---|---|---|
-| `J01_2026-08-07.csv` | ❌ **not captured** | The session-3 rev2 run happened, and its *derived* results are in `README.md` §8.1a and in the `J01` row. The raw serial blocks were not saved to the repo, and **they cannot be reconstructed from the summary.** Re-dump them on the next phase-7 run before the belt goes on — after that the belt-off INL and drag baselines are gone for good. |
-| `pulley acceptance/` (4 files) | ✅ 2026-09-30 | J01, pulley **recipe B** acceptance (BELT_DRIVE.md §22.6): swing ladder ×3 (2 boots, `SW,` rows + firmware fits), B4 breakaway (20 `M4,` rows), B6b ring (8 burst dumps, `cap=` 1–4 and 6–9; `cap=5` was not dumped), and B3 dynamic drag (`V`, 1, 3, phase 5 in both orders, plus the invalid belt-on phase-4 attempt, labelled). The drag file was archived by the assistant from the owner's paste, verbatim. Each file carries its plant header and banner/UT89X readings. ⚠ Produced by a binary **older than the 2026-09-28 source** (banner prints `ladder 1/2/3 A` and `belt=OFF`; no creep warning on the travel −240 reading), so read the banners as build provenance, not plant state. **Only the latest acceptance is archived, by owner decision** — recipe-A (2026-09-27/28) raw rows were not kept, and §22.5's numbers are transcribed from summaries |
+| J01 / `B-SPI-01` | × 1.010768 | × 1.0505 |
+| J02 / `B-ABZ-01` | × 1.018904 | × 1.0515 |
 
-Nothing in the firmware reads this directory. It is a record, not an input.
+Amperes, radians, τ_e = L/R and other ratios are unchanged. `BIN,`/`LSB,` shapes are unaffected.
+
+### Contents
+
+| Path | What |
+|---|---|
+| `J01/` | belt-off AUTOCALIB, M2, M4, hot/cold `R_eff`, belt-on no-idler drag (2026-08-12) |
+| `J02/` | belt-off AUTOCALIB, M2, M4, hot/cold `R_eff`, belt-on drag tests (top on / off, idlers off) |
+| `J03/` | belt-off AUTOCALIB, M2, M4 (2026-10-08/09) |
+| `pulley acceptance/` | J01 recipe-B acceptance, 2026-09-30: swing ladder ×3, B4 breakaway (20 `M4,` rows), B6b ring (caps 1–4, 6–9), B3 dynamic drag both orders. Produced by a pre-2026-09-28 binary (banner prints `ladder 1/2/3 A`, `belt=OFF`) — read banners as build provenance, not plant state. Recipe-A raw rows were not kept |
+| `M6a J_rotor.csv`, `coast-down_runs1&2.csv` | `J_rotor` determinations (2026-08-08) |
