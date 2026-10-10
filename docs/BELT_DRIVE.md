@@ -21,7 +21,7 @@ Plant for B1–B8: belt fitted, idlers per §22.2, output pulley bare, leg links
 |---|---|---|---|---|
 | **B0** | Fit belt | Idlers per §22.2, belt per §22.3, C = 44.5 mm. Then run the idler acceptance test (§22.2) | rollers coast ≥ 1 s, no axial walk | done |
 | **B1** | Alignment | `V` | ≤ 8° elec from stored ZEA | 0.62° (recipe B) |
-| **B2** | Electrical tripwire | `1` then `3` (phases 1 and 3 only; phase 4 ratchets belt-on, R25) | `R_eff` within ~2% of stored | 0.22404 Ω (+0.26%) |
+| **B2** | Electrical tripwire | `1` then `3` (phases 1 and 3 only; phase 4 ratchets belt-on, §22.6.6) | `R_eff` within ~2% of stored | 0.22404 Ω (+0.26%) |
 | **B3** | Belt drag | Phase 5, then again with direction order swapped (`-` then `5`). Store each direction **pooled over both orders** | `drag_c` 0.30–0.40 A (J01 band; restate per joint). Belt-on `Ke` is never carried | 0.3169 / 0.3330 A (§22.6.6) |
 | **B4** | Breakaway | `B`/`b`, output **free**, 10 positions × 2 directions. Between presses rotate by hand and **let the rotor settle into a detent** (a rotor left mid-creep reads far low in the opposite direction). For A/B comparisons use the **same raw positions** as the reference session and compare pairwise (position sd ≈ 0.095 A). Compare breakaway with breakaway, never with `drag_c` | each reading: no `NO MOTION` (0.80 A), `travel` ≤ 200 counts, ≤ 0.60 A | 0.295 A, n = 20 (§22.6.4) |
 | **B5** | INL | Phases 5 + 6. Read INL only; phase 6's `T/T_loop` is invalid belt-on | 1/rev, 2/rev vs belt-off | 1/rev −3.3%, even-part r = 0.9986 (2026-08-12) |
