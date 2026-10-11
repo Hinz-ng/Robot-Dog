@@ -20,7 +20,7 @@ This is my low-cost version of that:
 | Motor driver | STM32G431 field-oriented-control board, running SimpleFOC |
 | Encoder | 14-bit magnetic, 0.04 mrad resolution at the joint |
 | Joint loop | ~12 kHz |
-| Leg | five-bar linkage (80 mm / 100 mm links), two actuators per leg, servo for hip ab/ad |
+| Leg | five-bar linkage (80 mm / 100 mm links), three belt-driven actuators per leg: two drive the five-bar, one swings the leg sideways (hip ab/ad) |
 | Power | 5S LiPo |
 
 ## How a joint behaves
