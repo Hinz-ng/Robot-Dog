@@ -73,9 +73,10 @@ boards are clones, and they disagree with their documentation more often than yo
 ## Repo layout
 
 ```
-src/        joint firmware (STM32, PlatformIO)
-master/     ESP32-S3 master firmware
-contract/   CAN message definitions shared by both
-tools/      CAN bring-up sketches and helpers
-docs/       everything above
+src/           joint firmware (STM32, PlatformIO)
+master/        ESP32-S3 master firmware
+can_protocol/  CAN message definitions shared by both
+tools/         CAN bring-up sketches and helpers
+docs/          everything above
+images/        photos and clips
 ```

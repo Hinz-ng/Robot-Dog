@@ -4,7 +4,7 @@
 // ============================================================================
 // Frame IDs, field packing and scaling for mit_types.h's {p_des, v_des, kp,
 // kd, tau_ff} -> {p, v, tau}. Both tiers include this header and nothing else
-// from each other (contract/ is the only shared directory). PURE: no Arduino,
+// from each other (can_protocol/ is the only shared directory). PURE: no Arduino,
 // no HAL, no I/O -- so the same golden vectors (can_proto_vectors.h) run on the
 // STM32G431 and on the ESP32-S3, each on its own compiler.
 //

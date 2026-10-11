@@ -4,7 +4,7 @@
 // ============================================================================
 // One header both tiers include. NO includes and NO logic: Tier 1 (ESP32-S3)
 // must be able to include it without SimpleFOC, Arduino-STM32 or any
-// calibration table. Both tiers build with -I contract and nothing else in common.
+// calibration table. Both tiers build with -I can_protocol and nothing else in common.
 //
 // FRAME AND UNITS -- output side, SI, units in every name:
 //   p      rad      OUTPUT angle (after the 9:1). GEAR_RATIO stays inside Tier 0.

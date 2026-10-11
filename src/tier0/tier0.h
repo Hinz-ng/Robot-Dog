@@ -9,7 +9,7 @@
 //                  goes through it; no new disable sequence exists here.
 //   mit_law.h      estimator, law, validator (B12a a0-a5, b1)
 //   joint_cal.h    tauOutCmdToIq() / irepToTorqueOut() -- the torque boundary
-//   can_proto.h    the wire contract (contract/, shared with the master)
+//   can_proto.h    the wire contract (can_protocol/, shared with the master)
 //
 // WHAT TIER 0 ADDS, and nothing else:
 //   * FDCAN (can_fdcan.h), POLLED from the control loop -- no ISR.
