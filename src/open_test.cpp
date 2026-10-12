@@ -1006,7 +1006,10 @@ void encoderSelfTest() {
   // ALL-ZERO FRAMES: a dead MISO passed every check above (J03, 2026-10-08).
   // zero_run counts consecutive 0x0000 frames (mt6816.h); >= N = every read.
   const bool all_zero = (encoder.zero_run >= N);
-  if (errs == 0 && oks == N && span <= ENC_STILL_SPAN_MAX && !all_zero) {
+  // no_mag is in the verdict: MISO stuck HIGH reads 0xFFFF, which passes parity
+  // with a still "angle" of 16383 and No_Mag = 1 -- 'e' printed PASS above its
+  // own GARBAGE line (J01, MT6835 fitted under the MT6816 build, 2026-10-12).
+  if (errs == 0 && oks == N && span <= ENC_STILL_SPAN_MAX && !all_zero && !nmg) {
     SerialUART.println(F("ENC PASS (snapshot; use E to soak a bursty fault)"));
   } else {
     SerialUART.println(F("ENC FAIL: check wiring / slow SPI_HALF_NOPS down"));
