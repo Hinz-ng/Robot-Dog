@@ -68,6 +68,14 @@ struct JointCal {
   float  breakaway_A;      // A, M4 STATIC threshold, mean over rotor positions
                            //    (n, sd, direction split in the row comment).
                            //    Belt off: > drag_c. Belt on: ~= drag_c.
+
+  // ---- PAIRING: the encoder chip zea and dir were measured THROUGH ----
+  uint16_t zea_enc;        // ENC_MT6816 / ENC_MT6835; 0 = not measured (unbuilt
+                           //    rows omit it). A different chip reads a different
+                           //    angle, so when this != ENC_CHIP the stored zea/dir
+                           //    are IGNORED: the harness re-aligns, Tier 0 refuses
+                           //    to arm. Moving a joint to the MT6835 needs no edit
+                           //    here -- AUTOCALIB phase 7 emits the new value.
 };
 
 // vbus_scale is PER BOARD (J01 and J02 measured 0.80% apart) and R_eff, U0 and
@@ -110,7 +118,7 @@ const JointCal JOINTS[] = {
      0.008448f, 0.9621f,           // vbus_scale, i_scale  CARRIED
      0.3169f, 0.3330f,             // drag_c fwd, rev      RECIPE B, B3 pooled over both orders
      3.24e-3f, 2.66e-3f,           // drag_v fwd, rev      RECIPE B, B3 pooled over both orders
-     0.295f },                     // breakaway_A          RECIPE B, B4 n=20 (reported A)
+     0.295f, ENC_MT6816 },         // breakaway_A          RECIPE B, B4 n=20 (reported A); zea_enc
 
   // -- J02 -- B-ABZ-01 / M-ABZ-01 (the rebuilt A1). Belt-off AUTOCALIB
   //    2026-08-08, rescaled x1.018904 by M1 2026-08-18. board_sn / motor_sn
@@ -134,7 +142,7 @@ const JointCal JOINTS[] = {
      0.008516f, 0.9690f,           // vbus_scale (M1, 0.32% ambiguity above), i_scale PROVISIONAL
      0.1061f, 0.1074f,             // drag_c fwd, rev      unchanged (reported A)
      0.000948f, 0.000845f,         // drag_v fwd, rev      unchanged (reported A)
-     0.2983f },                    // breakaway_A  M4, n=18, +-8.7%  (reported A)
+     0.2983f, ENC_MT6816 },        // breakaway_A  M4, n=18, +-8.7%  (reported A); zea_enc
   // -- J03 -- board_3 (new) + motor_2 (J02's motor) + a new MT6816 board. Bare
   //    motor, belt off. AUTOCALIB 2026-10-08 (banner 11.98 V vs UT89X 11.97 V):
   //    zea sd 3.5 deg (n = 7); R_eff +-0.75%; INL 1.42 deg mech (1/rev, centring).
@@ -153,7 +161,7 @@ const JointCal JOINTS[] = {
      0.008357f, 0.9797f,           // vbus_scale (M1 2026-10-08), i_scale (M2 2026-10-09, PROVISIONAL)
      0.0935f, 0.1058f,             // drag_c fwd, rev   (reported A, belt OFF, bare motor)
      0.001143f, 0.000713f,         // drag_v fwd, rev
-     0.2545f },                    // breakaway_A  (M4 2026-10-10, bare motor)
+     0.2545f, ENC_MT6816 },        // breakaway_A  (M4 2026-10-10, bare motor); zea_enc
   // -- J04 .. J12 -- NOT BUILT. Every measurable field 0.0f = not measured;
   //    zea -1 / dir 0 force a full alignment; i_scale 1.0 is its inert value.
   //    New joint: docs/cal/BELT_OFF_BASELINE.md (M1, AUTOCALIB, paste, M2, M4).
@@ -201,7 +209,7 @@ const JointCal JOINTS[] = {
      0.008448f, 0.9621f,           // vbus_scale (M1 2026-08-18), i_scale (M2 2026-08-20)
      0.0750f, 0.0816f,             // drag_c fwd, rev      unchanged (reported A)
      9.33e-4f, 7.27e-4f,           // drag_v fwd, rev      unchanged (reported A)
-     0.292f },                     // breakaway_A          unchanged (reported A)
+     0.292f, ENC_MT6816 },         // breakaway_A          unchanged (reported A); zea_enc
 };
 
 static constexpr uint8_t JOINT_COUNT = (uint8_t)(sizeof(JOINTS) / sizeof(JOINTS[0]));
@@ -263,6 +271,13 @@ static const JointCal& CAL = JOINTS[JOINT_ID - 1];
 #else
   #define ENC_CHIP ENC_MT6835
 #endif
+
+// The stored zea/dir may be used only if they were measured through the chip
+// this build reads. Every consumer of CAL.zea / CAL.dir goes through this.
+static inline bool calZeaChipMatches() { return CAL.zea_enc == ENC_CHIP; }
+static inline bool calZeaUsable() {
+  return CAL.zea >= 0.0f && CAL.dir != 0 && calZeaChipMatches();
+}
 
 // Kt for the selected joint. Derived every time, so it cannot disagree with Ke.
 static inline float calKt() { return calKt(CAL); }
@@ -371,7 +386,8 @@ static inline void printJointCal(Print& out) {
   out.print(F(" Kt=")); out.print(calKt(), 6); out.print(F("(derived)"));
   out.print(F(" L=")); out.print(CAL.L*1e6f, 1); out.print(F("uH"));
   out.print(F(" ZEA=")); out.print(CAL.zea, 4);
-  out.print(F(" DIR=")); out.println(CAL.dir);
+  out.print(F(" DIR=")); out.print(CAL.dir);
+  out.print(F(" ENC=MT")); out.println(ENC_CHIP);
 
   // Board scales. Both are pure multipliers on numbers the torque path uses, and
   // both are silent when wrong, so they get printed rather than assumed.
@@ -405,7 +421,12 @@ static inline void printJointCal(Print& out) {
   out.print(F("A+")); out.print(CAL.drag_v_rev, 6); out.print(F("*w"));
   out.print(F("  breakaway=")); out.print(CAL.breakaway_A, 4); out.println(F("A"));
 
-  if (CAL.zea < 0.0f || CAL.dir == 0)
+  if (CAL.zea >= 0.0f && CAL.dir != 0 && !calZeaChipMatches()) {
+    out.print(F("  !! ZEA/DIR were measured through "));
+    if (CAL.zea_enc) { out.print(F("MT")); out.print(CAL.zea_enc); } else out.print(F("an unrecorded chip"));
+    out.print(F(", this joint reads MT")); out.print(ENC_CHIP);
+    out.println(F(" -- IGNORED: 'f' aligns, Tier 0 refuses to arm. Run AUTOCALIB."));
+  } else if (CAL.zea < 0.0f || CAL.dir == 0)
     out.println(F("  !! UNCALIBRATED joint -- 'f' will do a full alignment. Run AUTOCALIB."));
   else
     out.println(F("  press 'V' to verify the stored ZEA against a fresh alignment"));

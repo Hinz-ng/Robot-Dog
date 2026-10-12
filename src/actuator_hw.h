@@ -207,7 +207,8 @@ static void printCfgBanner(Print& out, float driver_volt_limit, float curr_max_A
 // Alignment. Reads CAL.zea / CAL.dir directly so this header stays one-directional.
 static void runInitFOC(bool force_align, bool is_running, bool& foc_ready, float& target, Print& out) {
   if (is_running) { out.println(F("stop first (x)")); return; }
-  bool use_stored = (!force_align && CAL.zea >= 0.0f && CAL.dir != 0);
+  // calZeaUsable(): zea/dir measured AND measured through this build's chip.
+  bool use_stored = (!force_align && calZeaUsable());
   if (use_stored) {
     // Absolute sensor: ZEA is a constant, not a per-session measurement.
     motor.zero_electric_angle = CAL.zea;
@@ -215,10 +216,12 @@ static void runInitFOC(bool force_align, bool is_running, bool& foc_ready, float
     out.println(F("initFOC: STORED ZEA -- no alignment, no twitch."));
   } else {
     motor.zero_electric_angle = NOT_SET;
-    // Direction is detected unless CAL.dir has been measured.
-    motor.sensor_direction = (CAL.dir > 0) ? Direction::CW
-                           : (CAL.dir < 0) ? Direction::CCW
-                                              : Direction::UNKNOWN;
+    // Direction is detected unless CAL.dir has been measured -- through this
+    // chip: another chip's dir may count the other way.
+    const int8_t dir = calZeaChipMatches() ? CAL.dir : 0;
+    motor.sensor_direction = (dir > 0) ? Direction::CW
+                           : (dir < 0) ? Direction::CCW
+                                       : Direction::UNKNOWN;
     out.println(F("initFOC: aligning (expect a small twitch)."));
   }
   motor.enable();

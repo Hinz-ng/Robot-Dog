@@ -1335,10 +1335,16 @@ static void acP7() {
 
   SerialUART.print(F("     "));
   if (ac_zea_mismatch) {
-    SerialUART.println(F("0.0f },  // breakaway_A  *** CARRY BLOCKED -- run M4 ***"));
+    SerialUART.print(F("0.0f, "));
   } else {
-    SerialUART.print(CAL.breakaway_A, 4);
-    SerialUART.print(F("f },                   // breakaway_A  CARRIED (M4)"));
+    SerialUART.print(CAL.breakaway_A, 4); SerialUART.print(F("f, "));
+  }
+  // zea_enc: the chip THIS run measured zea/dir through (0 if phase 2 did not run).
+  if (ac_done[2]) { SerialUART.print(F("ENC_MT")); SerialUART.print(ENC_CHIP); }
+  else            SerialUART.print('0');
+  if (ac_zea_mismatch) SerialUART.println(F(" },  // breakaway_A *** CARRY BLOCKED -- run M4 ***; zea_enc"));
+  else {
+    SerialUART.print(F(" },        // breakaway_A  CARRIED (M4); zea_enc"));
     if (CAL.breakaway_A == 0.0f) SerialUART.print(F("  <-- PENDING M4"));
     SerialUART.println();
   }

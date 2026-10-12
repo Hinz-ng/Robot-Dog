@@ -113,9 +113,10 @@ const float VEL_TF = 0.02f;
 // ---------------------------------------------------------------------------
 // ZEA is a stored constant on the absolute encoder, so a slipped magnet or a
 // wrong-joint flash is silent: press 'V' after every flash. An unfilled row
-// (zea < 0, dir == 0) falls back to a full alignment.
-const float ZEA_STORED = CAL.zea;
-const int   DIR_STORED = CAL.dir;
+// (zea < 0, dir == 0) falls back to a full alignment, and so does a row whose
+// zea/dir were measured through a different encoder chip (calZeaUsable()).
+const float ZEA_STORED = calZeaUsable() ? CAL.zea : -1.0f;
+const int   DIR_STORED = calZeaUsable() ? CAL.dir : 0;
 
 
 // ---------------------------------------------------------------------------

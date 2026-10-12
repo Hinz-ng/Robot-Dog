@@ -501,7 +501,9 @@ static void t0Setup() {
   }
 
   // ---- STORED ZEA ONLY. Tier 0 never aligns. ----
-  t0_calibrated = (CAL.zea >= 0.0f && CAL.dir != 0 && CAL.Ke > 0.0f && CAL.R_eff > 0.0f);
+  // calZeaUsable() includes the chip check: zea/dir measured through another
+  // encoder chip are another angle, i.e. a wrong commutation vector.
+  t0_calibrated = (calZeaUsable() && CAL.Ke > 0.0f && CAL.R_eff > 0.0f);
   if (t0_calibrated) {
     runInitFOC(false, false, t0_foc_ready, target, SerialUART);
     // What SimpleFOC's current-sense alignment LEFT the gains at. "MOT: Success:
