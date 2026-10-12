@@ -61,10 +61,13 @@ const uint8_t SPI_HALF_NOPS = 1;
 // back-to-back reads from violating either. Unverified margin, not a datasheet value.
 const uint8_t MT35_CS_NOPS = 32;
 
-static inline void spiHalf() {
+// always_inline: the build optimises for size, and without it these became real
+// calls -- 48 calls of clk() per read, 16.09 us/read on J01 (2026-10-12) against
+// the MT6816's 6.67 us for 32 clocks.
+static inline __attribute__((always_inline)) void spiHalf() {
   for (uint8_t i = 0; i < SPI_HALF_NOPS; i++) __asm__ volatile ("nop");
 }
-static inline void mt35CsGap() {
+static inline __attribute__((always_inline)) void mt35CsGap() {
   for (uint8_t i = 0; i < MT35_CS_NOPS; i++) __asm__ volatile ("nop");
 }
 
@@ -268,7 +271,7 @@ public:
 private:
   // One SCK cycle, mode 3: drive MOSI on the falling edge, sample MISO after
   // the rising edge -- the same edge placement as MT6816SPI::xfer16().
-  static inline uint32_t clk(bool mosi) {
+  static inline __attribute__((always_inline)) uint32_t clk(bool mosi) {
     GPIOB->BSRR = (1UL << (SPI_SCK_BIT + 16));                     // SCK fall
     GPIOB->BSRR = mosi ? (1UL << SPI_MOSI_BIT) : (1UL << (SPI_MOSI_BIT + 16));
     spiHalf();
