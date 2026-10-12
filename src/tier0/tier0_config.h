@@ -104,8 +104,11 @@ const float    T0_GUARD_FLOOR_A_rep = 3.0f;
 // Position envelope relative to the session zero: the CAN packing range.
 // Joint limits for the leg belong to the master (it owns geometry).
 const float    T0_P_ABS_MAX_RAD = 6.2832f;
-// Encoder link: all-zero frames for this long = dead/stuck-low MISO (mt6816.h
-// zero_run). Refuses ARM; trips an armed joint (CAN_FAULT_ENCODER).
+// Encoder link: no FRESH, check-passing (parity / CRC), non-zero frame for this
+// long = encoder dead -- every frame failing the check, or all-zero frames from a
+// dead / stuck-low MISO (zero_run). Refuses ARM; trips an armed joint
+// (CAN_FAULT_ENCODER). One failed frame holds the angle for one loop; 200 ms of
+// them is a frozen angle.
 // AMBIGUOUS BY CONSTRUCTION: a LIVE encoder parked at exactly count 0 sends the
 // same word and does not jitter at rest ('e' passes only at span 0), so 1 rotor
 // position in 16384 reads as dead. Disarmed that costs a refused ARM (turn the
