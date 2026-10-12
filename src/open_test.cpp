@@ -967,12 +967,22 @@ void encoderSelfTest() {
   uint32_t err0 = encoder.spi_err, ok0 = encoder.spi_ok;
   uint16_t lo = 0xFFFF, hi = 0;
   uint8_t  nmg = 0;
+#if ENC_CHIP == ENC_MT6835
+  // Full-resolution still-shaft span: the chip's own noise floor, which is what
+  // decides how many of its 21 bits are worth reading (stage 2, 16 vs 21 bit).
+  // For N Gaussian samples span ~ 8 sigma. Meaningless while turning.
+  uint32_t lo21 = 0xFFFFFFFFUL, hi21 = 0;
+#endif
   uint32_t t0 = micros();
   for (uint16_t k = 0; k < N; k++) {
     if (encoder.readAngleRaw()) {
       if (encoder.raw < lo) lo = encoder.raw;
       if (encoder.raw > hi) hi = encoder.raw;
       nmg |= encoder.no_mag;
+#if ENC_CHIP == ENC_MT6835
+      if (encoder.angle21 < lo21) lo21 = encoder.angle21;
+      if (encoder.angle21 > hi21) hi21 = encoder.angle21;
+#endif
     }
   }
   uint32_t dt = micros() - t0;
@@ -985,6 +995,9 @@ void encoderSelfTest() {
   SerialUART.print(F("%) us_per_read="));SerialUART.print((float)dt / N, 2);
   SerialUART.print(F(" raw="));         SerialUART.print(encoder.raw);
   SerialUART.print(F(" span="));        SerialUART.print(hi - lo);
+#if ENC_CHIP == ENC_MT6835
+  SerialUART.print(F(" span21="));      SerialUART.print(hi21 >= lo21 ? hi21 - lo21 : 0);
+#endif
   SerialUART.print(F(" no_mag="));      SerialUART.print(nmg);
   SerialUART.print(F(" over_speed="));  SerialUART.println(encoder.over_speed);
   // On a STATIONARY shaft raw must not move: a nonzero span is a corrupted frame
