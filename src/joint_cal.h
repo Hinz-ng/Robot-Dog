@@ -266,7 +266,7 @@ static const JointCal& CAL = JOINTS[JOINT_ID - 1];
 // Unbuilt rows (J04-J12) default to the MT6835 because new joints get one.
 // When the last MT6816 joint moves, this becomes one line in fleet_config.h.
 // ---------------------------------------------------------------------------
-#if JOINT_ID == 1 || JOINT_ID == 2 || JOINT_ID == 3 || JOINT_ID == 13 || JOINT_ID == 14
+#if JOINT_ID == 2 || JOINT_ID == 3 || JOINT_ID == 13 || JOINT_ID == 14
   #define ENC_CHIP ENC_MT6816
 #else
   #define ENC_CHIP ENC_MT6835
