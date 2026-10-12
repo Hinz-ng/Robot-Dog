@@ -23,7 +23,7 @@
 // is NOT applied here -- the master owns it (master_config.h M_MOUNT_SIGN).
 //
 // ZERO: SESSION-RELATIVE -- p = 0 where the harness arms, or at Tier 0's ZERO.
-// The MT6816 is absolute over one MOTOR turn = 40 deg of output, so an absolute
+// The encoder is absolute over one MOTOR turn = 40 deg of output, so an absolute
 // output angle needs homing or a known boot pose. Open item 7l; until it is
 // closed this contract is NOT frozen.
 //

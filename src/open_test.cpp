@@ -4,7 +4,8 @@
 #include "joint_cal.h"      // PER-UNIT: this assembly only, picked by -D JOINT_ID
 
 // ============================================================================
-// open_test.cpp -- BENCH HARNESS: FOC current mode + MT6816 4-wire SPI.
+// open_test.cpp -- BENCH HARNESS: FOC current mode + MT6816 or MT6835 4-wire SPI
+// (per joint: ENC_CHIP in joint_cal.h; MT6835 facts in mt6835.h).
 // Board: B-G431B-ESC1 clone (EG2124A). SimpleFOC 2.3.1, ststm32@17.6.0.
 // Not shipped to the robot (Tier 0 is src/tier0/). Keys and session workflow:
 // docs/FIRMWARE.md §11. Boots DISABLED; 20 s auto-stop; 150 rad/s overspeed
@@ -43,6 +44,8 @@
 // the fast path writes GPIOB->BSRR and reads GPIOB->IDR directly.
 //     CSN  -> PB5     MOSI -> PB6     MISO -> PB7     SCK -> PB8 (= BOOT0)
 //     HVPP -> VDD/3V3 (selects SPI; low gives ABZ)     VDD -> 3V3, GND -> GND
+//   MT6835 board: same four pins, no HVPP. VDD -> 3V3 so its MISO swings at
+//   the STM32's logic level (the chip accepts 3.0-5.5 V).
 //   SCK sits on PB8 because CSN (internal pull-up) and MISO (an output) could
 //   hold BOOT0 high at reset. Keep a 10k pulldown PB8 -> GND.
 //   The telemetry UART stays on PB4/PB3: bit-banging needs no pin map.
@@ -537,9 +540,10 @@ struct LogSample {
   int16_t  sp_x1000;      // current SETPOINT * 1000
   int16_t  raw_x100;      // RAW unsynchronised |I| * 100 -- sees PWM-rate ripple that
                           // the synchronously sampled dq path is blind to
-  uint16_t cnt;           // raw 14-bit MT6816 angle (ground truth for velocity).
-                          // Wraps at 16383 = one motor rev: UNWRAP before
+  uint16_t cnt;           // raw ENC_BITS angle, either chip (ground truth for velocity).
+                          // Wraps at ENC_CPR-1 = one motor rev: UNWRAP before
                           // differentiating. 1 count = 0.02197 deg mech.
+                          // MODE_MIT puts the clamp flags in bits 14-15.
 };
 LogSample logbuf[LOG_N];
 volatile uint16_t log_i = 0;
@@ -801,9 +805,9 @@ static void mitDumpBody() {
   SerialUART.println(F("i,t_us,p,p_des,v,tau_law,tau_cmd,tau,sp,Iq,Id,Uq,rawI,cnt,clamp"));
   uint32_t t_acc = 0;
   int32_t  c_acc = log_mit_cnt0;
-  uint16_t raw_prev = logbuf[0].cnt & 0x3FFF;
+  uint16_t raw_prev = logbuf[0].cnt & (uint16_t)(ENC_CPR - 1);
   for (uint16_t k = 0; k < log_i; k++) {
-    const uint16_t raw = logbuf[k].cnt & 0x3FFF;
+    const uint16_t raw = logbuf[k].cnt & (uint16_t)(ENC_CPR - 1);
     int32_t d = (int32_t)raw - (int32_t)raw_prev;
     if      (d >  (int32_t)(ENC_CPR / 2)) d -= (int32_t)ENC_CPR;
     else if (d < -(int32_t)(ENC_CPR / 2)) d += (int32_t)ENC_CPR;
@@ -1806,6 +1810,9 @@ void loop() {
       if (log_mode == MODE_MIT) {        // slot reuse -- see mitDumpBody()
         e.vel_x50  = sat16(mit_est.v_out_rads * 1000.0f);
         e.ud_x1000 = sat16(mit_tau_law_Nm * 10000.0f);
+        // Clamp flags ride in cnt[15:14] (decoded by the dump's `cnt >> 14`).
+        // A wider ENC_BITS would overwrite them with angle bits, silently.
+        static_assert(ENC_BITS <= 14, "MODE_MIT log packs clamp flags into cnt bits 14-15: widen LogSample first");
         e.cnt      = (uint16_t)(encoder.raw | ((uint16_t)mit_clamp << 14));
         if (log_i == 0) log_mit_cnt0 = mit_est.cnt - mit_est.cnt_zero;
       }
@@ -1865,7 +1872,7 @@ void loop() {
     // frames are being corrupted and the angle was stale for that many cycles.
     // nmg=1 means the magnet field is below the AMR saturation threshold and the
     // angle is meaningless -- the failure ABZ could never report.
-    encoder.readOverSpeed();                 // 0x05: one extra frame per print only
+    encoder.readOverSpeed();                 // MT6816: one extra 0x05 frame per print; MT6835: cached
     SerialUART.print(F(" perr=")); SerialUART.print(encoder.spi_err);
     SerialUART.print(F(" nmg="));  SerialUART.print(encoder.no_mag);
     SerialUART.print(F(" ovs="));  SerialUART.print(encoder.over_speed);
