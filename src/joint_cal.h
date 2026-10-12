@@ -250,6 +250,20 @@ static_assert(JOINT_ID >= 1 && JOINT_ID <= JOINT_COUNT,
 // without it a second .cpp including this header would collide at link time.
 static const JointCal& CAL = JOINTS[JOINT_ID - 1];
 
+// ---------------------------------------------------------------------------
+// ENCODER CHIP FITTED to each assembly -- per unit while the fleet migrates
+// MT6816 -> MT6835. Compile-time because it selects the driver (enc_select.h);
+// one list here, so the harness and Tier-0 builds of a joint cannot disagree.
+// The chip is part of the PAIRING: zea and dir are measured through it.
+// Unbuilt rows (J04-J12) default to the MT6835 because new joints get one.
+// When the last MT6816 joint moves, this becomes one line in fleet_config.h.
+// ---------------------------------------------------------------------------
+#if JOINT_ID == 1 || JOINT_ID == 2 || JOINT_ID == 3 || JOINT_ID == 13 || JOINT_ID == 14
+  #define ENC_CHIP ENC_MT6816
+#else
+  #define ENC_CHIP ENC_MT6835
+#endif
+
 // Kt for the selected joint. Derived every time, so it cannot disagree with Ke.
 static inline float calKt() { return calKt(CAL); }
 

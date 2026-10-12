@@ -58,6 +58,17 @@ const float SPI_MAX_JUMP    = 1.0f;    // rad mechanical between consecutive rea
 // (FAILURE_MODES §12). A corrupted sample is held at most ~0.2 ms.
 const uint8_t SPI_JUMP_MAX_RUN = 3;
 
+// Driver identity for the shared console text (enc_select.h compiles exactly
+// one driver per build; mt6835.h defines the same names).
+#define ENC_NAME  "MT6816"
+#define ENC_CHECK "parity"
+#define ENC_FLAG  "No_Mag_Warning"
+// 'e' / 'E' still-shaft span limit: read natively at 14 bits, a still shaft
+// does not move by a single count.
+const uint16_t ENC_STILL_SPAN_MAX = 0;
+// raw is this chip's native 14 bits; any other ENC_BITS would rescale it silently.
+static_assert(ENC_BITS == 14, "MT6816 is 14-bit: ENC_BITS != 14 needs every joint on the MT6835");
+
 class MT6816SPI : public Sensor {
 public:
   void init() {

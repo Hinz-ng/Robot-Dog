@@ -49,11 +49,17 @@ static constexpr float AMP_INV_MAG     = 1.2247449f;   // sqrt(3/2)
 static constexpr float AMP_INV_MAG_INV = 0.8164966f;   // sqrt(2/3)
 
 // ---------------------------------------------------------------------------
-// ENCODER -- MT6816, 4-wire SPI, 14-bit absolute
+// ENCODER -- MT6816 or MT6835, 4-wire SPI, absolute, read at ENC_BITS
 // ---------------------------------------------------------------------------
 // One mechanical revolution per wrap. ENC_BITS is used as a shift when binning
 // by rotor position, so it and ENC_CPR are derived from each other here on
 // purpose: they cannot drift apart.
+// The CHIP is per assembly while the fleet migrates (ENC_CHIP, joint_cal.h);
+// the RESOLUTION is fleet. The MT6835 (21-bit) is truncated to ENC_BITS in its
+// driver, so every count-unit constant means the same on both chips.
+// Chip ids are macros, not enums: ENC_CHIP selects a driver in #if.
+#define ENC_MT6816 6816
+#define ENC_MT6835 6835
 static constexpr uint8_t  ENC_BITS = 14;
 static constexpr uint32_t ENC_CPR  = 1UL << ENC_BITS;              // 16384
 static constexpr float    ENC_RAD_PER_COUNT = 6.28318531f / (float)ENC_CPR;

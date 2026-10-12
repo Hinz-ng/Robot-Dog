@@ -58,7 +58,7 @@ sources on a branch and build there -- do not build this environment."
 
 HardwareSerial SerialUART(PB4, PB3);
 
-#include "mt6816.h"   // MT6816 SPI encoder
+#include "enc_select.h"   // MT6816 or MT6835 SPI encoder, per joint (ENC_CHIP)
 
 // ---------------------------------------------------------------------------
 
@@ -975,7 +975,7 @@ void encoderSelfTest() {
   encoder.readOverSpeed();
   SerialUART.print(F("ENC n="));        SerialUART.print(N);
   SerialUART.print(F(" ok="));          SerialUART.print(oks);
-  SerialUART.print(F(" parity_err="));  SerialUART.print(errs);
+  SerialUART.print(F(" " ENC_CHECK "_err="));  SerialUART.print(errs);
   SerialUART.print(F(" ("));            SerialUART.print(100.0f * errs / N, 3);
   SerialUART.print(F("%) us_per_read="));SerialUART.print((float)dt / N, 2);
   SerialUART.print(F(" raw="));         SerialUART.print(encoder.raw);
@@ -988,14 +988,18 @@ void encoderSelfTest() {
   // ALL-ZERO FRAMES: a dead MISO passed every check above (J03, 2026-10-08).
   // zero_run counts consecutive 0x0000 frames (mt6816.h); >= N = every read.
   const bool all_zero = (encoder.zero_run >= N);
-  if (errs == 0 && oks == N && span == 0 && !all_zero) {
+  if (errs == 0 && oks == N && span <= ENC_STILL_SPAN_MAX && !all_zero) {
     SerialUART.println(F("ENC PASS (snapshot; use E to soak a bursty fault)"));
   } else {
     SerialUART.println(F("ENC FAIL: check wiring / slow SPI_HALF_NOPS down"));
+#if ENC_CHIP == ENC_MT6835
+    if (span > ENC_STILL_SPAN_MAX) SerialUART.println(F("  span > 1 on a still shaft = corruption that PASSED crc"));
+#else
     if (span) SerialUART.println(F("  span != 0 on a still shaft = corruption that PASSED parity"));
+#endif
     if (all_zero) SerialUART.println(F("  every frame 0x0000: MISO dead (or shaft at count 0 -- turn it, re-run)"));
   }
-  if (nmg) SerialUART.println(F("!! No_Mag_Warning -- magnet too weak or too far. Angle is GARBAGE."));
+  if (nmg) SerialUART.println(F("!! " ENC_FLAG " -- magnet too weak or too far. Angle is GARBAGE."));
 }
 
 // ---------------------------------------------------------------------------
@@ -1055,7 +1059,7 @@ void encoderMonitor() {
     SerialUART.print(F(" span="));    SerialUART.print(span);
     SerialUART.print(F(" nmg="));     SerialUART.print(nmg);
     // Loud, because you are looking at the wire and not at the screen.
-    if (errs || span) SerialUART.println(F("   <<<<<< HIT"));
+    if (errs || span > ENC_STILL_SPAN_MAX) SerialUART.println(F("   <<<<<< HIT"));
     else              SerialUART.println();
   }
   while (SerialUART.available()) (void)SerialUART.read();
@@ -1064,7 +1068,11 @@ void encoderMonitor() {
   SerialUART.print(F(" perr_total="));  SerialUART.print(encoder.spi_err - e0_all);
   SerialUART.print(F(" worst_window=")); SerialUART.print(worst_err);
   SerialUART.print(F(" worst_span="));  SerialUART.println(worst_span);
+#if ENC_CHIP == ENC_MT6835
+  SerialUART.println(F("  span > 1 on a stationary shaft = corruption that PASSED crc."));
+#else
   SerialUART.println(F("  span > 0 on a stationary shaft = corruption that PASSED parity."));
+#endif
 }
 
 void printHelp() {
@@ -1602,7 +1610,7 @@ void setup() {
   SerialUART.begin(921600);
   _delay(2000);
   SimpleFOCDebug::enable(&SerialUART);
-  SerialUART.println(F("=== bench harness: MT6816 SPI, FOC current ==="));
+  SerialUART.println(F("=== bench harness: " ENC_NAME " SPI, FOC current ==="));
   printJointCal(SerialUART);
 
   // ---- HARDWARE BRING-UP, PHASE 1 -- the order lives in actuator_hw.h ----
