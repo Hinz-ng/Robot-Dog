@@ -51,11 +51,19 @@ const uint8_t SPI_MOSI_BIT = 6;    // PB6
 const uint8_t SPI_MISO_BIT = 7;    // PB7
 const uint8_t SPI_SCK_BIT  = 8;    // PB8 -- BOOT0
 
-// Half-period padding: the value proven on the MT6816 over this harness
-// (6.65 us per 32-clock read), kept so the first comparison changes only the
-// chip. The MT6835 allows 16 MHz, so this is not near its limit. If CRC errors
-// appear, raise it and re-run 'e'.
-const uint8_t SPI_HALF_NOPS = 1;
+// SCK timing, from the datasheet (Rev 1.3 sec 7.6.2), NOT copied from the MT6816:
+//   TSCKL, TSCKH >= 30 ns; MOSI setup TST >= 10 ns before the rising edge;
+//   MISO valid TDV <= 15 ns after the falling edge AT 20 pF (Dupont is more).
+// HIGH phase: SPI_HALF_NOPS plus the loop's own ~8 cycles (~47 ns, >= TSCKH).
+// LOW phase: a countdown in inline asm, ~3 cycles per count -- asm because the
+// compiler unrolls a NOP loop and the core may drop a NOP before it executes,
+// so NOP counts are not a delay. With no padding the inlined loop held SCK low
+// ~3 cycles (~18 ns) and read 99.65% CRC errors on J01 (2026-10-13); the earlier
+// 16 us/read build passed only because call overhead stretched each half-period.
+// 5 counts + ~4 cycles of stores -> ~19 cycles (~110 ns) low: ~3.5x TSCKL,
+// ~7x TDV. If CRC errors appear, raise MT35_SCK_LOW_SPIN.
+const uint8_t  SPI_HALF_NOPS     = 1;
+const uint32_t MT35_SCK_LOW_SPIN = 5;
 // CSN setup (fall -> first SCK) and CSN high time between frames. The MT6835's
 // minima are not in hand; ~190 ns each costs 0.4 us per read and keeps 'e''s
 // back-to-back reads from violating either. Unverified margin, not a datasheet value.
@@ -66,6 +74,14 @@ const uint8_t MT35_CS_NOPS = 32;
 // the MT6816's 6.67 us for 32 clocks.
 static inline __attribute__((always_inline)) void spiHalf() {
   for (uint8_t i = 0; i < SPI_HALF_NOPS; i++) __asm__ volatile ("nop");
+}
+static inline __attribute__((always_inline)) void mt35SckLow() {
+  uint32_t n = MT35_SCK_LOW_SPIN;
+#if defined(__arm__)
+  __asm__ volatile ("1: subs %0, %0, #1\n\tbne 1b" : "+r"(n) : : "cc");
+#else
+  while (n) { __asm__ volatile ("" : "+r"(n)); n--; }   // host unit test only
+#endif
 }
 static inline __attribute__((always_inline)) void mt35CsGap() {
   for (uint8_t i = 0; i < MT35_CS_NOPS; i++) __asm__ volatile ("nop");
@@ -274,7 +290,7 @@ private:
   static inline __attribute__((always_inline)) uint32_t clk(bool mosi) {
     GPIOB->BSRR = (1UL << (SPI_SCK_BIT + 16));                     // SCK fall
     GPIOB->BSRR = mosi ? (1UL << SPI_MOSI_BIT) : (1UL << (SPI_MOSI_BIT + 16));
-    spiHalf();
+    mt35SckLow();                                                  // TSCKL, TST, TDV
     GPIOB->BSRR = (1UL << SPI_SCK_BIT);                            // SCK rise
     spiHalf();
     return (GPIOB->IDR >> SPI_MISO_BIT) & 1UL;
