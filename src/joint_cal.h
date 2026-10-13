@@ -111,8 +111,10 @@ const JointCal JOINTS[] = {
   //    0.080-0.475 (one reading over the 200-count creep flag; 0.286 without it).
   //    Not fields: backlash G 5.8 counts; k 67.2 kN/m true at its clamp; ring
   //    f_d 65.0 Hz.
-  //    Belt-off diagnostics, MT6835 2026-10-13: INL 0.845 deg mech pk-pk;
-  //    ZEA residual 0.780 deg elec; Ke 0.018025 (+0.47% vs row: scale check).
+  //    Belt-off diagnostics, MT6835, two runs 2026-10-13: INL 0.845 / 0.868 deg
+  //    mech pk-pk; ZEA residual 0.780 / 0.802 deg elec; Ke 0.018025 / 0.017988
+  //    (+0.47 / +0.26% vs row: scale check). Delay T 84-90 us, flat when the loop
+  //    went 12.08 -> 12.62 kHz (T/T_loop 1.02-1.14): a fixed delay, not per-loop.
   //    M2 fit: P_bus = 0.8027 + 0.0348*I + 0.34816*I^2;  U_del = 0.01350 + 0.22332*I.
   { "J01", "B-SPI-01", "M-SPI-01", "2026-09-30", "10mm-9:1",
      5.9879f, +1, 0.22346f,        // zea, dir (MT6835, 2026-10-13); R_eff CARRIED
