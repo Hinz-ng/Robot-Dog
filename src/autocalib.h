@@ -138,7 +138,7 @@ const float   AC_R_V[AC_R_N]  = { 0.68f, 0.40f, 0.35f, 0.30f, 0.25f,
                                   0.20f, 0.16f, 0.12f, 0.08f };   // DESCENDING
 const uint16_t AC_R_SETTLE_MS = 350;
 const uint16_t AC_R_MEAS_MS   = 250;
-const uint16_t AC_R_STILL_CNT = 20;       // allowed drift per point, counts
+const uint16_t AC_R_STILL_CNT = encCountsFromMotorMrad(7.67f);   // drift allowed per point: 7.67 mrad at the motor (20 counts at 14 bits)
 const uint8_t  AC_R_MIN_PTS   = 7;
 const float    AC_R_RMS_FAIL  = 0.012f;   // V
 const float    AC_R_RSE_FAIL  = 0.03f;    // relative SE of the slope
@@ -149,6 +149,7 @@ const float    AC_L_VBASE     = 0.20f;    // hold between steps (~0.8 A)
 const float    AC_L_VSTEP     = 0.70f;    // stepped-to (~3.4 A peak)
 const uint16_t AC_L_DECAY_MS  = 4;        // >= 9 tau_e at tau_e ~ 200 us
 const uint8_t  AC_L_MIN_PTS   = 6;        // floor for a 2-parameter fit with an rms gate
+const int32_t  AC_L_STILL_CNT = encCountsFromMotorMrad(15.34f);   // rotor drift over the train -> WARN: 15.34 mrad at the motor (40 counts at 14 bits)
 // F5 -- PHASE DITHER. acService() IS the loop, so step samples land on a rigid
 // grid (step + {0, 60, 120..} us) and only every 3rd 20 us bin would be
 // visited. After the sample that applies the step, stall r * AC_L_DITHER_US so
@@ -867,7 +868,7 @@ static void acP4() {
   else if (ac_L < 15e-6f || ac_L > 400e-6f)        ac_v_L = AC_FAIL;
   else if (ac_L_rms > AC_L_RMS_FAIL)               ac_v_L = AC_FAIL;
   else if (tail_n < 40)                            ac_v_L = AC_WARN;   // weak I_inf
-  else if (acAbs32(moved) > 40)                    ac_v_L = AC_WARN;
+  else if (acAbs32(moved) > AC_L_STILL_CNT)        ac_v_L = AC_WARN;
   else if (ac_L_td < 0.0f || ac_L_td > 400e-6f)    ac_v_L = AC_WARN;
 
   SerialUART.print(F("    reps=")); SerialUART.print(reps);
@@ -1666,9 +1667,10 @@ const float    AC_M4_ABORT_A_rep   = 0.80f;
 // Warn, do not abort: +5 sigma on J01 belt-off (mean 0.2923, sd 0.0611). 0.40 A
 // was +1.76 sigma and fired on healthy readings.
 const float    AC_M4_WARN_A_rep    = 0.60f;
-// Pre-slide creep indicator. J01 ran 107-146 counts; 200 is ~1.4x the worst
-// observed. See the note at the check itself for why TRAVEL and not elapsed time.
-const int32_t  AC_M4_WARN_CNT  = 200;
+// Pre-slide creep indicator. J01 ran 41-56 mrad at the motor (107-146 counts);
+// 76.7 mrad (200 counts) is ~1.4x the worst observed. See the note at the check
+// itself for why TRAVEL and not elapsed time.
+const int32_t  AC_M4_WARN_CNT  = encCountsFromMotorMrad(76.7f);
 
 static void acM4Breakaway(float sgn) {
   if (!acReady()) return;
@@ -1822,12 +1824,13 @@ const uint8_t  AC_SW_N            = 4;
 // to test the curvature (the drive softens with load). Plant-specific: raise
 // through B10 once the tensioned skip threshold is known.
 const float    AC_SW_I_A_rep[AC_SW_N]   = { 0.6f, 1.0f, 1.4f, 1.6f };   // REPORTED amps
-// 5 s, not 1 s. ~10 counts of creep (15 um of belt) appear over the first ~4 s
+// 5 s, not 1 s. ~15 um of belt creep (10 counts) appears over the first ~4 s
 // at 2 A and then converge -- measured 2026-09-05. Reading early reads the creep.
 const uint16_t AC_SW_SETTLE_MS    = 5000;
 const uint16_t AC_SW_TICK_MS      = 1000;   // settling heartbeat, so creep is visible
-// Repeatability tolerance, applied to the two MINUS limits (legs 2 and 4).
-const int32_t  AC_SW_RETURN_CNT   = 25;
+// Repeatability tolerance, applied to the two MINUS limits (legs 2 and 4):
+// 36.6 um of belt (25 counts at 14 bits).
+const int32_t  AC_SW_RETURN_CNT   = encCountsFromBeltUm(36.6f);
 
 // ---------------------------------------------------------------------------
 // FOUR LEGS, AND THE FIRST IS THROWN AWAY. A swing is the peak-to-peak of a

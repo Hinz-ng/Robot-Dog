@@ -134,6 +134,16 @@ static constexpr float BELT_MM_PER_COUNT     = BELT_MM_PER_MOTOR_REV / (float)EN
 // -- or a multiple of it -- is a TOOTH SKIP, not compliance. 16384/12 = 1365.33.
 static constexpr float ENC_CNT_PER_TOOTH     = (float)ENC_CPR / (float)PINION_TEETH;
 
+// COUNT THRESHOLDS ARE WRITTEN IN PHYSICAL UNITS and converted here, so a
+// resolution change (ENC_BITS) rescales them instead of silently tightening
+// them 4x (16-bit) or 128x (21-bit). Rounded to the nearest count.
+static constexpr int32_t encCountsFromMotorMrad(float mrad) {   // rotor angle, MOTOR side
+  return (int32_t)(mrad * 1e-3f / ENC_RAD_PER_COUNT + 0.5f);
+}
+static constexpr int32_t encCountsFromBeltUm(float um) {         // belt travel at the pinion
+  return (int32_t)(um * 1e-3f / BELT_MM_PER_COUNT + 0.5f);
+}
+
 // ---------------------------------------------------------------------------
 // ROTOR INERTIA -- M6a, belt off, 2026-08-08. Motor shaft, before the 9:1.
 // ---------------------------------------------------------------------------
