@@ -2,15 +2,15 @@
 // ============================================================================
 // mt6835.h -- MT6835 21-bit absolute encoder, 4-wire SPI, bit-banged, READ-ONLY.
 // ============================================================================
-// Presents EXACTLY MT6816SPI's interface (mt6816.h) at ENC_BITS resolution, so
-// nothing above the driver changes: raw = ANGLE[20:0] >> (21 - ENC_BITS). The
+// Reads at ENC_BITS resolution, the interface the MT6816 driver had, so nothing
+// above the driver changed: raw = ANGLE[20:0] >> (21 - ENC_BITS). The
 // estimator, contract LSBs, AUTOCALIB, logs and every count-unit constant keep
-// their meaning. Native 21-bit is stage 2, not this file.
+// their meaning. Native 16/21-bit is stage 2, not this file.
 //
-// Layer: bottom, same as mt6816.h. Depends ONLY on Arduino GPIO, SimpleFOC's
-// Sensor base and ENC_BITS / ENC_RAD_PER_COUNT from fleet_config.h.
+// Layer: bottom. Depends ONLY on Arduino GPIO, SimpleFOC's Sensor base and
+// ENC_BITS / ENC_RAD_PER_COUNT from fleet_config.h.
 //
-// *** UNIT RISK -- the same three angle units as mt6816.h, plus one. ***
+// *** UNIT RISK -- FOUR ANGLE UNITS MEET HERE. ***
 //   angle21            COUNTS at 21 bits, 0..2^21-1 per MECHANICAL rev.
 //                      DIAGNOSTIC ONLY -- nothing downstream may use it.
 //   rawCount() / raw   COUNTS at ENC_BITS, 0..ENC_CPR-1 per MECHANICAL rev
@@ -41,10 +41,8 @@
 // ============================================================================
 
 // ---------------------------------------------------------------------------
-// PINS -- DUPLICATED from mt6816.h on purpose: enc_select.h compiles exactly
-// one driver per build, and the MT6816 path is deleted when the last joint
-// migrates. Remap BOTH files or neither. All four on GPIOB (BSRR / IDR fast
-// path); SCK stays on PB8 (BOOT0 -- see the wiring note in open_test.cpp).
+// PINS. All four on GPIOB (BSRR / IDR fast path); SCK stays on PB8 (BOOT0 --
+// see the wiring note in open_test.cpp).
 // ---------------------------------------------------------------------------
 const uint8_t SPI_CSN_BIT  = 5;    // PB5
 const uint8_t SPI_MOSI_BIT = 6;    // PB6
@@ -87,16 +85,16 @@ static inline __attribute__((always_inline)) void mt35CsGap() {
   for (uint8_t i = 0; i < MT35_CS_NOPS; i++) __asm__ volatile ("nop");
 }
 
-// Jump guard: same logic and the same default (OFF) as mt6816.h -- see there
-// for why it force-accepts after SPI_JUMP_MAX_RUN rejections.
+// Jump guard: rejects an angle step larger than SPI_MAX_JUMP as corruption.
+// OFF -- the CRC does this job. It FORCE-ACCEPTS after SPI_JUMP_MAX_RUN
+// rejections because the first version did not: once the shaft parked further
+// than SPI_MAX_JUMP from the last accepted sample, every later sample was
+// rejected and the angle froze until reboot (found 2026-09-20) -- armed, a
+// frozen commutation vector.
 const bool    SPI_JUMP_GUARD   = false;
 const float   SPI_MAX_JUMP     = 1.0f;    // rad mechanical between consecutive reads
 const uint8_t SPI_JUMP_MAX_RUN = 3;
 
-// Driver identity for the shared console text (same names as mt6816.h).
-#define ENC_NAME  "MT6835"
-#define ENC_CHECK "crc"
-#define ENC_FLAG  "weak field or VDD under-voltage"
 // 'e' / 'E' still-shaft span limit. 21 bits truncated to ENC_BITS: a shaft
 // parked on a count boundary flickers by one count from the chip's own noise.
 // Two or more counts on a still shaft is corruption.
@@ -144,7 +142,7 @@ static_assert(mt35CrcTableOk(0), "MT35_CRC_TABLE does not match poly 0x07");
 constexpr uint8_t mt35Crc3(uint8_t b0, uint8_t b1, uint8_t b2) {
   return MT35_CRC_TABLE[MT35_CRC_TABLE[MT35_CRC_TABLE[b0] ^ b1] ^ b2];
 }
-// THE ALL-ZERO TRAP, carried over from the MT6816: a MISO that never drives
+// THE ALL-ZERO TRAP (first seen on the MT6816, J03 2026-10-08): a MISO that never drives
 // returns 00 00 00 00, and CRC8(00 00 00) is 00 -- it PASSES, exactly as it
 // passed parity. zero_run below is the only detector for it.
 static_assert(mt35Crc3(0x00, 0x00, 0x00) == 0x00, "all-zero frame passes the CRC -- zero_run must stay");
@@ -248,7 +246,7 @@ public:
   }
 
   // Over-speed arrives in EVERY frame on this chip, so there is nothing to
-  // fetch: returns the flag from the last CRC-valid frame (the MT6816 spends a
+  // fetch: returns the flag from the last CRC-valid frame (the MT6816 spent a
   // third frame on register 0x05 here).
   bool readOverSpeed() { return over_speed; }
 
@@ -266,7 +264,7 @@ public:
     return d;
   }
 
-  // diagnostics -- same names as MT6816SPI, plus the MT6835's own
+  // diagnostics -- the names every caller reads, plus the MT6835's own
   int32_t  rawCount()   { return (int32_t)raw; }     // 0..ENC_CPR-1, one mech rev
   uint16_t raw        = 0;
   uint8_t  no_mag     = 0;
@@ -286,7 +284,7 @@ public:
 
 private:
   // One SCK cycle, mode 3: drive MOSI on the falling edge, sample MISO after
-  // the rising edge -- the same edge placement as MT6816SPI::xfer16().
+  // the rising edge (datasheet sec 7.6.1: driven on the falling edge, captured on the rising).
   static inline __attribute__((always_inline)) uint32_t clk(bool mosi) {
     GPIOB->BSRR = (1UL << (SPI_SCK_BIT + 16));                     // SCK fall
     GPIOB->BSRR = mosi ? (1UL << SPI_MOSI_BIT) : (1UL << (SPI_MOSI_BIT + 16));

@@ -536,13 +536,8 @@ static void acP1() {
   SerialUART.print(F(" nmg=")); SerialUART.print(nmg);
   SerialUART.print(F(" ovs=")); SerialUART.print(encoder.over_speed);
   SerialUART.print(F("   ")); SerialUART.println(acVs(ac_v_link));
-#if ENC_CHIP == ENC_MT6835
   if (nmg)  SerialUART.println(F("    !! weak field / VDD under-voltage: magnet weak or far, or VDD low. The angle is garbage."));
   if (errs) SerialUART.println(F("    !! crc errors: raise SPI_HALF_NOPS, check CSN and VDD."));
-#else
-  if (nmg)  SerialUART.println(F("    !! No_Mag_Warning: magnet weak or far. The angle is garbage."));
-  if (errs) SerialUART.println(F("    !! parity errors: raise SPI_HALF_NOPS, check CSN and HVPP->3V3."));
-#endif
   ac_done[1] = (ac_v_link == AC_PASS);
   if (ac_done[1]) SerialUART.println(F("    next: 2 (optional: hand-spin the shaft and press 1 again)"));
 }
@@ -1354,7 +1349,7 @@ static void acP7() {
   if (ac_done[1]) {
     SerialUART.print(F("SPI link       ")); SerialUART.print(ac_link_us, 2);
     SerialUART.print(F(" us/read, ")); SerialUART.print(ac_link_err);
-    SerialUART.println(F(" " ENC_CHECK " errors in 4000"));
+    SerialUART.println(F(" crc errors in 4000"));
   }
   if (ac_done[6]) {
     float fl = ac_T_floop[AC_BIN_SPEEDS-1];

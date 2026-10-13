@@ -72,10 +72,10 @@ struct JointCal {
   // ---- PAIRING: the encoder chip zea and dir were measured THROUGH ----
   uint16_t zea_enc;        // ENC_MT6816 / ENC_MT6835; 0 = not measured (unbuilt
                            //    rows omit it). A different chip reads a different
-                           //    angle, so when this != ENC_CHIP the stored zea/dir
-                           //    are IGNORED: the harness re-aligns, Tier 0 refuses
-                           //    to arm. Moving a joint to the MT6835 needs no edit
-                           //    here -- AUTOCALIB phase 7 emits the new value.
+                           //    angle, so when this != ENC_CHIP (fleet_config.h)
+                           //    the stored zea/dir are IGNORED: the harness
+                           //    re-aligns, Tier 0 refuses to arm. AUTOCALIB phase 7
+                           //    emits it with the row.
 };
 
 // vbus_scale is PER BOARD (J01 and J02 measured 0.80% apart) and R_eff, U0 and
@@ -247,20 +247,6 @@ static_assert(JOINT_ID >= 1 && JOINT_ID <= JOINT_COUNT,
 // `static` deliberately: a namespace-scope reference has EXTERNAL linkage, so
 // without it a second .cpp including this header would collide at link time.
 static const JointCal& CAL = JOINTS[JOINT_ID - 1];
-
-// ---------------------------------------------------------------------------
-// ENCODER CHIP FITTED to each assembly -- per unit while the fleet migrates
-// MT6816 -> MT6835. Compile-time because it selects the driver (enc_select.h);
-// one list here, so the harness and Tier-0 builds of a joint cannot disagree.
-// The chip is part of the PAIRING: zea and dir are measured through it.
-// Unbuilt rows (J04-J12) default to the MT6835 because new joints get one.
-// When the last MT6816 joint moves, this becomes one line in fleet_config.h.
-// ---------------------------------------------------------------------------
-#if JOINT_ID == 13 || JOINT_ID == 14
-  #define ENC_CHIP ENC_MT6816
-#else
-  #define ENC_CHIP ENC_MT6835
-#endif
 
 // The stored zea/dir may be used only if they were measured through the chip
 // this build reads. Every consumer of CAL.zea / CAL.dir goes through this.
