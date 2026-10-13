@@ -14,24 +14,30 @@
 //   angle21            COUNTS at 21 bits, 0..2^21-1 per MECHANICAL rev.
 //                      DIAGNOSTIC ONLY -- nothing downstream may use it.
 //   rawCount() / raw   COUNTS at ENC_BITS, 0..ENC_CPR-1 per MECHANICAL rev
-//   getSensorAngle()   MECHANICAL rad, 0..2*PI. SimpleFOC multiplies by pole pairs.
+//   getSensorAngle()   MECHANICAL rad, 0..2*PI
+//   commutation        ELECTRICAL rad = mechanical * MOTOR_POLE_PAIRS (7). SimpleFOC
+//                      does that multiply itself; do NOT pre-multiply here.
 //
 // ---------------------------------------------------------------------------
-// CHIP FACTS -- PROVENANCE: NOT a datasheet in hand. From SimpleFOC's
-// Arduino-FOC-drivers MT6835 driver (src/encoders/mt6835, fetched 2026-10-12)
-// and MagnTek product summaries. A wrong frame layout or CRC reads as ~100%
-// CRC errors in 'e', not as a plausible angle, so bench gate E2 confirms them.
-//   * SPI mode 3 (CPOL=1, CPHA=1), MSB first. SCK max 16 MHz. VDD 3.0-5.5 V.
-//   * Burst angle read, ONE CS frame of 48 clocks: out 0xA0 0x03 (opcode
-//     0b1010, address 0x003), then 4 bytes in:
+// CHIP FACTS -- MagnTek MT6835 datasheet Rev 1.3 (2022.12), in hand 2026-10-13.
+//   * Supply 3.0-5.5 V; power-up 64 ms typ; propagation delay 10 us typ
+//     (MT6816: 1 us); hysteresis 0.011 deg (HYST = 7, factory); transition
+//     noise 0.0015 deg rms at BW = 5 (factory); INL +-0.5 deg typ factory,
+//     +-0.07 deg after user auto-calibration (sec 5, 9).
+//   * SPI mode 3, MSB first (sec 7.6.1). Timing (sec 7.6.2): TL >= 100 ns,
+//     TSCK >= 60 ns, TSCKL / TSCKH >= 30 ns, TDV <= 15 ns at 20 pF, TST / THD
+//     >= 10 ns. MISO is Hi-Z while CSN is high.
+//   * Burst angle read (sec 7.6.9), ONE CS frame of 48 clocks: out 0xA0 0x03
+//     (command 1010, address 0x003), then 4 bytes in:
 //        b0 = ANGLE[20:13]   b1 = ANGLE[12:5]
 //        b2 = ANGLE[4:0] << 3 | STATUS[2:0]     b3 = CRC
 //     STATUS bit0 over-speed, bit1 weak field, bit2 under-voltage.
-//   * CRC-8 over b0 b1 b2: x^8 + x^2 + x + 1 (0x07), init 0x00, no final XOR.
-//   * Register read, 24 clocks: out (0b0011 << 4 | addr >> 8), addr & 0xFF;
-//     1 data byte in.
-//   * Registers read here: 0x009 ZERO[11:4]; 0x00A ZERO[3:0] in bits 7:4;
-//     0x00D ROT_DIR bit3, HYST bits 2:0; 0x011 BW bits 2:0.
+//   * CRC-8 over ANGLE[20:0] + STATUS[2:0], MSB first, x^8 + x^2 + x + 1.
+//     Initial value not stated: 0x00 (SimpleFOC's MT6835 driver), confirmed by
+//     0 CRC errors in 3.3 M reads on J01 -- a wrong one fails every frame.
+//   * Register read, 24 clocks: out (0011 << 4 | addr >> 8), addr & 0xFF; 1
+//     data byte in. Read here: 0x009 ZERO_POS[11:4]; 0x00A ZERO_POS[3:0] in
+//     bits 7:4; 0x00D ROT_DIR bit3, HYST[2:0]; 0x011 BW[2:0].
 //
 // READ-ONLY BY CONSTRUCTION. Only opcodes 0b1010 (angle) and 0b0011 (register
 // read) exist in this file. The chip's ZERO, ROT_DIR and EEPROM-program
@@ -62,9 +68,9 @@ const uint8_t SPI_SCK_BIT  = 8;    // PB8 -- BOOT0
 // ~7x TDV. If CRC errors appear, raise MT35_SCK_LOW_SPIN.
 const uint8_t  SPI_HALF_NOPS     = 1;
 const uint32_t MT35_SCK_LOW_SPIN = 5;
-// CSN setup (fall -> first SCK) and CSN high time between frames. The MT6835's
-// minima are not in hand; ~190 ns each costs 0.4 us per read and keeps 'e''s
-// back-to-back reads from violating either. Unverified margin, not a datasheet value.
+// CSN setup (fall -> first SCK, TL >= 100 ns) and CSN high time between frames
+// (no minimum in the datasheet). 32 loop iterations, ~0.9 us each: generous,
+// and it keeps 'e''s back-to-back reads clear of any unstated CSN-high minimum.
 const uint8_t MT35_CS_NOPS = 32;
 
 // always_inline: the build optimises for size, and without it these became real
@@ -96,19 +102,22 @@ const float   SPI_MAX_JUMP     = 1.0f;    // rad mechanical between consecutive 
 const uint8_t SPI_JUMP_MAX_RUN = 3;
 
 // 'e' / 'E' still-shaft span limit. 21 bits truncated to ENC_BITS: a shaft
-// parked on a count boundary flickers by one count from the chip's own noise.
-// Two or more counts on a still shaft is corruption.
+// parked on a count boundary can flicker by one count. The chip's hysteresis
+// (0.011 deg, half a 14-bit count) suppresses most of it: J01 read span 1 in 3
+// of 156 still-shaft windows, 0 in the rest. Two or more counts is corruption.
 const uint16_t ENC_STILL_SPAN_MAX = 1;
 
 // raw is uint16_t and the chip has 21 bits.
 static_assert(ENC_BITS <= 16, "MT6835 raw is uint16_t: ENC_BITS > 16 needs the stage-2 type changes");
 const uint8_t MT35_SHIFT = 21 - ENC_BITS;
 
-const uint16_t MT35_PWRUP_MS = 100;   // wait at most this long for the first CRC-valid frame
+// Bounds the wait for the first CRC-valid frame (datasheet power-up 64 ms typ).
+// Both firmwares wait >= 500 ms before init, so this only bounds a dead chip.
+const uint16_t MT35_PWRUP_MS = 100;
 
 // ---------------------------------------------------------------------------
-// CRC-8, poly 0x07, init 0x00. Table generated from a Python port of the
-// reference calcCrc() and cross-checked against it on 10,000 random frames;
+// CRC-8, poly 0x07, init 0x00. Table generated from a Python port of
+// SimpleFOC's calcCrc() and cross-checked against it on 10,000 random frames;
 // the static_assert below re-derives every entry at compile time.
 // ---------------------------------------------------------------------------
 static constexpr uint8_t MT35_CRC_TABLE[256] = {
@@ -172,10 +181,10 @@ public:
     GPIOB->BSRR = (1UL << SPI_CSN_BIT) | (1UL << SPI_SCK_BIT);
     GPIOB->BSRR = (1UL << (SPI_MOSI_BIT + 16));
 
-    // POWER-UP. The MT6835's power-up time is not in hand, so wait for the
-    // first CRC-valid frame instead of guessing a delay. Failures while it
-    // starts are not link errors and are discarded -- but only on success: if
-    // nothing passes in MT35_PWRUP_MS the counters keep the evidence.
+    // POWER-UP: wait for the first CRC-valid frame rather than a fixed delay.
+    // Failures while it starts are not link errors and are discarded -- but only
+    // on success: if nothing passes in MT35_PWRUP_MS the counters keep the
+    // evidence.
     const uint32_t t0 = millis();
     while (!readAngleRaw() && millis() - t0 < MT35_PWRUP_MS) { }
     pwrup_ms = (uint16_t)(millis() - t0);
