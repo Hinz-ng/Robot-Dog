@@ -14,18 +14,18 @@ drivetrain health. Per-joint values live in `src/joint_cal.h`; fleet values in
 | Name | Motor / board | Status |
 |---|---|---|
 | A1 | `M-ABZ-01` on `B-ABZ-01`, ABZ encoder | historical: rubbing encoder magnet contaminated every friction number (`drag_c` 1.05 A, "4.5 N / 46%"). Not used; voltage-derived numbers 1.89% low |
-| **J01** (= A2) | `B-SPI-01`, MT6816 SPI | reference actuator, belt on (recipe B) |
-| **J02** (= rebuilt A1) | `M-ABZ-01` on `B-ABZ-01`, MT6816 SPI | belt on (SCB pulley). ESC board failed after P8; its MT6816 board found dead 2026-10-08 (MISO stuck low) and replaced, so its stored `zea`/`dir` belong to the old encoder |
-| J03 | board_3 + motor_2 | belt-off baseline complete (2026-10-10) |
+| **J01** (= A2) | `B-SPI-01`, MT6835 SPI (MT6816 until 2026-10-13) | reference actuator; row = belt on (recipe B); belt off since 2026-10-10 |
+| J02 (= rebuilt A1) | `M-ABZ-01` on `B-ABZ-01` | **retired 2026-10-13**: ESC board failed after P8, motor moved to J03, MT6816 board dead (MISO stuck low). Row reset to unbuilt; values below and in git `e3905f7` |
+| J03 | board_3 + motor_2, MT6835 | belt-off baseline 2026-10-10; `zea`/`dir` to re-measure through the MT6835 |
 
-`zea` and `dir` never transfer between joints. `R_eff`, `U0`, `Ke`, `L`, `vbus_scale`, `i_scale`
+`zea` and `dir` never transfer between joints or encoder chips (`zea_enc`, CALIBRATION §21). `R_eff`, `U0`, `Ke`, `L`, `vbus_scale`, `i_scale`
 are per board (§21).
 
 ### 8.1a — J01, belt off (AUTOCALIB 2026-08-07, rescaled by M1 ×1.010768 on 2026-08-18)
 
 | Constant | Value | Quality |
 |---|---|---|
-| `zea` | **6.0542 rad elec** | 7 alignments, SE 1.57° |
+| `zea` | **5.9879 rad elec** | MT6835, 2026-10-13: 7 alignments, sd 2.04°, SE 0.97° |
 | `dir` | CW | 7/7 |
 | `R_eff` | **0.22346 Ω** | 9 pts, rms 1.84 mV, SE 0.57%; 0.46 V ladder (§8.1d) |
 | `U0` | **0.01037 V** | real uncertainty ±0.003 V (fit SE understates ~2×); see below |
@@ -33,9 +33,9 @@ are per board (§21).
 | `Kt` | 0.026912 N·m/A_true | derived, 1.5·Ke. vs KV360: +1.45% |
 | `L` | **43.77 µH**, τ_e **195.87 µs** | 18-point dithered fit; incremental inductance at 0.9–3.2 A |
 | Drag, belt off | fwd `0.0749 + 9.33e-4·ω`, rev `0.0816 + 7.27e-4·ω` | fit rms 0.70 / 0.74 mA |
-| `\|I\|/Iq` | 1.245–1.313 | sanity band 1.15–1.40 |
-| INL | 1.029° mech pk-pk | 1/rev 0.369°, 2/rev 0.204° |
-| ZEA residual | +0.467° elec | parity even part |
+| `\|I\|/Iq` | 1.245–1.313 (MT6835 runs: 1.256–1.418, over 1.40 only at the lowest current) | sanity band 1.15–1.40; angle-independent |
+| INL | 0.845 / 0.868° mech pk-pk (MT6835, two runs) | 1/rev 0.070°, 2/rev 0.326° |
+| ZEA residual | 0.780 / 0.802° elec (MT6835) | even part |
 
 The `Kt`-vs-KV360 comparison cannot check `vbus_scale` (Ke derives from it); only M1 against
 an external meter does. It does exclude KV380 (7–8% out).
@@ -112,15 +112,15 @@ is not a fault.** M2 uses its own range-matched R.
 | Quantity | Value | Note |
 |---|---|---|
 | Kt | `calKt()` = 1.5 × Ke per row (never stored). Per reported amp `calKtCmd()` = Kt / `i_scale`: J01 0.027972, J02 0.028013 | Kt ≠ Ke in SimpleFOC's amplitude-invariant convention (Ke = Kt excluded at 15σ) |
-| **`T/T_loop`** | **0.958 ± 0.015**, n = 7, 3 assemblies | transport delay = one loop period. `T_DELAY_PER_LOOP` in `fleet_config.h`. **Belt-off only.** Torque loss at 270 rad/s 0.95%: **no angle compensation** |
+| **Control delay T** | MT6835 (J01): **84–90 µs** at 12.1–12.6 kHz, flat with loop rate. MT6816: 0.958 ± 0.015 loop periods (n = 7, 3 assemblies) | **Sim latency range 84–90 µs.** `T_DELAY_PER_LOOP` in `fleet_config.h` is still the MT6816 per-loop value: a fixed-time form waits on J03's phase 6 (README §15). **Belt-off only.** Torque loss at 270 / 600 rad/s: 1.45 / 6.8%. Angle compensation deferred (README §15) |
 | PWM | 25 kHz, SVPWM | ceiling V_bus/√3 |
-| Loop rate | 13.5 kHz TORQUE(I) armed, 15 kHz TORQUE(V), 21 kHz OPENLOOP armed, 126 kHz disarmed | J01 MIT build: ~12.4 kHz TORQUE(I) armed (BELT_DRIVE §22.7.7) |
+| Loop rate | MT6835 (J01, 2026-10-13): harness 47.3 kHz disarmed, AUTOCALIB free spin 12.6 kHz | MT6816 (6.65 µs reads): harness 63.9 kHz disarmed, ~12.4 kHz MIT armed (BELT_DRIVE §22.7.7); Tier 0 11.5–12.2 kHz armed (N3) |
 | Telemetry print cost | ~950 µs at 921600 baud | float formatting dominates |
 | Bus-sense scale | **per board:** J01 0.008448, J02 0.008516 (M1, UT89X at the pads) | full scale 34.60 / 34.87 V |
 | Seed linearity | J02 seed vs UT89X at 12.24 / 12.25 / 22.73 V: −0.16 / −0.11 / +0.04% | |
 | Seed boot-to-boot | per-boot offset up to 0.05 V | check banner vs meter at session start (±0.03 V, else reboot) |
 
-Encoder excluded as a delay source (MT6816 1 µs typ / 3 µs max).
+The MT6835's 10 µs propagation delay and 11.68 µs read are inside the measured T (SENSING §5).
 
 ### 8.2 Mechanical / drivetrain
 
@@ -154,13 +154,13 @@ Encoder excluded as a delay source (MT6816 1 µs typ / 3 µs max).
 1.276 N (13.0%) · cogging 0.237 N (2.4%) · dynamic drag (moving, 0.078 A) 0.336 N (3.4%).
 
 **Belt on (J01, B11, recipe B):** drag_c fwd 0.3169 / rev 0.3330 A, drag_v 3.24e-3 / 2.66e-3
-A/(rad/s); breakaway 0.295 A; backlash G 5.8 counts (0.014° output); k_beltline 67.2 kN/m at its
+A/(rad/s); breakaway 0.295 A; backlash G 8.5 µm of belt (5.8 counts; 0.014° output); k_beltline 67.2 kN/m at its
 clamp (±10% clamp-dependent); ring f_d 65.0 Hz, f_n 69.8 Hz, ζ 0.36. Detail: BELT_DRIVE §22.6.
 
 **Handling rule.** Three untouched consecutive readings: sd 0.0029 A (cv 1.2%), 30× tighter than
 the pooled scatter. Rotating the shaft by hand redistributes grease and resets friction, so
 repeats at one position are pseudo-replicates. For ± decompositions, return the rotor to the same
-count. Let the rotor settle into a cogging detent before each M4 reading (a rotor left mid-creep
+raw position. Let the rotor settle into a cogging detent before each M4 reading (a rotor left mid-creep
 reads far low in the opposite direction).
 
 **Forward/reverse drag asymmetry, belt off:** Coulomb 0.0749 / 0.0816 A (9%), viscous 9.333e-4 /
