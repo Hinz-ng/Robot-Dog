@@ -541,7 +541,11 @@ static void acP1() {
   encoder.readOverSpeed();
   ac_link_us  = (float)dt / N;
   ac_link_err = errs;
-  ac_v_link = (errs == 0 && oks == N && !nmg && !encoder.over_speed) ? AC_PASS : AC_FAIL;
+  // All-zero frames pass the CRC (mt6835.h): a dead MISO read as a perfect
+  // magnet at angle 0 and passed 'e' once (J03, 2026-10-08). This phase gates
+  // 2-6, so it fails on them too.
+  const bool all_zero = (encoder.zero_run >= N);
+  ac_v_link = (errs == 0 && oks == N && !nmg && !encoder.over_speed && !all_zero) ? AC_PASS : AC_FAIL;
 
   SerialUART.print(F("    n=")); SerialUART.print(N);
   SerialUART.print(F(" ok=")); SerialUART.print(oks);
@@ -552,6 +556,7 @@ static void acP1() {
   SerialUART.print(F("   ")); SerialUART.println(acVs(ac_v_link));
   if (nmg)  SerialUART.println(F("    !! weak field / VDD under-voltage: magnet weak or far, or VDD low. The angle is garbage."));
   if (errs) SerialUART.println(F("    !! crc errors: raise SPI_HALF_NOPS, check CSN and VDD."));
+  if (all_zero) SerialUART.println(F("    !! every frame all-zero: MISO dead (or shaft at exactly angle 0 -- turn it)."));
   ac_done[1] = (ac_v_link == AC_PASS);
   if (ac_done[1]) SerialUART.println(F("    next: 2 (optional: hand-spin the shaft and press 1 again)"));
 }
@@ -663,6 +668,9 @@ static void acP3() {
   // used anywhere in it. Gating on a fresh phase 2 was forcing an alignment
   // that the measurement does not need, and phases 4-6 inherit their gates
   // from here, so the cost was paid by the whole downstream chain.
+  // Phase 1 IS required (as for 2-6): phases 3-5 on a broken link produced
+  // plausible junk and a 6 A abort (J01, 2026-10-13).
+  if (!acNeed(1)) return;
   if (!acHaveCommutation()) return;
   SerialUART.println(F("[3] R/U0  (rotor self-locks; do not touch the shaft)"));
   acEnter();
@@ -782,6 +790,7 @@ static void acP3() {
 // second -- the 600 ms lock "twitch" IS the run.
 // ===========================================================================
 static void acP4() {
+  if (!acNeed(1)) return;
   if (!acNeed(3)) return;
   SerialUART.println(F("[4] L  (step train, rotor stays locked)"));
   acEnter();
@@ -890,6 +899,7 @@ static void acP5() {
   // or aborted call can't leave the swap armed for some later, unrelated '5'.
   bool swap = ac_p5_swap_next;
   ac_p5_swap_next = false;
+  if (!acNeed(1)) return;
   if (!acNeed(3)) return;        // DATA: the drag fit is normalised against R
   // COMMUTATION: unlike phases 3 and 4 this one runs MODE_TORQUE through the
   // FOC path, so a wrong ZEA corrupts Ke and the whole drag map. Phase 3 no
@@ -1116,6 +1126,7 @@ static float acBinAngleDeg(uint8_t d, uint8_t s, uint8_t b) {
 }
 
 static void acP6() {
+  if (!acNeed(1)) return;
   if (!acNeed(4)) return;
   if (!acNeed(5)) return;
   SerialUART.println(F("[6] T + INL  (parity separation, no motor)"));
