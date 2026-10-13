@@ -107,6 +107,24 @@ const uint8_t SPI_JUMP_MAX_RUN = 3;
 // of 156 still-shaft windows, 0 in the rest. Two or more counts is corruption.
 const uint16_t ENC_STILL_SPAN_MAX = 1;
 
+// ---------------------------------------------------------------------------
+// LINK HEALTH -- the ONE encoder check every armed path uses (Tier 0, the
+// harness run loop, AUTOCALIB). An INVALID read is a CRC failure or the
+// all-zero word (dead / stuck-low MISO; see the all-zero trap below).
+//   TRIP  ENC_TRIP_BAD_RUN invalid reads in a row. One read per control loop,
+//         so 4 = ~0.35 ms of angle age at 11.5 kHz. A single glitch holds the
+//         angle for one loop and never trips; a broken link trips at once (at
+//         99.65% CRC errors -- J01, 2026-10-13 -- the old 200 ms "no valid frame"
+//         guard stayed satisfied by one good frame every ~24 ms).
+//   ARM   stricter: no invalid read at all in the last ENC_ARM_CLEAN_MS. A link
+//         at a few % errors rarely makes 4 in a row and would trip mid-motion
+//         seconds after arming.
+// False positive: a rotor resting at exactly ANGLE = 0 with STATUS = 0 sends
+// the all-zero word (1 position in 2^21): ARM refused / armed trip -- turn it.
+// ---------------------------------------------------------------------------
+const uint8_t  ENC_TRIP_BAD_RUN = 4;
+const uint32_t ENC_ARM_CLEAN_MS = 1000;
+
 // raw is uint16_t and the chip has 21 bits.
 static_assert(ENC_BITS <= 16, "MT6835 raw is uint16_t: ENC_BITS > 16 needs the stage-2 type changes");
 const uint8_t MT35_SHIFT = 21 - ENC_BITS;
@@ -221,7 +239,7 @@ public:
 
     const uint8_t b0 = (uint8_t)(w >> 24), b1 = (uint8_t)(w >> 16);
     const uint8_t b2 = (uint8_t)(w >> 8),  b3 = (uint8_t)w;
-    if (mt35Crc3(b0, b1, b2) != b3) { spi_err++; return false; }
+    if (mt35Crc3(b0, b1, b2) != b3) { spi_err++; noteBad(); return false; }
     angle21    = ((uint32_t)b0 << 13) | ((uint32_t)b1 << 5) | (uint32_t)(b2 >> 3);
     raw        = (uint16_t)(angle21 >> MT35_SHIFT);
     status     = b2 & 0x07;
@@ -231,8 +249,8 @@ public:
     // no_mag is the name every caller (Tier-0 guard, 'e', AUTOCALIB) checks.
     // Under-voltage is in it too: an angle measured at low VDD is not trusted.
     no_mag     = weak_field | under_volt;
-    if (w == 0) { if (zero_run != UINT32_MAX) zero_run++; }   // see the all-zero trap above
-    else        zero_run = 0;
+    if (w == 0) { if (zero_run != UINT32_MAX) zero_run++; noteBad(); }   // all-zero trap above
+    else        { zero_run = 0; bad_run = 0; }
     spi_ok++;
     return true;
   }
@@ -282,6 +300,14 @@ public:
   uint32_t spi_err    = 0;       // CRC failures
   uint32_t spi_jump   = 0;
   uint32_t zero_run   = 0;       // consecutive CRC-passing all-zero frames
+  uint8_t  bad_run    = 0;       // consecutive INVALID reads (CRC fail or all-zero), saturates
+  uint32_t last_bad_ms = 0;      // millis() of the most recent invalid read
+
+  // LINK HEALTH predicates (see ENC_TRIP_BAD_RUN / ENC_ARM_CLEAN_MS above).
+  bool linkTripped() const { return bad_run >= ENC_TRIP_BAD_RUN; }
+  bool linkArmable(uint32_t now_ms) const {
+    return spi_ok > 0 && bad_run == 0 && (uint32_t)(now_ms - last_bad_ms) >= ENC_ARM_CLEAN_MS;
+  }
   uint32_t angle21    = 0;       // full resolution, DIAGNOSTIC ONLY
   uint8_t  status     = 0;
   uint8_t  weak_field = 0;
@@ -292,6 +318,8 @@ public:
   uint8_t  cfg_rot_dir = 0, cfg_hyst = 0, cfg_bw = 0;
 
 private:
+  void noteBad() { if (bad_run < 255) bad_run++; last_bad_ms = millis(); }
+
   // One SCK cycle, mode 3: drive MOSI on the falling edge, sample MISO after
   // the rising edge (datasheet sec 7.6.1: driven on the falling edge, captured on the rising).
   static inline __attribute__((always_inline)) uint32_t clk(bool mosi) {
