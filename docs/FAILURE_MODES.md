@@ -16,8 +16,13 @@
 - Missing `lib_archive = false` → linker drops 6-PWM.
 - Library defaults are silent decisions (`foc_modulation` defaulted to SinePWM, −13.4% voltage
   ceiling). Echo every load-bearing default in the boot banner.
-- Python raw strings used as replacement text containing C escapes produced `\\n` and `\\"`
-  regressions twice. After any edit touching a string literal: `grep -rn '\\\\' src/`.
+- Python replacement text containing C escapes produced `\\n` and `\\"` regressions twice;
+  two more were caught at build (2026-10-13). Edit C literals with a literal-text editor, then run
+  the doubled-backslash check in `CLAUDE.md`.
+- **Bit timing copied from the previous chip:** MT6816 SCK timing on the MT6835 worked only while
+  call overhead padded each half-period. Inlined, SCK was low ~18 ns (spec ≥ 30 ns): 99.65% CRC
+  errors (J01, 2026-10-13). Derive timing from the datasheet; NOP counts are not delays (the
+  compiler unrolls them, the core may drop them).
 
 **Board / pin map**
 - Vendor-pruned pin map → `Error_Handler()` infinite loop, not an error return. Any peripheral on a
@@ -32,11 +37,16 @@
 - `initFOC()` with the driver disabled → "Failed to notice movement".
 - Software quadrature loses counts above ~100 k edges/s → silent ZEA corruption.
 - An incremental counter cannot detect its own error (TIM4 faithfully counted noise). Absolute +
-  parity changes the failure class: a bad frame is rejected and recovers in one cycle.
-- **All-zero frames pass parity and `No_Mag`** (dead MISO). Check that `raw` moves when turned.
+  parity / CRC changes the failure class: a bad frame is rejected and the angle held one loop.
+- **All-zero frames pass parity and CRC alike** (dead MISO). Check that `raw` moves when turned.
+- **A link failing 99.65% of reads looked alive:** one good frame every ~24 ms satisfied a 200 ms
+  "no valid frame" guard while the motor commutated on a stale angle; AUTOCALIB phase 5 ended in
+  the 6 A abort (J01, 2026-10-13). Trip on 4 invalid reads in a row; arm after 1 s clean.
+- **`e` printed PASS above its own GARBAGE line:** `No_Mag` was not in the verdict (MT6835 under the
+  MT6816 build reads all-ones: even parity, `No_Mag` = 1). Every failure flag belongs in the verdict.
 - Magnet slipping in its mount: escalating current at constant speed, then a stall that realignment
   "fixes". Keep the pen mark. A steel screw through a diametric magnet corrupts the field.
-- Magnet touching the package (zero gap): count loss, a "bearing" whine, a 1/rev disturbance.
+- Magnet touching the package (zero gap): lost motion, a "bearing" whine, a 1/rev disturbance.
 
 **Control / measurement**
 - **`motor.current` is not updated in voltage mode** (2.3.1 returns early). Iq/Id in TORQUE(V) and
