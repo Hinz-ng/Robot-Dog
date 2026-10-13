@@ -125,29 +125,13 @@ const JointCal JOINTS[] = {
      3.24e-3f, 2.66e-3f,           // drag_v fwd, rev      RECIPE B, B3 pooled over both orders
      0.295f, ENC_MT6835 },         // breakaway_A          RECIPE B, B4 n=20 (reported A); zea_enc
 
-  // -- J02 -- B-ABZ-01 / M-ABZ-01 (the rebuilt A1). Belt-off AUTOCALIB
-  //    2026-08-08, rescaled x1.018904 by M1 2026-08-18. board_sn / motor_sn
-  //    still unlabelled (docs/README.md §15).
-  //    The ESC board failed after P8; the MT6816 board was found dead 2026-10-08
-  //    (MISO stuck low) and replaced -- zea/dir belong to the OLD encoder.
-  //    R_eff 0.22810 is the 0.28-1.96 A chord; phase 3 on the current 0.68 V
-  //    ladder reads ~0.222 on the same hardware -- not a fault.
-  //    vbus_scale 0.008516 carries an unresolved 0.32% ambiguity: two banner
-  //    pairings imply 0.008489 / 0.008516, below the UT89X's resolution.
-  //    i_scale 0.9690 +-2.7%, PROVISIONAL (1.15 sigma). M2 fit:
-  //        P_bus = 0.7924 + 0.0982*I + 0.34953*I^2;  U_del = 0.02419 + 0.22580*I
-  //    M4: n = 18 over 6 positions, 0.2983 +-0.0259 A, sd 0.1098.
-  //    Diagnostics: INL 1.449 deg mech pk-pk (1/rev 0.311, 2/rev 0.519 -- tilt
-  //    or channel gain, not centring); ZEA residual 0.240 deg elec; T/T_loop
-  //    0.937 / 0.961; M6a J 18.7e-6 (see J_ROTOR_KGM2).
-  { "J02", "___", "___", "2026-08-08", "OFF",
-     0.3482f, +1, 0.22810f,        // zea, dir, R_eff  @ 0.28-1.96 A  M1-rescaled x1.018904
-     0.014937f,                    // U0   M1-rescaled
-     0.018097f, 46.25e-6f,         // Ke, L   (Kt = calKt() = 0.027145)  M1-rescaled
-     0.008516f, 0.9690f,           // vbus_scale (M1, 0.32% ambiguity above), i_scale PROVISIONAL
-     0.1061f, 0.1074f,             // drag_c fwd, rev      unchanged (reported A)
-     0.000948f, 0.000845f,         // drag_v fwd, rev      unchanged (reported A)
-     0.2983f, ENC_MT6816 },        // breakaway_A  M4, n=18, +-8.7%  (reported A); zea_enc
+  // -- J02 -- RETIRED 2026-10-13, now an unbuilt row: the B-ABZ-01 ESC board
+  //    failed after P8, its motor is J03's motor_2, and its MT6816 board died.
+  //    A row is never deleted (every later JOINT_ID would shift). The measured
+  //    values are in git at e3905f7 and quoted in the docs; a rebuilt J02 is a
+  //    new joint: docs/cal/BELT_OFF_BASELINE.md.
+  { "J02", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
   // -- J03 -- board_3 (new) + motor_2 (J02's motor). Bare motor, belt off.
   //    ENCODER: MT6835 fitted (recorded 2026-10-13); zea/dir NOT MEASURED through
   //    it yet -- AUTOCALIB. R_eff, U0, Ke, L from AUTOCALIB 2026-10-08 (banner
@@ -272,7 +256,7 @@ static const JointCal& CAL = JOINTS[JOINT_ID - 1];
 // Unbuilt rows (J04-J12) default to the MT6835 because new joints get one.
 // When the last MT6816 joint moves, this becomes one line in fleet_config.h.
 // ---------------------------------------------------------------------------
-#if JOINT_ID == 2 || JOINT_ID == 13 || JOINT_ID == 14
+#if JOINT_ID == 13 || JOINT_ID == 14
   #define ENC_CHIP ENC_MT6816
 #else
   #define ENC_CHIP ENC_MT6835
