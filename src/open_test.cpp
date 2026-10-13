@@ -1064,6 +1064,11 @@ void startMotor() {
   if (!driver_ok) { SerialUART.println(F("refused: driver init failed")); return; }
   if (needsFOC(mode) && !foc_ready) { SerialUART.println(F("refused: run initFOC (f) first")); return; }
   if (isCurrentMode(mode) && !cs_linked) { SerialUART.println(F("refused: current sense not linked")); return; }
+  // Encoder link (mt6835.h): a mode that commutates on the angle arms only after
+  // 1 s with no invalid read -- the same rule as Tier 0.
+  if (needsFOC(mode) && !encoder.linkArmable(millis())) {
+    SerialUART.println(F("refused: encoder link not clean for 1 s (CRC or all-zero reads) -- run 'e'")); return;
+  }
   if (mode == MODE_MIT) {
     target = 0.0f;
     mitOnArm();
@@ -1741,7 +1746,10 @@ void loop() {
     // velocityOpenloop() overwrites it with the COMMANDED value, which `target`
     // already caps at VEL_MAX = 20 -- so this guard cannot trip in openloop and
     // is not protection there. acService() carries the same caveat.
-    if (run_ms > OVERSPEED_GRACE_MS && fabsf(motor.shaft_velocity) > OVERSPEED_RADS)
+    // ENCODER LINK first (mt6835.h, shared with Tier 0 and acService()): on a
+    // stale angle the speed below is stale too. Only modes that commutate on it.
+    if (needsFOC(mode) && encoder.linkTripped())         stopMotor("ENCODER LINK (4 invalid reads in a row)");
+    else if (run_ms > OVERSPEED_GRACE_MS && fabsf(motor.shaft_velocity) > OVERSPEED_RADS)
                                                           stopMotor("OVERSPEED");
     else if (run_ms > AUTO_STOP_MS)                        stopMotor("auto 20s");
     else                                                   motor.move(target);

@@ -421,6 +421,13 @@ static void acService() {
     ac_abort = true;  ac_guard = true;
     SerialUART.println(F("\n  !! ABORT overspeed"));
   }
+  // Encoder link (mt6835.h, the run loop's and Tier 0's trip): every phase and
+  // ladder that commutates on the angle. A broken link here once commutated on a
+  // stale angle until the 6 A overcurrent abort caught it (J01, 2026-10-13).
+  if (mode != MODE_OPENLOOP && encoder.linkTripped()) {
+    ac_abort = true;  ac_guard = true;
+    SerialUART.println(F("\n  !! ABORT encoder link (4 invalid reads in a row)"));
+  }
   if (SerialUART.available()) {
     while (SerialUART.available()) (void)SerialUART.read();
     ac_abort = true;
@@ -506,9 +513,16 @@ static bool acNeed(uint8_t n) {
 // the price of reaching a later phase silently replaces it with a worse one.
 // acM4Breakaway() already reasons exactly this way; this generalises it.
 static bool acHaveCommutation() {
-  if (foc_ready) return true;
-  SerialUART.println(F("refused: no valid alignment -- press 'f' or 'V' (stored ZEA) or run phase 2."));
-  return false;
+  if (!foc_ready) {
+    SerialUART.println(F("refused: no valid alignment -- press 'f' or 'V' (stored ZEA) or run phase 2."));
+    return false;
+  }
+  // Commutating needs a clean link too: the same 1 s rule as 'g' and Tier 0.
+  if (!encoder.linkArmable(millis())) {
+    SerialUART.println(F("refused: encoder link not clean for 1 s (CRC or all-zero reads) -- run 1 or 'e'."));
+    return false;
+  }
+  return true;
 }
 
 // ===========================================================================
