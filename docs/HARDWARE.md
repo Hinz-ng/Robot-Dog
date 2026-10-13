@@ -16,7 +16,7 @@ truths · §14 ST tooling · §16 thermal · §16a logic supply and idle current
 | MOSFETs | **HG5511D** ×6 | 60 V V(BR)DSS, 40 A cont (25 °C) / 25 A (100 °C), 120 A pulsed, R_DS(on) 11 mΩ at 10 V, R_θJA 35 °C/W. 6S at 25.2 V with 1.5× overshoot = 63% of breakdown |
 | Bus voltage sense | **PA0**, resistive divider | **per board:** `B-SPI-01` 0.008448, `B-ABZ-01` 0.008516 (M1, UT89X). Full scale 34.60 / 34.87 V. 6S at 25.2 V = 73% of range. Seed-only (§12) |
 | Reference driver | genuine B-G431B-ESC1 | acceptance test not run |
-| Encoder | **MT6816** (AMR) on XJX-135 breakout | 4-wire SPI, 14-bit, 16384 cnt/rev (0.022°), bit-banged. Propagation 1 µs typ / 3 µs max |
+| Encoder | **MT6835** breakout (since 2026-10-13; MT6816 before) | 4-wire SPI, 21-bit read at 14 bits (16384 counts/rev, 0.022°), bit-banged, CRC-8. Propagation 10 µs typ. VDD 3V3. **CAL_EN unconnected:** high starts the chip's auto-calibration and blocks every other operation until power-down, so a temporary jumper only, never hard-wired. Data: SENSING §5 |
 | Magnet | N35 D6 × 3 mm diametric, jig-centred, CA-bonded | no ferromagnetic material in or behind the field path. Gap 0.5–1.0 mm |
 | Reduction | 9:1 GT2 10 mm belt, 12T alu pinion (r_pitch 3.82 mm) → 108T printed pulley | belt 232 mm, C = 44.5 mm, take-up 1.04 mm (§22) |
 | Idlers | 2 × 3×9×5 ZZ bearings per side, fixed holes (1.72, ±10.00) | spec §22.2 |
@@ -105,7 +105,7 @@ staged commissioning.
 | `CAN_TX` / `CAN_RX` | PB9 / PA11 (AF9) | certain; AF9 proven at S1c |
 | `CAN_SHD` (transceiver `S`) | PC11 | measured at S1b |
 | `H1/A`, `H2/B`, `H3/Z` | PB6, PB7, PB8 (= BOOT0) | certain |
-| MT6816 SPI | PB5 = CSN, PB6 = MOSI, PB7 = MISO, PB8 = SCK | bench |
+| Encoder SPI | PB5 = CSN, PB6 = MOSI, PB7 = MISO, PB8 = SCK (10k PB8 → GND stays); VDD 3V3, GND | bench |
 | `GPIO_BEMF` | PB5 | high; does not load PB5 as CSN |
 | `TXD2` / `RXD2` | PB3 / PB4 | bench |
 | `BUTTON` / `PWM` input | PC10 / PA15 | high |
