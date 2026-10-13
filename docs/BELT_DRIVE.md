@@ -23,9 +23,9 @@ Plant for B1–B8: belt fitted, idlers per §22.2, output pulley bare, leg links
 | **B1** | Alignment | `V` | ≤ 8° elec from stored ZEA | 0.62° (recipe B) |
 | **B2** | Electrical tripwire | `1` then `3` (phases 1 and 3 only; phase 4 ratchets belt-on, §22.6.6) | `R_eff` within ~2% of stored | 0.22404 Ω (+0.26%) |
 | **B3** | Belt drag | Phase 5, then again with direction order swapped (`-` then `5`). Store each direction **pooled over both orders** | `drag_c` 0.30–0.40 A (J01 band; restate per joint). Belt-on `Ke` is never carried | 0.3169 / 0.3330 A (§22.6.6) |
-| **B4** | Breakaway | `B`/`b`, output **free**, 10 positions × 2 directions. Between presses rotate by hand and **let the rotor settle into a detent** (a rotor left mid-creep reads far low in the opposite direction). For A/B comparisons use the **same raw positions** as the reference session and compare pairwise (position sd ≈ 0.095 A). Compare breakaway with breakaway, never with `drag_c` | each reading: no `NO MOTION` (0.80 A), `travel` ≤ 200 counts, ≤ 0.60 A | 0.295 A, n = 20 (§22.6.4) |
+| **B4** | Breakaway | `B`/`b`, output **free**, 10 positions × 2 directions. Between presses rotate by hand and **let the rotor settle into a detent** (a rotor left mid-creep reads far low in the opposite direction). For A/B comparisons use the **same raw positions** as the reference session and compare pairwise (position sd ≈ 0.095 A). Compare breakaway with breakaway, never with `drag_c` | each reading: no `NO MOTION` (0.80 A), `travel` ≤ 200 counts (76.7 mrad at the motor), ≤ 0.60 A | 0.295 A, n = 20 (§22.6.4) |
 | **B5** | INL | Phases 5 + 6. Read INL only; phase 6's `T/T_loop` is invalid belt-on | 1/rev, 2/rev vs belt-off | 1/rev −3.3%, even-part r = 0.9986 (2026-08-12) |
-| **B6a** | Backlash | Key `w` (swing ladder), output clamped (2 × M3×10 countersunk into the top plate, perpendicular). Readout and rules: §22.4.4 | friction-corrected G ≤ 20 counts pass · 20–40 marginal · > 40 slack | G = 5.8 counts (§22.6.3) |
+| **B6a** | Backlash | Key `w` (swing ladder), output clamped (2 × M3×10 countersunk into the top plate, perpendicular). Readout and rules: §22.4.4 | friction-corrected G ≤ 29 µm of belt (20 counts) pass · 29–59 µm marginal · > 59 µm slack | G = 8.5 µm (5.8 counts) (§22.6.3) |
 | **B6b** | Belt stiffness (ring) | Output clamped. `t` → `g` → `k` (+ step) or `K` (− step) → wait for `CAPTURE done` → `x` → `d`. **4 × `k` + 4 × `K`.** Fit f_d from `cnt` vs `t_us` (cycle count or damped sine), f_n = f_d/√(1−ζ²). Record the boot each burst came from (boot-to-boot scatter ~8× within-boot) and the ring amplitude (f depends on it, §22.3) | no band; fleet use is the J01-vs-J02 comparison below | f_d 65.0 Hz, f_n 69.8 Hz (§22.6.5) |
 | **B7** | J_total | Output bare and **unclamped**. `t` → `g` → `k` → 1 s → `x` → `d`. J01 only (fleet quantity) | predicted 20.5–22 × 10⁻⁶ kg·m²; friction is 40–60% of the impulse, so ±20% | — |
 | **B8** | Hot vs cold `R_eff` | Phase 3 cold → load hard 60 s → phase 3 | ΔR/R > 15% = peak force sags mid-jump | — |
@@ -122,8 +122,8 @@ L = 2*sqrt(C^2 - (r2-r1)^2) + r1*(pi - 2a) + r2*(pi + 2a),   a = asin((r2-r1)/C)
 
 CAD span 32.352 mm vs closed form 32.349 mm. Do not use the approximate formula
 `2C + pi(r1+r2) + (r2-r1)^2/C`: this drive is at (r₂−r₁)/C = 0.687, far outside its range
-(it gives 229.98 mm). The swing test confirmed the exact form (835 counts measured; 980
-predicted exact, 1570 approximate).
+(it gives 229.98 mm). The swing test confirmed the exact form (1.22 mm of belt measured, 835 counts;
+1.44 mm predicted exact, 980; 2.30 mm approximate, 1570).
 
 Tension cannot be set by printing accurately: dT/d(intrusion) = 48–240 N/mm, so a ±0.5 mm belt
 tolerance is 22–108 N. It is measured by consequence (B6a, B6b). The pluck method is retired
@@ -180,13 +180,13 @@ unmeasured (D8); at EA_eff 4–8.5 kN, 0.20 mm ≈ 3–7 N and 0.80 mm ≈ 14–
 
 ### Ring stiffness is amplitude-dependent
 
-STD plant, 12 captures: **f_d = 86.9 − 0.522·A** (A = ring amplitude in counts, r = −0.982;
+STD plant, 12 captures: **f_d = 86.9 − 0.356·A** (A = ring amplitude in µm of belt; −0.522 Hz per count; r = −0.982;
 sd 4.86 → 0.91 Hz once removed). The drive is a softening spring (tooth engagement).
 
 | Ring amplitude | f_d | k_motor |
 |---|---|---|
-| 54 counts | 59 Hz | 2.8 N·m/rad |
-| 29 counts | 72 Hz | 4.2 N·m/rad |
+| 79 µm (54 counts) | 59 Hz | 2.8 N·m/rad |
+| 42 µm (29 counts) | 72 Hz | 4.2 N·m/rad |
 | → 0 (extrapolated) | ≈ 87 Hz | 6.0 N·m/rad |
 
 - No single stiffness number exists; always record ring amplitude with f.
@@ -234,7 +234,7 @@ J02 runs the longest belt, so its preload is the fleet minimum at this hole posi
 
 | Criterion | Prediction | Measured | Verdict |
 |---|---|---|---|
-| B6a friction-corrected G | ≈ 0 | −6 to +13 counts (I_f 0.30–0.40 A, bracketed, not measured) | ✅ |
+| B6a friction-corrected G | ≈ 0 | −8.8 to +19 µm, −6 to +13 counts (I_f 0.30–0.40 A, bracketed, not measured) | ✅ |
 | Stepped ladder to 1.6 A (11.4 N) | clean | repeats −1 / −1 | ✅ |
 | drag_c | ≤ 0.50 A (J02 projection) | **0.340 A** (0.306–0.400) | ✅ |
 | Coulomb asymmetry | < 20% | 8.0% pooled | ✅ |
@@ -275,12 +275,12 @@ path datum.**
 | FV1 / FV2 | Fusion offset routes | 67.80 / 67.75 | 70.08 / 69.95 | — | rejected (tips unmoved) |
 | STD | legacy standard walls, glued | 67.2–67.5 | — | — | retired |
 | J01-P10 | slicer −0.10, standard walls | 67.55–67.58 | — | — | drag_c 0.414 A; replaced |
-| J01-P12 | slicer −0.12 + precise wall, recipe A | — | — | — | G 31–48; superseded |
+| J01-P12 | slicer −0.12 + precise wall, recipe A | — | — | — | G 45–70 µm (31–48 counts); superseded |
 | **J01-P12B** | slicer −0.12 + precise wall, **recipe B**, boss CAD 15.26 → 14.95 | within 0.05 of P12 | — | — | **J01, pulley of record** |
 
 **Results:**
-- A2 → SCB no-idler swing 373 → 984 ± 3.5 counts (+0.895 mm path); caliper A → SCB +1.16 mm.
-  Agree within ±180 counts.
+- A2 → SCB no-idler swing 0.546 → 1.441 mm ± 5 µm (373 → 984 ± 3.5 counts; +0.895 mm path);
+  caliper A → SCB +1.16 mm. Agree within ±0.26 mm (±180 counts).
 - SCB cord sits at 34.39–34.41 mm (within ~0.04 mm of pitch), conditional on the 105.0 belt
   being 232.00 mm (soft by ±0.1–0.2 mm; 0.1 mm of belt = 0.021 mm of cord radius).
 - Print scale: printer not undersize (A flange +0.07%, boss 0.00). Effective offset at nominal
@@ -293,7 +293,7 @@ path datum.**
 ```
 swing(I) = G + s*(I - I_f)
   G    = slack + mesh lost motion            <- the deliverable
-  s    = elastic compliance, counts per amp
+  s    = elastic compliance, µm of belt per amp (the firmware fits counts per amp)
   I_f  = static breakaway (B4 mean)
 raw intercept = G - s*I_f   ->   always friction-correct: G = intercept + slope*I_f
 ```
@@ -310,14 +310,14 @@ raw intercept = G - s*I_f   ->   always friction-correct: G = intercept + slope*
 2. **Points:** ±0.6, 1.0, 1.4, 1.6 A.
 3. **Four legs per point:** `+cond` (discarded) → `−` → `+` → `−rpt`, 5 s dwell each (creep
    converges in ~4 s). `swing_a = + − m1`, `swing_b = + − m2`, `repeat = m2 − m1`.
-4. **Skip detector:** |repeat| ≥ 0.5 tooth (1365.3 counts per tooth) discards the point and
+4. **Skip detector:** |repeat| ≥ 0.5 tooth = 1 mm of belt (1 tooth = 2 mm = 1365.3 counts) discards the point and
    stops the ladder.
 5. **Output:** `SW,<amps>,<minus1>,<plus>,<minus2>,<swing_a>,<swing_b>,<swing>,<repeat>`. Refit
    offline. ~80 s. Ignore `lps` on the first telemetry line after the ladder.
 
 **Taking G:**
 - G = intercept + slope × I_f per ladder; report mean and spread when > 1 ladder.
-- **Single-ladder noise ±7 counts**, so a G within ~7 of 20 is not a clear pass or fail.
+- **Single-ladder noise ±10 µm** (±7 counts), so a G within ~10 µm of the 29 µm gate is not a clear pass or fail.
 - I_f = this plant's B4 mean (`B`/`b`). State the value used. Compare joints only at matched I_f.
 - Discard ladders run while the intercept was still climbing (new pulley bedding in).
 - Residuals are convex: the drive softens with load; linear fits are conveniences.
@@ -326,6 +326,8 @@ raw intercept = G - s*I_f   ->   always friction-correct: G = intercept + slope*
 reported amp on J02 (`calKt` 0.027146 N·m/A_rep).
 
 ### 22.4.5 Swing results (SCB, belt 105.0)
+
+Swings in counts (1 count = 1.465 µm of belt).
 
 **No idlers (P5, P6):**
 
@@ -336,8 +338,9 @@ reported amp on J02 (`calKt` 0.027146 N·m/A_rep).
 | 1.4 A | 1024 (v1 only; v2 crept) | 4.2 |
 | 1.6 A | ratchet ~0.96 tooth | — |
 
-Ramped ±2.0 A: 984 ± 3.5 counts. 2-point fit 0.6/1.0 A: slope 283 cnt/A, raw intercept 0.872 mm,
-**G 0.996 mm** at I_f 0.2983 A (J02 belt-off breakaway, a proxy; +0.1 A of I_f = +28 counts).
+Ramped ±2.0 A: 1.441 mm ± 5 µm (984 ± 3.5 counts). 2-point fit 0.6/1.0 A: slope 415 µm/A (283
+counts/A), raw intercept 0.872 mm, **G 0.996 mm** at I_f 0.2983 A (J02 belt-off breakaway, a proxy;
++0.1 A of I_f = +41 µm, 28 counts).
 Below the 1.042 mm fully-seated bound. k_beltline 30–34 kN/m.
 
 **Idlers at y = 10 (P8):**
@@ -349,8 +352,9 @@ Below the 1.042 mm fully-seated bound. k_beltline 30–34 kN/m.
 | 1.4 A | 189 | 202 | 195.5 |
 | 1.6 A | 245 | 249 | 247 |
 
-Pooled intercept −63.1, slope 189.1 cnt/A, k_beltline 51.3 kN/m. **G = −6 / +1 / +13 counts at
-I_f 0.30 / 0.34 / 0.40 A** — slack and mesh lost motion ≈ 0. Chord slopes 160 → 190 → 258 cnt/A.
+Pooled intercept −92 µm (−63.1 counts), slope 277 µm/A (189.1 counts/A), k_beltline 51.3 kN/m.
+**G = −8.8 / +1.5 / +19 µm (−6 / +1 / +13 counts) at I_f 0.30 / 0.34 / 0.40 A** — slack and mesh lost
+motion ≈ 0. Chord slopes 234 → 278 → 378 µm/A (160 → 190 → 258 counts/A).
 
 ### 22.4.6 Idler position
 
@@ -360,12 +364,12 @@ remedied with a mid-batch belt, not a hole move (D2).
 
 ### 22.4.7 Ring results by state
 
-| State | Pulley / mount | Idlers | Frequency (Hz) | ζ | Amplitude | n | k_motor (N·m/rad) | k_beltline (kN/m) |
+| State | Pulley / mount | Idlers | Frequency (Hz) | ζ | Amplitude, µm of belt (counts) | n | k_motor (N·m/rad) | k_beltline (kN/m) |
 |---|---|---|---|---|---|---|---|---|
-| P0 | STD, glued | none | f_d 59.6–72.0 | — | 29–54 counts | 12 | 2.8–4.2 | 190–290 |
-| P1 | A2, screwed | none | f_d 93.6–97.1 | — | 5.6–8.5 | 3 | 7.46–7.76 | 510–530 |
-| P5 | SCB, screwed | none | f_n 82.3 ± 0.4 | 0.39 | 11–12 overshoot | 4 | 5.40 | 370 |
-| P8 | SCB, screwed | y = 10 | f_n 72.5 (+) / 70.1 (−) | 0.41 / 0.70 | 15 / 4 | 2 | 4.19 / 3.92 | 287 / 269 |
+| P0 | STD, glued | none | f_d 59.6–72.0 | — | 42–79 (29–54) | 12 | 2.8–4.2 | 190–290 |
+| P1 | A2, screwed | none | f_d 93.6–97.1 | — | 8.2–12.5 (5.6–8.5) | 3 | 7.46–7.76 | 510–530 |
+| P5 | SCB, screwed | none | f_n 82.3 ± 0.4 | 0.39 | 16–18 overshoot (11–12) | 4 | 5.40 | 370 |
+| P8 | SCB, screwed | y = 10 | f_n 72.5 (+) / 70.1 (−) | 0.41 / 0.70 | 22 / 5.9 (15 / 4) | 2 | 4.19 / 3.92 | 287 / 269 |
 
 k_motor = (2πf)²·J_rotor; k_beltline = k_motor / r₁². The ring (small amplitude) reads 5–12×
 stiffer than the ladder slope (large excursion). Tensioning lowered f_n 12–15% (cause untested).
@@ -391,12 +395,12 @@ not carried.
 | STD, no idlers | ramped ±2.0 A | 13.9 N | — |
 | SCB, no idlers | ramped ±2.0 A ×3 | 14.2 N | — |
 | SCB, no idlers | stepped 1/2/3 A | 1.0 A (7.1 N) | 2.0 A: continuous ratchet |
-| SCB, no idlers | stepped 4-leg | 1.0 A | 1.4 A: 60-count creep; 1.6 A (11.4 N): ratchet ~0.96 tooth |
+| SCB, no idlers | stepped 4-leg | 1.0 A | 1.4 A: 88 µm creep (60 counts); 1.6 A (11.4 N): ratchet ~0.96 tooth |
 | **SCB, y = 10** | stepped 4-leg ×2 | **1.6 A (11.4 N)** | — (2.0 A not attempted) |
 
 With idlers (4.59 teeth in mesh) the skip threshold is unknown; design point is 213 N of belt
-force at 30 A Iq. B10 is the instrument (D3). Read counts 5 s after a current limit (~10 counts
-of creep converge first).
+force at 30 A Iq. B10 is the instrument (D3). Read positions 5 s after a current limit (~15 µm of creep,
+10 counts, converges first).
 
 ### 22.4.10 Pulley CAD route
 
@@ -424,7 +428,7 @@ Bench supply ~12.5 V, `vbus_scale` 0.008516, `VBUS_LIVE` false. Banner vs UT89X 
 every session (instrument resolution). P6–P8 were built from an uncommitted working tree; the
 first commit containing the ladder is `b2a562e`.
 
-- **Encoder counters** (`mt6816.h`): `perr` counts parity failures only (a lower bound on
+- **Encoder counters** (the MT6816 driver of the time): `perr` counts parity failures only (a lower bound on
   corrupted frames); `nmg` is a live flag written only on a successful read; `jrej` (angle-jump
   rejects) was inactive (`SPI_JUMP_GUARD` false). P8: +8 parity events, `nmg`/`ovs` 0 → clean.
 - 2.7 M parity errors accumulated during handling between P7 and P8; the fault tracks handling,
@@ -443,7 +447,7 @@ Recipe A was sliced on the 0.6 mm nozzle profile. Results kept for the findings 
 | drag_c, first run | 0.414 A | **0.291 A** (−30%) |
 | B4 breakaway | — | 0.288 A, range 0.085–0.49 |
 | B6b | — | f_d 64.3 ± 0.4 Hz, f_n ≈ 69.5 |
-| B6a G | — | 31–48 counts (gate exception; closed by recipe B) |
+| B6a G | — | 45–70 µm, 31–48 counts (gate exception; closed by recipe B) |
 
 - −0.02 mm/side of compensation cut drag ~30% on the 0.6 profile (unmeasured on recipe B).
 - Ladder intercepts rose over the first three ladders (bedding-in), then held (L4–L6 mean −6.3,
@@ -455,9 +459,9 @@ Recipe A was sliced on the 0.6 mm nozzle profile. Results kept for the findings 
 
 | | L1–L3 | L4–L6 (after re-clamp) | Change |
 |---|---|---|---|
-| Slope (cnt/A) | 167.1 | 186.9 | +12% |
+| Slope (µm/A) | 245 (167.1 counts/A) | 274 (186.9) | +12% |
 | k_beltline (kN/m) | 57.6 | 51.5 | −11% |
-| Intercept | −4.0 | −6.3 | within ±7 noise |
+| Intercept (µm) | −5.9 (−4.0 counts) | −9.2 (−6.3) | within ±10 µm noise |
 
 k is recorded with its clamp. Clamps are per-assembly, so expect ~±10% in k (≈ ±5% in ring
 frequency) from the clamp alone in cross-joint comparisons.
@@ -507,15 +511,16 @@ standard); breakaway with output free. Kick TORQUE(V) 0.2 → 0.8 V. Banner vs U
 
 ### 22.6.3 B6a swing ladder — PASS
 
-| Ladder | Boot | Intercept (cnt) | Slope (cnt/A) | k_beltline (kN/m, true) | Max \|repeat\| | **G at I_f 0.295** |
+| Ladder | Boot | Intercept (µm) | Slope (µm/A) | k_beltline (kN/m, true) | Max \|repeat\| (counts) | **G at I_f 0.295 (µm)** |
 |---|---|---|---|---|---|---|
-| L1 | 1 | −39.7 | 152.4 | 65.6 | 4 | 5.3 |
-| L2 | 2 | −40.1 | 148.3 | 67.5 | 2 | 3.7 |
-| L3 | 2 | −34.5 | 145.8 | 68.6 | 2 | 8.5 |
-| **Mean** | | −38.1 | 148.8 | **67.2** | | **5.8 (sd 2.5) = 0.014° output** |
+| L1 | 1 | −58.2 | 223.2 | 65.6 | 4 | 7.8 |
+| L2 | 2 | −58.7 | 217.2 | 67.5 | 2 | 5.4 |
+| L3 | 2 | −50.5 | 213.6 | 68.6 | 2 | 12.5 |
+| **Mean** | | −55.8 | 218.0 | **67.2** | | **8.5 (sd 3.7) = 0.014° output** |
 
-Worst ladder across the I_f 95% CI (0.24–0.35 A): 16.5 counts. No bedding-in climb across a
-reboot. vs recipe A at matched I_f: 48.8 → 5.8 counts. k values are true belt-line k (firmware
+Measured in counts: intercepts −39.7 / −40.1 / −34.5, slopes 152.4 / 148.3 / 145.8 per A, G 5.3 /
+3.7 / 8.5 (mean 5.8, sd 2.5). Worst ladder across the I_f 95% CI (0.24–0.35 A): 24 µm (16.5 counts).
+No bedding-in climb across a reboot. vs recipe A at matched I_f: 71.5 → 8.5 µm (48.8 → 5.8 counts). k values are true belt-line k (firmware
 prints before 2026-10-01 were × `i_scale`, 0.9621 lower).
 
 ### 22.6.4 B4 breakaway — PASS
@@ -526,8 +531,8 @@ prints before 2026-10-01 were × `i_scale`, 0.9621 lower).
 | + direction | 0.314 A | 0.039 | |
 | − direction | 0.277 A | 0.038 | |
 
-Position dominates (pair means 0.12–0.42 A, sd 0.095). One reading had travel −240 counts
-(> 200, biased high); without it the mean is 0.286. Output torque at 0.295 A_rep = **0.0743 N·m**
+Position dominates (pair means 0.12–0.42 A, sd 0.095). One reading had travel −92 mrad at the motor
+(−240 counts; over the 76.7 mrad / 200-count flag, biased high); without it the mean is 0.286. Output torque at 0.295 A_rep = **0.0743 N·m**
 (`irepToTorqueOut`, η excluded). vs recipe A: 0.295 vs 0.288, no difference resolvable at n = 20.
 
 ### 22.6.5 B6b ring — PASS
@@ -535,10 +540,10 @@ Position dominates (pair means 0.12–0.42 A, sd 0.095). One reading had travel 
 | | Value |
 |---|---|
 | f_d, all 8 | **65.0 Hz** (SEM 1.0) |
-| f_d, + kicks / − kicks | 67.6 Hz (A₀ ≈ 18 counts) / 62.4 Hz (A₀ ≈ 28) |
+| f_d, + kicks / − kicks | 67.6 Hz (A₀ ≈ 26 µm, 18 counts) / 62.4 Hz (A₀ ≈ 41 µm, 28) |
 | f_n | 69.8 Hz |
 | ζ | 0.36 (+0.31 / −0.41) |
-| Amplitude slope | −0.47 ± 0.08 Hz/count (matches §22.3's −0.522) |
+| Amplitude slope | −0.32 ± 0.05 Hz/µm, −0.47 ± 0.08 Hz/count (matches §22.3's −0.36 Hz/µm) |
 | vs recipe A 64.3 Hz | Δ +0.7 Hz (gate ≤ 1 Hz) |
 
 ### 22.6.6 B3 drag on recipe B
@@ -557,15 +562,15 @@ Position dominates (pair means 0.12–0.42 A, sd 0.095). One reading had travel 
   4000/4000, phase 3 R 0.22404 Ω.
 
 **Phase 4 is belt-off only.** Belt-on, its 0.8 ↔ 3.2 A step train ratchets the self-lock
-(drift −169 counts, WARN). Phase 3 is immune (drift 0). L stays carried from belt-off.
+(drift −65 mrad at the motor, −169 counts, WARN). Phase 3 is immune (drift 0). L stays carried from belt-off.
 
 **Every pulley before J01-P12B was sliced on the 0.6 profile**, including J02's SCB. On the 0.6
-profile, −0.12 cost backlash (31–48 counts) where −0.10 did not; on the 0.4 profile −0.12 gives
-~6. J02 must be reprinted on recipe B and re-accepted before D15.
+profile, −0.12 cost backlash (45–70 µm, 31–48 counts) where −0.10 did not; on the 0.4 profile −0.12
+gives ~9 µm (6 counts). J02 must be reprinted on recipe B and re-accepted before D15.
 
 ### 22.6.7 Consequences
 
-- B6a gate stays ≤ 20 counts; recipe B meets it with ~14 to spare. D17 demoted.
+- B6a gate stays ≤ 29 µm of belt (20 counts); recipe B meets it with ~21 µm (14 counts) to spare. D17 demoted.
 - **Clamp standard:** 2 × M3×10 countersunk into the top plate, perpendicular. No shared jig (the
   holes belong to each top-plate assembly).
 - Fleet pulley compensation bins are not settled: needs the 20-belt histogram (§22.3 protocol)
@@ -583,7 +588,7 @@ In `joint_cal.h`, 2026-09-30. The belt-off baseline row stays at index 13.
 | drag_v fwd, rev | **3.24e-3, 2.66e-3 A/(rad/s)** |
 | breakaway_A | **0.295 A** |
 
-Not in the row: G 5.8 counts; k 67.2 kN/m (at its clamp); f_d 65.0 / f_n 69.8 Hz.
+Not in the row: G 8.5 µm of belt (5.8 counts); k 67.2 kN/m (at its clamp); f_d 65.0 / f_n 69.8 Hz.
 
 ---
 
@@ -748,17 +753,18 @@ Steps from rest, re-armed each time, judged on the mean stop time (switch → fi
 | 3 | 6.6 / 0.063 | ±35 mrad | **61.3 ms** (50.6) | +21% | ±15% ❌ (n = 4) | ≤ 4.42 (±25) ✅ | 0.31 V | 0 |
 
 Units are excluded as the cause: a unit error scales every row by the same factor; the misses
-(+2%, −10%, +21%) follow step size in washboard periods. Re-run from the measured start counts
+(+2%, −10%, +21%) follow step size in washboard periods. Re-run from the measured start positions
 with no fitted parameters, the model gives 17.7 / 28.7 / 57.7 ms (within 10% of every row).
 
 **O4 (established) — the joint rests in one 14/turn detent phase.** Hand-turned starts land at
-268–292 counts mod 1170.3 (seven of seven in row 1); releases after up steps 282–296, after down
-steps 128–176. Detent ≈ 218 counts, stick band ±70. Consequences:
+11.4–12.4 mrad of output mod 49.9 mrad, one 14/turn period (268–292 counts mod 1170.3; seven of
+seven in row 1); releases after up steps 12.0–12.6 mrad (282–296), after down steps 5.5–7.5 mrad
+(128–176). Detent ≈ 9.3 mrad (218 counts), stick band ±3.0 mrad (±70). Consequences:
 - Static friction ≈ 0.03–0.05 N·m and very-low-speed sliding ~0.02 N·m — the same size as the
   washboard (≤ ~0.055 N·m), far below 0.068–0.116 N·m at 0.8–1.3 rad/s.
-- A joint commanded within ~±70 counts (3 mrad output) of a detent edge with kp·error below
+- A joint commanded within ~±3 mrad of output (±70 counts) of a detent edge with kp·error below
   ~0.05 N·m stalls on the washboard; at zero torque it rolls into the detent. This is D19's job.
-- Not every release lands in the band (a5: 694, 271).
+- Not every release lands in the band (a5: 29.6 and 11.5 mrad; 694, 271 counts).
 
 **O3 — roll-back after the peak while still pushing forward** (0.25–2.51 mrad): belt wind-up
 ≤ 0.5 mrad (b1 stiffness) explains row 1; rows 2–3 need the washboard. Closed as explained.
@@ -798,7 +804,7 @@ Output clamped as in B6b, current mode, held `ff` step, decim 1.
 Every ring decays, no buzz, clamp 0. ζ rises at every kd rung. Belt secant K = belt torque at rest
 ÷ deflection. ζ from the decrement at kp 0: 0.20–0.23.
 
-- **The belt is a softening series spring:** secant 142–182 N·m/rad at 25–33 counts vs small-signal
+- **The belt is a softening series spring:** secant 142–182 N·m/rad at 1.07–1.41 mrad output (25–33 counts) vs small-signal
   280–335. Output stiffness = kp·K/(kp+K): at kp 41, **80–89% of commanded** (60–77% at kp 100).
   Static stiffness ff/p: 206 at kp 41 vs 152 at kp 0.
 - kd buys ~0.75 ζ per N·m·s/rad on this mode.
@@ -819,14 +825,14 @@ Every ring decays, no buzz, clamp 0. ζ rises at every kd rung. Belt secant K = 
 
 | # | Item | Promote when |
 |---|---|---|
-| **D19** | **Active.** 14/turn ripple (44–48 mN·m output): characterise per joint (amplitude and phase vs electrical angle) including an **at-rest quasi-static torque–angle sweep** (p_des ramp at kp ~41 over ≥ 1170 counts, both directions → washboard shape and static friction); evaluate a Tier-0 feed-forward. Contract-freeze question: does Tier 0 cancel it, and does τ include it? | Per joint at bring-up |
+| **D19** | **Active.** 14/turn ripple (44–48 mN·m output): characterise per joint (amplitude and phase vs electrical angle) including an **at-rest quasi-static torque–angle sweep** (p_des ramp at kp ~41 over ≥ 50 mrad of output, one 14/turn period = 1170 counts, both directions → washboard shape and static friction); evaluate a Tier-0 feed-forward. Contract-freeze question: does Tier 0 cancel it, and does τ include it? | Per joint at bring-up |
 | D1 | Tier-2 impedance ceiling from the ring | Before any CONTROL §10 ceiling update; needs a second joint and > 1 boot |
-| D2 | B6a ladder repeat in a later session (recipe B G = 5.8 holds?) | Next J01 session. If G > 40: mid-batch belt or compensation change (holes are fixed) |
+| D2 | B6a ladder repeat in a later session (recipe B G = 8.5 µm, 5.8 counts, holds?) | Next J01 session. If G > 59 µm (40 counts): mid-batch belt or compensation change (holes are fixed) |
 | D3 | Skip threshold on the tensioned plant (B10) | Before any command above 1.6 A (11 N belt force) and before leg attachment |
-| D4 | Fleet compensation bins: confirm the 20-belt batch maximum ≤ 105.0; one joint on a short belt (≤ 104.7) on recipe B, drag_c in band and G ≤ 20 | 20-belt batch measurement / joint 3 |
+| D4 | Fleet compensation bins: confirm the 20-belt batch maximum ≤ 105.0; one joint on a short belt (≤ 104.7) on recipe B, drag_c in band and G ≤ 29 µm (20 counts) | 20-belt batch measurement / joint 3 |
 | D5 | Fleet pulley repeatability: two prints of the same md5 (tip OD, M-B); re-baseline the fingerprint on recipe B | Before printing any fleet pulley |
 | D6 | Fleet CAD route (§22.4.10) | Only if the slicer-setting coupling is to be removed |
-| D7 | Belt-difference swing, 105.0 vs 104.7, predicted 410 counts | Before selective assembly relies on the caliper jig |
+| D7 | Belt-difference swing, 105.0 vs 104.7, predicted 0.60 mm of belt (410 counts) | Before selective assembly relies on the caliper jig |
 | D8 | Cord EA two-weight test (1.475 / 5 kg with a steel-wire splay reference) | Only if tension in newtons becomes load-bearing |
 | D9 | J02 B4 breakaway on its tensioned plant | With J02's replacement board |
 | D10 | Reverse drag fit rms 10–14 mA | Inspect the drag map for per-idler or per-output-rev terms |
@@ -836,7 +842,7 @@ Every ring decays, no buzz, clamp 0. ζ rises at every kd rung. Belt secant K = 
 | D14 | Stepped vs ramped loading, no-idler ratchet | Only if the no-idler swing is used as a QC step again |
 | D15 | B6b J01-vs-J02 15% comparison (4 + 4 in `t` mode, plus B4) | When J02 has a working board and recipe-B pulley |
 | D16 | Cogging vs position-dependent preload in B4's ±0.18 A | If the sim friction model needs the ripple's period/phase (dense angle sweep) |
-| D17 | Control-side backlash tolerance test (kp steps in position hold, watch for limit cycle, ~10 min) | If any fleet joint fails G ≤ 20 |
+| D17 | Control-side backlash tolerance test (kp steps in position hold, watch for limit cycle, ~10 min) | If any fleet joint fails G ≤ 29 µm (20 counts) |
 | D18 | Drag run-order effect (+0.10–0.13 A second direction) | If a drag feed-forward needs better than ±20%. Test: one direction twice with a rest vs back-to-back |
 | O1/O2 | Roll-back at zero torque; friction vs output angle | When a friction feed-forward is proposed, or rest errors exceed bounds |
 | — | Flash wait states 8 → 4 (§22.7.7) | Tier-0 loop with CAN measured below its need, or a loop-rate gap fails a gate |
