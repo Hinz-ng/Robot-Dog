@@ -83,7 +83,7 @@ Absolute Ibus assumes ~1 W housekeeping; the **span (230–280 mA)** is what mat
 | Ibus span, point 1 → 8 | 230–280 mA | wiring, meter range, or the rotor moved |
 | Hot vs cold `R_eff` | ≤ 2% | thermal drift; shorten dwells and redo |
 | `dR` with `U0` held | +0.4 to +1.0% | refit with U0 constrained before reading it (R and U0 correlate −0.84) |
-| `drift=` | ±3 counts | creep shows as tens |
+| `drift=` (counts) | ±3 = ±1.2 mrad at the motor | creep shows as tens |
 
 **Coefficient checks** (a well-conditioned fit is not necessarily a clean one):
 
@@ -115,12 +115,12 @@ R 0.21536 Ω vs stored range 0.21556–0.21683 (0.09%).
 
 | # | What | How |
 |---|---|---|
-| **M4** | **Breakaway → `breakaway_A`** | `V` (or `f`, or phase 2) first. Belt off, pulley bare, leg **never** attached. At each of 5 positions ~72° apart: turn to the mark, **let go, wait 2 s** (settle into a detent), press `B`; then the same 5 with `b`. Ramp +0.005 A every 150 ms (~0.033 A/s); reports the current at \|ω\| > 0.5 rad/s as `M4,<dir>,<amps>,<raw>,<ramp_s>,<travel_cnt>`. Warns on `travel` > 200 counts (biased high, redo) and > 0.60 A; `NO MOTION` at 0.80 A is a fault (bearing preload or magnet skimming the sensor). Static breakaway is not phase 5's dynamic drag (J01: 0.2923 vs 0.0783 A belt-off). **A/B comparisons:** same raw positions, compared pairwise |
+| **M4** | **Breakaway → `breakaway_A`** | `V` (or `f`, or phase 2) first. Belt off, pulley bare, leg **never** attached. At each of 5 positions ~72° apart: turn to the mark, **let go, wait 2 s** (settle into a detent), press `B`; then the same 5 with `b`. Ramp +0.005 A every 150 ms (~0.033 A/s); reports the current at \|ω\| > 0.5 rad/s as `M4,<dir>,<amps>,<raw>,<ramp_s>,<travel_cnt>`. Warns on `travel` > 200 counts = 76.7 mrad at the motor (biased high, redo) and > 0.60 A; `NO MOTION` at 0.80 A is a fault (bearing preload or magnet skimming the sensor). Static breakaway is not phase 5's dynamic drag (J01: 0.2923 vs 0.0783 A belt-off). **A/B comparisons:** same raw positions, compared pairwise |
 | M5 | Belt-on drag | Phase 5 belt on, both run orders (BELT_DRIVE B3) |
 | M6a | `J_rotor`, belt off | `t` → `g` → `k` → ~1 s → `x` → `d` (Uq step 0.20 → 0.80 V). α from raw `cnt` over the first ~50 ms; `J = (Kt·Iq − τ_drag)/α` with the belt-off drag map. **Done: 20.2 ± 2.4 × 10⁻⁶ kg·m², fleet constant** |
 | M6b | `J_total`, belt on | same, output unclamped (BELT_DRIVE B7); friction 40–60% of the impulse, ±20% |
 | M7 | INL after belt fitting | phases 5 + 6 (read INL only) |
-| **M8** | **Magnet gap and centring** | 0.5–1.0 mm, **never zero**, centred. Zero gap caused A1's count loss; centring sets the 1/rev INL |
+| **M8** | **Magnet gap and centring** | 0.5–1.0 mm, **never zero**, centred. Zero gap caused A1's lost motion; centring sets the 1/rev INL |
 | M9 | Gear ratio, teeth, lever arm | calipers and a tooth count |
 
 ### 20.3 Per operating point
@@ -147,10 +147,10 @@ pio run -e J01 -t upload
 flash) so a human reviews every constant, each change is a dated git diff, and no flash write can
 fail halfway.
 
-**Row fields:** `zea`, `dir`, `R_eff`, `U0`, `Ke`, `L`, `vbus_scale`, `i_scale`, `drag_c_fwd/rev`,
+**Row fields:** `zea`, `dir`, `zea_enc` (the encoder chip they were measured through), `R_eff`, `U0`, `Ke`, `L`, `vbus_scale`, `i_scale`, `drag_c_fwd/rev`,
 `drag_v_fwd/rev` (positive magnitudes; the consumer applies sign(ω)), `breakaway_A`, serials, date,
 belt state. `Kt` is derived (`calKt()` = 1.5·Ke), never stored. AUTOCALIB phase 7 emits a pasteable
-row and **carries** `vbus_scale`, `i_scale` and `breakaway_A` from the flashed row (blocked, with
+row (with `zea_enc`) and **carries** `vbus_scale`, `i_scale` and `breakaway_A` from the flashed row (blocked, with
 `*** CARRY BLOCKED ***`, if the flashed row is another joint's).
 
 Which file a constant belongs in: the *Three homes* table in `CLAUDE.md`. `vbus_scale` is per
@@ -167,11 +167,27 @@ board (J01 0.008448, J02 0.008516, J03 0.008357). Unbuilt rows carry `0.0f` = no
 | Motor | `Ke`, `L`, cogging | rewinding, magnet replacement |
 | Board | `vbus_scale`, `i_scale`, `U0` | board swap |
 | The pairing | **`zea`**, **`dir`**, `R_eff`, INL, drag, `breakaway_A` | any motor ↔ board swap, or touching the magnet mount |
+| The encoder | **`zea`**, **`dir`**, `zea_enc`, INL | encoder board or chip swap (drag and breakaway too if the magnet mount was touched) |
 
 ### Safe default for unfilled rows
 
 `zea = -1.0f`, `dir = 0`: `runInitFOC()` falls back to a full alignment, and the banner prints
-`!! UNCALIBRATED joint`.
+`!! UNCALIBRATED joint`. A row whose `zea_enc` is not the fleet chip (`ENC_CHIP`) is treated the
+same, and the banner says `!! ZEA/DIR were measured through MT68xx ... IGNORED`. Tier 0 refuses to
+arm either way.
+
+### Changing a joint's encoder board or chip
+
+1. Desk: in the row set `zea = -1.0f`, `dir = 0`, `zea_enc = 0`; keep every other field (board,
+   motor and plant are unchanged). Commit.
+2. [`cal/BELT_OFF_BASELINE.md`](cal/BELT_OFF_BASELINE.md) Step 2 (encoder) on the harness.
+3. Step 3 (AUTOCALIB, `1`→`6`). Gates against the row: **`Ke` ±1%** (a wrong angle scale moves it),
+   **`R_eff` ±3%** (copper ~0.4 %/K), drag at 100 rad/s ±10% (J01 run-to-run 4%; a rubbing
+   magnet adds tens of %). Record INL and `T_delay`.
+4. Paste **only `zea`, `dir` and `zea_enc`** from the phase-7 row. If the row's belt state differs
+   from the plant, its drag must not be pasted at all.
+5. Reflash, `V` ≤ 8° elec. Then Step 6 on Tier 0 (UID already recorded): `encok=1 crc=0`, one
+   motor turn = 0.6981 ± 0.002 rad with the joint's recorded sign.
 
 ### The `V` command — press it after every flash
 

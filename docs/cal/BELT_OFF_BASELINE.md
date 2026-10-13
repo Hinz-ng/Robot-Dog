@@ -48,22 +48,34 @@ Log header: `J03  date  board label  motor label  pack V  meter UT89X  magnet ga
 
 Back to ~12 V for the rest.
 
-## Step 2: encoder (2 min)
+## Step 2: encoder (3 min)
 
-Press `e`: parity **0/20000**, `no_mag` **0**. Then `E` and **turn one full revolution**: `perr=0`, and some window shows `span=16383`. (`HIT` flags are expected while turning.)
+Encoder: MT6835 (wiring: [`HARDWARE.md`](../HARDWARE.md); data: [`SENSING.md`](../SENSING.md) §5).
 
-> ⚠ **`e` alone is not a pass.** A chip that never drives MISO returns all-zero frames, which pass parity and `no_mag` while `raw` sits at 0 (J03, 2026-10-08).
+1. Banner: `MT6835 raw=… crc_err=0 status=0 (weak=0 uv=0 ovs=0)` and `MT6835 cfg … hyst=7 bw=5`
+   (factory; record anything else).
+2. `e`, shaft still: **`crc_err=0`** of 20000, **`span` ≤ 1**, **`no_mag=0`**, `over_speed=0` (status
+   flags clear with the magnet fitted, so the gap is inside the chip's field range),
+   `us_per_read` ≈ 11.7 → `ENC PASS`. Write down `span21`.
+3. `E`: **turn one full revolution** (some window shows `span=16383`; `HIT` is expected while
+   turning), then hold still and flex each wire for 60 s (PB5–PB8, VCC, GND): `perr_total=0`,
+   every still window `span` ≤ 1.
 
-**If `raw` is stuck:**
-1. Power on, firmware running: VDD and HVPP **3.3 V**, CSN **≈1.85 V**, SCK **≈2.5–3.0 V**. Those two are meter averages of lines that toggle every loop; flat 0 or 3.3 V = not toggling.
-2. Power off: continuity PB5→CSN, `HA/A`→MOSI, `HB/B`→MISO, `HC/Z`→SCK, and MISO not shorted to GND.
-3. All fine → **swap the encoder board.** J03's original had a dead MISO output.
+> ⚠ **A still shaft proves nothing about the angle.** A MISO that never drives reads all-zero
+> frames, which pass the CRC (J03, 2026-10-08). The turn in `E` is the check that `raw` moves.
+
+**If `raw` is stuck or every frame fails:**
+1. Power on, firmware running: VDD **3.2–3.4 V** at the breakout. CSN and SCK toggle every loop,
+   so a meter shows a value between 0 and 3.3 V; flat 0 or 3.3 V means not toggling.
+2. Power off: continuity PB5→CSN, PB6→MOSI, PB7→MISO, PB8→SCK, and MISO not shorted to GND.
+3. All fine → **swap the encoder board.**
 
 ## Step 3: AUTOCALIB (10 min)
 
 Gate first: banner `Vbus=` vs meter **±0.03 V**, else reboot.
 
-Press **`Y 1 2 3 4 5 6 7`**, one at a time, waiting for each result line. `2` twitches; `5` spins both ways, so keep hands clear.
+Press **`Y 1 2 3 4 5 6 7`**, one at a time, waiting for each result line (2–6 refuse until 1 has
+passed this boot). `2` twitches; `5` spins both ways, so keep hands clear.
 
 | Quantity | Reference (motor_2 / J02) | Pass |
 |---|---|---|
@@ -73,13 +85,14 @@ Press **`Y 1 2 3 4 5 6 7`**, one at a time, waiting for each result line. `2` tw
 | **`Ke`** | 0.018097 | ±1 %: 0.017916–0.018278 |
 | `L` | 46.25 µH | 41.6–50.9 µH |
 | `drag_c` fwd / rev | 0.106 / 0.107 A | 0.075–0.139 A each |
-| `T/T_loop` | 0.958 | 0.913–1.003 |
+| `T_delay` (diagnostics) | 84–90 µs (J01, MT6835) | 80–95 µs |
 
 **`Ke` is the M1 cross-check.** A miss with the banner off → redo M1. A small miss with M1 and the banner both confirmed → the reference is suspect, not the board (J03: −1.09 %, J02's scale carries a 0.32 % ambiguity). Store the new board's own `Ke` and note why.
 
 Save the full phase-7 output **verbatim** as `docs/cal/J03/J03_<date>_autocalib (bare motor).csv`.
 
-> **Then:** paste the phase-7 row over the J03 row; fill `board_sn`, `motor_sn`, date and `"OFF"`; check `vbus_scale` is the M1 value. Flash `-e J03`, press **`V`**: **≤ 8° elec** and direction matches. 8–15° = check the magnet; > 15° = wrong row or magnet slipped.
+> **Then:** paste the phase-7 row over the J03 row (it ends `, ENC_MT6835 }`, the chip `zea` was
+> measured through); fill `board_sn`, `motor_sn`, date and `"OFF"`; check `vbus_scale` is the M1 value. Flash `-e J03`, press **`V`**: **≤ 8° elec** and direction matches. 8–15° = check the magnet; > 15° = wrong row or magnet slipped.
 
 ## Step 4: M2, current scale → `i_scale` (25 min)
 
@@ -109,7 +122,7 @@ Wire this **before powering up**, and leave it in place for all of Step 4. The c
 | `I_reported` vs the §20.1 table | ±3 % (J01's supply; J03's softer pack read −5 % at pt 8, not a failure if `drift=` holds) |
 | Ibus span, pt 1 → 8 | 230–280 mA |
 | hot vs cold `R_eff` | ≤ 2 % |
-| `drift=` | within ±3 cnt (encoder jitter; J01 1, J02 3, J03 2 accepted). Creep shows as tens |
+| `drift=` (counts) | within ±3 = ±1.2 mrad at the motor (J01 1, J02 3, J03 2 accepted). Creep shows as tens |
 | `g` | 0.95–0.98 (J01 0.9621, J02 0.9690) |
 
 ## Step 5: M4, breakaway → `breakaway_A` (10 min)
@@ -122,7 +135,7 @@ Static breakaway (~0.3 A), not phase-5 dynamic drag (~0.1 A). References, motor-
 
 | Gate | Pass |
 |---|---|
-| each reading | no `NO MOTION` (0.80 A); `travel` ≤ 200 (else redo it); ≤ 0.60 A |
+| each reading | no `NO MOTION` (0.80 A); `travel` ≤ 200 counts = 76.7 mrad at the motor (else redo it); ≤ 0.60 A |
 | **mean of 10** | **0.20–0.40 A** |
 | sd | ≤ 0.12 A |
 
@@ -134,7 +147,11 @@ Store the mean (with n, sd and date) as `breakaway_A`. Save the 10 `M4,` rows as
    - `can_proto self-test: PASS`, and `CAN: HSE ready ... NBTP=0x500 ... DAR=1`.
    - **`cs gains after align`: −36.458333 ×3.** This is the evidence for skipping the boot pulses at leg boot.
    - The **`{ "J03", { 0x…, 0x…, 0x… } },`** line → paste into `JOINT_UID[]` (J03 entry).
-2. Flash the harness back: `pio run -e J03 -t upload`.
+2. Status line (2 Hz, disarmed): **`encok=1 crc=0`**.
+3. Pen mark on the motor bell. Turn the motor **one revolution** by hand and read `p` on the status
+   line: it changes by **0.6981 ± 0.002 rad** (one motor turn through 9:1). Record the sign (J01: one
+   CW revolution = −0.698 rad). Off by 9× = gear ratio; wrong sign on a repeat = `dir`.
+4. Flash the harness back: `pio run -e J03 -t upload`.
 
 ---
 
@@ -143,11 +160,11 @@ Store the mean (with n, sd and date) as `breakaway_A`. Save the 10 `M4,` rows as
 | | Measured | Pass |
 |---|---|---|
 | Vm1 / Vb1 / Vm2 / Vb2 → `vbus_scale` | | ratios ≤ 0.3 %, banner ±0.03 V |
-| encoder parity / no_mag / full sweep | | 0 / 0 / yes |
+| encoder crc_err / span / no_mag / full turn / 60 s flex | | 0 / ≤ 1 / 0 / yes / 0 errors |
 | R_eff · U0 · **Ke** · L | | see Step 3 |
 | drag_c fwd / rev · T/T_loop | | see Step 3 |
 | `V` | | ≤ 8° elec |
 | M2: cold/hot R · Ibus span · **g ±** | | ≤ 2 % · 230–280 mA · 0.95–0.98 |
 | M4: mean / sd (n = 10) | | 0.20–0.40 / ≤ 0.12 A |
-| cs gains · UID row | | −36.458333 ×3 · recorded |
+| cs gains · UID row · one turn | | −36.458333 ×3 · recorded · 0.6981 ± 0.002 rad |
 
