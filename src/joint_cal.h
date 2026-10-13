@@ -95,11 +95,14 @@ const JointCal JOINTS[] = {
   // -- J01 -- B-SPI-01 / M-SPI-01, the reference actuator. BELT-ON row (B11),
   //    pulley recipe B, 2026-09-30 (BELT_DRIVE §22.6). -e J01 flashes this.
   //    The belt-off baseline is the LAST row of the table (index 13).
-  //    zea, dir, R_eff, U0, Ke, L: belt-off AUTOCALIB 2026-08-07, rescaled
+  //    ENCODER: MT6835 since 2026-10-12. zea/dir: AUTOCALIB phase 2 2026-10-13,
+  //    belt off, n = 7, sd 2.04 deg elec. Only zea/dir/zea_enc were taken from
+  //    that run: the belt is off, so its drag is the wrong plant for this row.
+  //    R_eff, U0, Ke, L: belt-off AUTOCALIB 2026-08-07, rescaled
   //    x1.010768 by M1 2026-08-18. i_scale: M2 2026-08-20, 0.9621 +-1.2%.
-  //    Belt-on Ke is drag-contaminated and never carried.
-  //    Belt-on tripwires 2026-09-30: V 0.62 deg elec; phase 3 R 0.22404 (a
-  //    different chord of the same curved R -- not a reason to edit).
+  //    Belt-on Ke is drag-contaminated and never carried. Phase 3 R reads a
+  //    different chord of the same curved R (0.22404 2026-09-30, 0.22612
+  //    2026-10-13) -- not a reason to edit.
   //    DRAG (B3): phase 5 in both orders; each direction pooled over orders,
   //    because the direction run second reads 0.10-0.13 A higher:
   //        fwd first   fwd 0.2265 + 0.004009*|w|   rev 0.3576 + 0.002597*|w|
@@ -108,17 +111,17 @@ const JointCal JOINTS[] = {
   //    0.080-0.475 (one reading over the 200-count creep flag; 0.286 without it).
   //    Not fields: backlash G 5.8 counts; k 67.2 kN/m true at its clamp; ring
   //    f_d 65.0 Hz.
-  //    Belt-off diagnostics: T/T_loop 0.974 / 0.945; INL 1.029 deg mech pk-pk
-  //    (1/rev 0.369, 2/rev 0.204); ZEA residual 0.467 deg elec.
+  //    Belt-off diagnostics, MT6835 2026-10-13: INL 0.845 deg mech pk-pk;
+  //    ZEA residual 0.780 deg elec; Ke 0.018025 (+0.47% vs row: scale check).
   //    M2 fit: P_bus = 0.8027 + 0.0348*I + 0.34816*I^2;  U_del = 0.01350 + 0.22332*I.
   { "J01", "B-SPI-01", "M-SPI-01", "2026-09-30", "10mm-9:1",
-     6.0542f, +1, 0.22346f,        // zea, dir, R_eff      CARRIED (B1, B2 pass)
+     5.9879f, +1, 0.22346f,        // zea, dir (MT6835, 2026-10-13); R_eff CARRIED
      0.01037f,                     // U0                   CARRIED
      0.017941f, 43.77e-6f,         // Ke, L                CARRIED -- belt-on Ke never
      0.008448f, 0.9621f,           // vbus_scale, i_scale  CARRIED
      0.3169f, 0.3330f,             // drag_c fwd, rev      RECIPE B, B3 pooled over both orders
      3.24e-3f, 2.66e-3f,           // drag_v fwd, rev      RECIPE B, B3 pooled over both orders
-     0.295f, ENC_MT6816 },         // breakaway_A          RECIPE B, B4 n=20 (reported A); zea_enc
+     0.295f, ENC_MT6835 },         // breakaway_A          RECIPE B, B4 n=20 (reported A); zea_enc
 
   // -- J02 -- B-ABZ-01 / M-ABZ-01 (the rebuilt A1). Belt-off AUTOCALIB
   //    2026-08-08, rescaled x1.018904 by M1 2026-08-18. board_sn / motor_sn
