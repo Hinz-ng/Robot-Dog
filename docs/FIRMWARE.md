@@ -58,7 +58,8 @@ Every power-up:
 1. Power on. Motor boots **disabled**, mode OPENLOOP, `foc_ready = false`.
 2. **Read the `CFG` banner:** `modulation / dead_zone / pwm_Hz / Vbus / v_align / Uq_max / Uq_ceil /
    Ilim / spi_nops / prefetch / flash_ws`, plus the joint row (`vbus_scale`, `i_scale`, drag,
-   `breakaway_A`). Measurements are comparable only under the same values.
+   `breakaway_A`, `ENC=`) and the encoder lines (`MT6835 raw= angle21= crc_err= status=` and
+   `cfg zero= rot_dir= hyst= bw=`). Measurements are comparable only under the same values.
    - `Uq_max` = what `move()` clamps `voltage.q` to; `Uq_ceil` = what the modulator can synthesise
      (`min(driver.voltage_limit, V_bus)/√3` = 3.46 V). `Uq_max` > `Uq_ceil` is a limit that does not
      exist and an integrator that will wind up.
@@ -70,17 +71,19 @@ Every power-up:
 
 **Keys:** `g` go · `x`/`s` stop · `+`/`-` target · `o` open-loop · `t` torque(V) · `c` torque(I) ·
 `v` velocity · `f` align · `F` force fresh alignment · `V` verify stored ZEA · `e` encoder self-test
-(20000 reads; FAILs on all-zero frames) · `E` encoder monitor, continuous · `l`/`L` burst capture
+(20000 reads; FAILs on any CRC error, span > 1 count, weak field / under-voltage, or all-zero frames;
+prints `span21`, the 21-bit still-shaft spread) · `E` encoder monitor, continuous · `l`/`L` burst capture
 fast/slow · `k` step + capture positive · `K` negative · `j` zero-based step · `d` dump · `a` stats ·
 `q` print interval · `p` VBUS/ADC register dump (read-only, motor disabled) · `?` help.
 
 **AUTOCALIB:** `Y` menu · `1`–`6` phases · `7` report · `0` reset · `-` then `5` within 0.8 s =
-phase 5 reverse-first (header prints `ORDER SWAPPED`). Any key aborts a running phase.
+phase 5 reverse-first (header prints `ORDER SWAPPED`). Any key aborts a running phase. Phases 2–6
+refuse until phase 1 (link) has passed this boot; phase 1 also FAILs on all-zero frames.
 **Manual-assist:** `N` M2 bus-power ladder · `B`/`b` M4/B4 breakaway ramp, output free · `w` swing
 ladder (B6a), 0.6/1.0/1.4/1.6 A, output locked, ~80 s, stops on tooth skip (BELT_DRIVE §22.4.4).
 
 **Guards:** boots disabled, 20 s auto-stop, 150 rad/s overspeed, torque modes arm at 0, PID reset on
-arm, debounced sense-mismatch trip.
+arm, debounced sense-mismatch trip, encoder link (§11, below).
 
 ### MIT mode — typed lines, not keys
 
@@ -105,8 +108,11 @@ gain. The inner clamp (1.6 A_rep) is compile-time. `+`/`-`, `k`, `K`, `j` are re
 ### Telemetry line
 
 ```
-m=<mode> run=<0/1> tgt= cnt= vel= Iq= Id= |I|= Uq= Ud= Vb= Vb_src= lps= pr_us=
+m=<mode> run=<0/1> tgt= cnt= vel= Iq= Id= |I|= Uq= Ud= Vb= Vb_src= Vdma= perr= nmg= ovs= lps= pr_us=
 ```
+
+- `cnt` is the 14-bit raw angle (1 count = 0.0220° at the motor). `perr` = cumulative CRC failures;
+  `nmg` = weak field or under-voltage; `ovs` = over-speed (all three from the encoder).
 
 - **`Vb` is the boot seed, not live** (`Vb_src=seed`).
 - **`Uq` is the saturation check.** At 3S with `VOLT_LIMIT = 2.0`, free spin above ~90 rad/s is
@@ -121,6 +127,31 @@ m=<mode> run=<0/1> tgt= cnt= vel= Iq= Id= |I|= Uq= Ud= Vb= Vb_src= lps= pr_us=
 - `Vdma` (telemetry and the `M2,` row) is the DMA buffer's bus reading, ~60 counts (0.51 V) below
   `Vb`, diagnostic only. It exists for the live-Vbus acceptance test (§8.3).
 
+### Encoder link health (harness and Tier 0)
+
+One check in `mt6835.h`: an invalid read is a CRC failure or the all-zero word.
+
+| | Rule | Where |
+|---|---|---|
+| Trip | 4 invalid reads in a row (~0.35 ms) | Tier 0 → `CAN_FAULT_ENCODER`, `STOPPED (ENCODER LINK ...)`; harness `loop()` in any mode that commutates on the angle; AUTOCALIB / ladders `!! ABORT encoder link` |
+| Arm | no invalid read in the last 1 s | Tier 0 ARM; harness `g`; AUTOCALIB phases and the M2 / M4 / swing ladders |
+
+Tier-0 status line (2 Hz, disarmed): `encok=` 1 = armable, `crc=` cumulative CRC errors. The first
+line after a disarm averages `lps` over the armed period.
+
+**Bench verification, once (J01; repeat after any change to the check).** Tier 0 `-e T0_J01`, the
+N1–N4 bus (J01 R22 + breakout jumper ON, 60 Ω unpowered), master on the phone, J01 UART monitor.
+
+1. Disarmed, healthy: `encok=1 crc=0`; `lps` **41–44 k** (MT6816: 53.5–54.2 k; +5 µs per read).
+2. Pull the MISO wire at the breakout. Next status line: **`encok=0`**. `arm 1` → refused, UART
+   `encoder link: an invalid read ... in the last 1 s`.
+3. Reconnect. `encok=1` returns ≥ 1 s after the reconnect; `arm 1` arms; `disarm 1`.
+4. `arm 1` with no `set` (zero gains). Pull MISO: **trip at once**, master `fl=ENCODER`, UART
+   `STOPPED (ENCODER LINK (4 invalid reads in a row))`. Reconnect, `clear 1`.
+5. First status line after step 4's disarm: armed `lps` **10.9–11.6 k** (MT6816 N3: 11.5–12.2 k).
+
+Host tests for the check and the driver: `python test/host/run.py` ([`test/host/README.md`](../test/host/README.md)).
+
 ### Burst logger
 
 RAM ring buffer, 1000 samples × 18 B = 18.0 kB (55% of RAM).
@@ -134,7 +165,7 @@ RAM ring buffer, 1000 samples × 18 B = 18.0 kB (55% of RAM).
   against v differentiated offline from `cnt` (`tau_law` vs `v` is true by construction).
 - **Step between two nonzero currents** (stepping from 0 puts the dead zone inside the measurement).
 - **`vel` is filtered at 20 ms — never fit inertia from it. Use `cnt`** (14-bit raw angle, wraps at
-  16383; unwrap before differentiating).
+  16383; unwrap before differentiating; 1 count = 0.0426 mrad at the output).
 
 ---
 
