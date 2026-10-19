@@ -462,6 +462,14 @@ static void acRampTarget(float to) {
 // `long`, so labs() is not safe either. Explicit helper instead.
 static inline uint32_t acAbs32(int32_t v) { return (uint32_t)((v < 0) ? -v : v); }
 
+// " (x.xx mrad)" for a rotor travel in counts: the gates are written in mrad at
+// the motor (docs), so the console states it -- the count alone changes meaning
+// with ENC_BITS.
+static void acPrintMrad(int32_t cnt) {
+  SerialUART.print(F(" (")); SerialUART.print(cnt * ENC_RAD_PER_COUNT * 1000.0f, 2);
+  SerialUART.print(F(" mrad)"));
+}
+
 // Signed count difference with the ENC_CPR wrap handled.
 static int32_t acCntDelta(uint16_t a, uint16_t b) {
   int32_t d = (int32_t)b - (int32_t)a;
@@ -723,7 +731,7 @@ static void acP3() {
     ac_rn++;
     SerialUART.print(F("    U=")); SerialUART.print(AC_R_V[k], 3);
     SerialUART.print(F(" I=")); SerialUART.print(I, 4);
-    SerialUART.print(F(" drift=")); SerialUART.print(moved);
+    SerialUART.print(F(" drift=")); SerialUART.print(moved); acPrintMrad(moved);
     SerialUART.print(F(" n=")); SerialUART.println(n);
   }
   acExit(true);                           // keep the phase-2 alignment
@@ -881,7 +889,7 @@ static void acP4() {
   SerialUART.print(F(" L=")); SerialUART.print(ac_L*1e6f, 1); SerialUART.print(F("uH"));
   SerialUART.print(F(" rms=")); SerialUART.print(ac_L_rms, 3);
   SerialUART.print(F(" td=")); SerialUART.print(ac_L_td*1e6f, 0); SerialUART.print(F("us"));
-  SerialUART.print(F(" drift=")); SerialUART.print(moved);
+  SerialUART.print(F(" drift=")); SerialUART.print(moved); acPrintMrad(moved);
   SerialUART.print(F("   ")); SerialUART.println(acVs(ac_v_L));
   if (ac_v_L == AC_WARN) SerialUART.println(F("    !! rotor drifted, I_inf weak, or t_d implausible -- refit the bins offline."));
   SerialUART.println(F("    L is the INCREMENTAL inductance at 0.9-3.2 A (lower than small-signal)."));
@@ -1640,7 +1648,7 @@ static void acM2Assist() {
     SerialUART.print(',');      SerialUART.println(vd_n);
     SerialUART.print(F("    I_reported=")); SerialUART.print(n ? (float)(acc / n) : 0.0f, 4);
     SerialUART.print(F(" A  drift=")); SerialUART.print(moved);
-    SerialUART.println(F(" cnt"));
+    SerialUART.print(F(" cnt")); acPrintMrad(moved); SerialUART.println();
     if (acAbs32(moved) > AC_R_STILL_CNT)
       SerialUART.println(F("    !! rotor MOVED -- point invalid, redo it"));
   }
@@ -1734,13 +1742,14 @@ static void acM4Breakaway(float sgn) {
   SerialUART.print(F(" A at raw=")); SerialUART.print(c0);
   SerialUART.print(F("   ramp ")); SerialUART.print(el/1000.0f, 1);
   SerialUART.print(F(" s, travel ")); SerialUART.print(travel);
-  SerialUART.println(F(" cnt"));
+  SerialUART.print(F(" cnt")); acPrintMrad(travel); SerialUART.println();
   // TRAVEL, not elapsed time, flags a too-slow ramp: the current keeps rising
   // through the pre-slide creep, so a long creep biases the reading HIGH (scale
   // ~0.01 A per 200 counts; creep speed is not recorded, so do not subtract it).
   if (acAbs32(travel) > AC_M4_WARN_CNT) {
-    SerialUART.print(F("    !! long pre-slide creep (")); SerialUART.print(travel);
-    SerialUART.println(F(" cnt) -- biased HIGH, redo this position."));
+    SerialUART.print(F("    !! long pre-slide creep, travel ")); SerialUART.print(travel);
+    SerialUART.print(F(" cnt")); acPrintMrad(travel);
+    SerialUART.println(F(" -- biased HIGH, redo this position."));
   }
   if (i > AC_M4_WARN_A_rep) {
     SerialUART.print(F("    !! > ")); SerialUART.print(AC_M4_WARN_A_rep, 2);
