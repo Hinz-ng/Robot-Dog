@@ -13,11 +13,13 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.normpath(os.path.join(HERE, "..", "..", "src"))
+PROTO = os.path.normpath(os.path.join(HERE, "..", "..", "can_protocol"))
 MOCK = os.path.join(HERE, "mock")
 
 # (name, source, extra -D flags)
 CASES = [
     ("mt6835 driver + link health", "test_mt6835.cpp", []),
+    ("mit_law estimator wrap-safe", "test_mit_law.cpp", []),
     # joint_cal.h encoder-chip guard: (JOINT_ID, calZeaUsable expected, banner text)
     ("joint_cal J01 (MT6835 zea)",  "test_joint_cal.cpp", ["-DJOINT_ID=1", "-DEXPECT_USABLE=1", "-DEXPECT_TEXT=\"press 'V'\""]),
     ("joint_cal J03 (not measured)", "test_joint_cal.cpp", ["-DJOINT_ID=3", "-DEXPECT_USABLE=0", "-DEXPECT_TEXT=\"UNCALIBRATED\""]),
@@ -49,7 +51,7 @@ def main():
             if flt not in name:
                 continue
             exe = os.path.join(tmp, "t%d.exe" % i)
-            cmd = cxx + ["-std=gnu++11", "-O2", "-w", "-I", MOCK, "-I", SRC] + defs + \
+            cmd = cxx + ["-std=gnu++11", "-O2", "-w", "-I", MOCK, "-I", SRC, "-I", PROTO] + defs + \
                   [os.path.join(HERE, src), "-o", exe]
             b = subprocess.run(cmd, capture_output=True, text=True)
             if b.returncode:

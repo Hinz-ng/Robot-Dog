@@ -1803,7 +1803,7 @@ void loop() {
         // A wider ENC_BITS would overwrite them with angle bits, silently.
         static_assert(ENC_BITS <= 14, "MODE_MIT log packs clamp flags into cnt bits 14-15: widen LogSample first");
         e.cnt      = (uint16_t)(encoder.raw | ((uint16_t)mit_clamp << 14));
-        if (log_i == 0) log_mit_cnt0 = mit_est.cnt - mit_est.cnt_zero;
+        if (log_i == 0) log_mit_cnt0 = mitEstDeltaCnt(mit_est);
       }
       if (++log_i >= LOG_N) {
         log_active = false; log_ready = true; log_t1 = micros();

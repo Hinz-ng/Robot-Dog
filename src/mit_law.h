@@ -33,9 +33,14 @@
 // q / (sqrt(12) * Tf) = 0.11 rad/s at the MOTOR for Tf = 1 ms, while moving.
 // At REST the count does not flicker (span 0), so the floor is NOT measurable
 // stationary -- which is why a0 measures it in slow steady motion.
+// WRAP-SAFE: cnt accumulates MODULO 2^32 (unsigned overflow is defined; signed
+// is not) and position is the int32 DIFFERENCE from cnt_zero, exact while the
+// joint is within 2^31 counts of its zero (32768 motor turns at 16 bits). The
+// old int32 sum overflowed -- undefined behaviour -- after 91 min of one-way
+// spin at 150 rad/s at 14 bits, 23 min at 16.
 struct MitEstimator {
-  int32_t  cnt;          // unwrapped motor counts, SENSOR frame, since prime
-  int32_t  cnt_zero;     // cnt at the session zero (arm)
+  uint32_t cnt;          // motor counts mod 2^32, SENSOR frame, since prime
+  uint32_t cnt_zero;     // cnt at the session zero (arm)
   uint16_t raw_prev;
   float    v_out_rads;   // filtered, OUTPUT frame, sign applied
   bool     primed;
@@ -60,7 +65,7 @@ static inline void mitEstUpdate(MitEstimator& e, uint16_t raw, int8_t dir,
   if      (d >  (int32_t)(ENC_CPR / 2)) d -= (int32_t)ENC_CPR;   // wrap through 0
   else if (d < -(int32_t)(ENC_CPR / 2)) d += (int32_t)ENC_CPR;
   e.raw_prev = raw;
-  e.cnt += d;
+  e.cnt += (uint32_t)d;                                          // modular
   if (!(dt > 0.0f)) return;
   const float v_raw = (float)(dir * d) * ENC_RAD_PER_COUNT / (GEAR_RATIO * dt);
   const float a = dt / (tf_s + dt);
@@ -69,8 +74,14 @@ static inline void mitEstUpdate(MitEstimator& e, uint16_t raw, int8_t dir,
 
 static inline void mitEstZero(MitEstimator& e) { e.cnt_zero = e.cnt; }
 
+// Signed counts since the session zero. The modular difference is exact while
+// |p| < 2^31 counts; Tier 0 trips at |p| > 2 pi of output long before.
+static inline int32_t mitEstDeltaCnt(const MitEstimator& e) {
+  return (int32_t)(e.cnt - e.cnt_zero);
+}
+
 static inline float mitEstP(const MitEstimator& e, int8_t dir) {
-  return (float)(dir * (e.cnt - e.cnt_zero)) * ENC_RAD_PER_COUNT / GEAR_RATIO;
+  return (float)(dir * mitEstDeltaCnt(e)) * ENC_RAD_PER_COUNT / GEAR_RATIO;
 }
 
 // ---------------------------------------------------------------------------
