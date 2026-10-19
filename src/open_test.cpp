@@ -1008,9 +1008,15 @@ void encoderMonitor() {
   const uint32_t e0_all = encoder.spi_err;
   uint32_t n_all = 0, win = 0, worst_err = 0;
   uint16_t worst_span = 0;
+  // TRANSITIONS: changes of raw between consecutive CRC-valid reads. On a still
+  // shaft each one is a count flicker, which the MIT law turns into a kd blip
+  // (kd x 0.039 N.m at 14 bits); the rate decides encoder stage 2 (README §15).
+  uint32_t trans_all = 0;
+  uint16_t raw_prev = encoder.raw;
+  const uint32_t t_soak = millis();
   while (!SerialUART.available()) {
     const uint32_t e0 = encoder.spi_err;
-    uint32_t n = 0;
+    uint32_t n = 0, trans = 0;
     uint16_t lo = 0xFFFF, hi = 0;
     uint8_t  nmg = 0;
     const uint32_t t_end = millis() + WIN_MS;
@@ -1018,10 +1024,12 @@ void encoderMonitor() {
       if (encoder.readAngleRaw()) {
         if (encoder.raw < lo) lo = encoder.raw;
         if (encoder.raw > hi) hi = encoder.raw;
+        if (encoder.raw != raw_prev) { trans++; raw_prev = encoder.raw; }
         nmg |= encoder.no_mag;
       }
       n++;
     }
+    trans_all += trans;
     const uint32_t errs = encoder.spi_err - e0;
     // raw is only written on a SUCCESSFUL read, so a corrupt-but-CRC-passing
     // frame shows up as one outlier inside the window and the next good read
@@ -1034,6 +1042,7 @@ void encoderMonitor() {
     SerialUART.print(F("  n="));      SerialUART.print(n);
     SerialUART.print(F(" perr="));    SerialUART.print(errs);
     SerialUART.print(F(" span="));    SerialUART.print(span);
+    SerialUART.print(F(" trans="));   SerialUART.print(trans);
     SerialUART.print(F(" nmg="));     SerialUART.print(nmg);
     // Loud, because you are looking at the wire and not at the screen.
     if (errs || span > ENC_STILL_SPAN_MAX) SerialUART.println(F("   <<<<<< HIT"));
@@ -1044,7 +1053,11 @@ void encoderMonitor() {
   SerialUART.print(F(" reads="));       SerialUART.print(n_all);
   SerialUART.print(F(" perr_total="));  SerialUART.print(encoder.spi_err - e0_all);
   SerialUART.print(F(" worst_window=")); SerialUART.print(worst_err);
-  SerialUART.print(F(" worst_span="));  SerialUART.println(worst_span);
+  SerialUART.print(F(" worst_span="));  SerialUART.print(worst_span);
+  const float soak_s = (millis() - t_soak) * 1e-3f;
+  SerialUART.print(F(" trans_total="));  SerialUART.print(trans_all);
+  SerialUART.print(F(" trans_per_s="));
+  SerialUART.println(soak_s > 0.0f ? trans_all / soak_s : 0.0f, 3);
   SerialUART.println(F("  span > 1 on a stationary shaft = corruption that PASSED crc."));
 }
 
