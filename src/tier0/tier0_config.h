@@ -57,7 +57,7 @@ const float T0_ENV_A_rep  = 1.6f;
 const float T0_TAU_MAX_Nm = 0.39f;
 
 // ---- ESTIMATOR ----
-const float T0_MIT_TF_S = 0.001f;   // Tf_mit, B12a a0 (noise 70% of budget, 8.9 deg at 25 Hz)
+const float T0_MIT_TF_S = 0.001f;   // Tf_mit, B12a a0 (noise 70% of budget at 14 bits, ~18% at 16; 8.9 deg at 25 Hz). Kept: one variable per change
 
 // ---- COMMAND VALIDATION -- reject, never repair (mit_law.h) ----
 // kp/kd = the DEMONSTRATED gain box (b1, clamped output): kp <= 41, kd <= 0.365.

@@ -127,8 +127,8 @@ static const float CAN_LSB_V_DES  = 0.02f;                  // int12  +/-40.96 r
 static const float CAN_LSB_KP     = 0.1f;                   // uint12 0..409.5 N.m/rad
 static const float CAN_LSB_KD     = 0.001f;                 // uint12 0..4.095 N.m.s/rad
 static const float CAN_LSB_TAU_FF = 0.005f;                 // int12  +/-10.24 N.m
-static const float CAN_LSB_P      = 1e-5f;                  // int24  +/-83.9 rad (finer than one
-                                                            //        output count, 4.26e-5 rad)
+static const float CAN_LSB_P      = 1e-5f;                  // int24  +/-83.9 rad (about one 16-bit
+                                                            //        output count, 1.07e-5 rad)
 static const float CAN_LSB_V      = 0.002f;                 // int16  +/-65.5 rad/s
 static const float CAN_LSB_TAU    = 0.0005f;                // int16  +/-16.4 N.m
 // Quantisation x the demonstrated gain box (b1: kp <= 41, kd <= 0.365):

@@ -29,7 +29,8 @@
 //   * Differencing an accumulated float angle loses resolution as the angle
 //     grows (at ~1000 rad one float ulp is ~1/6 of a count). Integer counts
 //     do not.
-// Quantisation sets the noise floor: 1 count = 3.835e-4 rad, sigma_v ~=
+// Quantisation sets the noise floor: 1 count = ENC_RAD_PER_COUNT (9.59e-5 rad at
+// 16 bits; the figures below are the 14-bit a0 ones, 4x smaller now), sigma_v ~=
 // q / (sqrt(12) * Tf) = 0.11 rad/s at the MOTOR for Tf = 1 ms, while moving.
 // At REST the count does not flicker (span 0), so the floor is NOT measurable
 // stationary -- which is why a0 measures it in slow steady motion.

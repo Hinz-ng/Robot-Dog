@@ -19,9 +19,7 @@ static uint32_t millis() { return auto_tick ? fake_ms++ : fake_ms; }
 #define _PI  3.14159265359f
 #define _2PI 6.28318530718f
 class Sensor { public: virtual float getSensorAngle() = 0; virtual void init() {} virtual ~Sensor() {} };
-static constexpr uint8_t  ENC_BITS = 14;
-static constexpr uint32_t ENC_CPR  = 1UL << ENC_BITS;
-static constexpr float    ENC_RAD_PER_COUNT = 6.28318531f / (float)ENC_CPR;
+#include "fleet_config.h"   // the FLEET ENC_BITS -- the test follows the firmware
 
 // ---- reference CRC: SimpleFOC MT6835::calcCrc, bitwise ----------------------
 static uint8_t refCrc(uint32_t angle, uint8_t status) {
@@ -125,7 +123,7 @@ int main() {
   }
   good(0x1FFFFF);
   { const float ang = enc.getSensorAngle();
-    CHECK(fabsf(ang - (0x1FFFFF >> 7) * ENC_RAD_PER_COUNT) < 1e-6f && ang < _2PI, "angle %f", ang); }
+    CHECK(fabsf(ang - (0x1FFFFF >> MT35_SHIFT) * ENC_RAD_PER_COUNT) < 1e-6f && ang < _2PI, "angle %f", ang); }
 
   // ---- 3. every single-bit error is rejected and raw is held ---------------------
   for (int bit = 0; bit < 32; bit++) {
@@ -154,7 +152,7 @@ int main() {
   { MT6835SPI e2; slave.force_raw = true; slave.raw_word = 0xDEADBEEF; e2.init();
     CHECK(!e2.boot_ok && e2.spi_err > 0 && e2.pwrup_ms >= MT35_PWRUP_MS, "dead chip: boot_ok=%d err=%u", e2.boot_ok, e2.spi_err);
     good(777); MT6835SPI e3; e3.init();
-    CHECK(e3.boot_ok && e3.spi_err == 0 && e3.raw == (777 >> 7), "recovery boot"); }
+    CHECK(e3.boot_ok && e3.spi_err == 0 && e3.raw == (777 >> MT35_SHIFT), "recovery boot"); }
 
   // ---- 6. LINK HEALTH ----------------------------------------------------------------
   auto_tick = false; fake_ms = 100000;

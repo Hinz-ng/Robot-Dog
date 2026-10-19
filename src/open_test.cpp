@@ -1017,7 +1017,7 @@ void encoderMonitor() {
   uint16_t worst_span = 0;
   // TRANSITIONS: changes of raw between consecutive CRC-valid reads. On a still
   // shaft each one is a count flicker, which the MIT law turns into a kd blip
-  // (kd x 0.039 N.m at 14 bits); the rate decides encoder stage 2 (README §15).
+  // (kd x 0.0098 N.m at 16 bits, 0.039 at 14); its rate is the stage-2 measurement.
   uint32_t trans_all = 0;
   uint16_t raw_prev = encoder.raw;
   const uint32_t t_soak = millis();

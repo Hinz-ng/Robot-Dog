@@ -5,7 +5,8 @@
 // Reads at ENC_BITS resolution, the interface the MT6816 driver had, so nothing
 // above the driver changed: raw = ANGLE[20:0] >> (21 - ENC_BITS). The
 // estimator, contract LSBs, AUTOCALIB, logs and every count-unit constant keep
-// their meaning. Native 16/21-bit is stage 2, not this file.
+// their meaning, because the count thresholds are written in physical units
+// (fleet_config.h). ENC_BITS is 16 (2026-10-19); 21 is off the table.
 //
 // Layer: bottom. Depends ONLY on Arduino GPIO, SimpleFOC's Sensor base and
 // ENC_BITS / ENC_RAD_PER_COUNT from fleet_config.h.
@@ -103,8 +104,9 @@ const uint8_t SPI_JUMP_MAX_RUN = 3;
 
 // 'e' / 'E' still-shaft span limit. 21 bits truncated to ENC_BITS: a shaft
 // parked on a count boundary can flicker by one count. The chip's hysteresis
-// (0.011 deg, half a 14-bit count) suppresses most of it: J01 read span 1 in 3
-// of 156 still-shaft windows, 0 in the rest. Two or more counts is corruption.
+// (0.011 deg = 2 counts at 16 bits, half a count at 14) holds the output: at 14
+// bits J01 read span 1 in 3 of 156 still-shaft windows, 0 in the rest. Two or
+// more counts on a still shaft is corruption. Re-check at 16 bits (span 0-1).
 const uint16_t ENC_STILL_SPAN_MAX = 1;
 
 // ---------------------------------------------------------------------------

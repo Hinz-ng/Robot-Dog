@@ -54,14 +54,15 @@ static constexpr float AMP_INV_MAG_INV = 0.8164966f;   // sqrt(2/3)
 // One mechanical revolution per wrap. ENC_BITS is used as a shift when binning
 // by rotor position, so it and ENC_CPR are derived from each other here on
 // purpose: they cannot drift apart. The chip is 21-bit; its driver truncates
-// to ENC_BITS, so every count-unit constant means what it meant on the MT6816.
+// to ENC_BITS. 16 since 2026-10-19 (stage 2: 4x finer velocity steps for the kd
+// term); 14 before, so counts quoted from earlier logs and docs are 14-bit.
 // ENC_CHIP is what JointCal.zea_enc is checked against: a row whose zea/dir
 // were measured through another chip (ENC_MT6816, until 2026-10-13) is ignored.
 #define ENC_MT6816 6816
 #define ENC_MT6835 6835
 #define ENC_CHIP   ENC_MT6835
-static constexpr uint8_t  ENC_BITS = 14;
-static constexpr uint32_t ENC_CPR  = 1UL << ENC_BITS;              // 16384
+static constexpr uint8_t  ENC_BITS = 16;
+static constexpr uint32_t ENC_CPR  = 1UL << ENC_BITS;              // 65536
 static constexpr float    ENC_RAD_PER_COUNT = 6.28318531f / (float)ENC_CPR;
 
 // ---------------------------------------------------------------------------
@@ -129,9 +130,9 @@ static constexpr float BELT_MM_PER_MOTOR_REV = BELT_PITCH_MM * (float)PINION_TEE
 static constexpr float R_PINION_MM           = BELT_MM_PER_MOTOR_REV / 6.28318531f;  // 3.8197
 // The encoder as a belt-travel gauge. This is what makes a swing test a LENGTH
 // measurement rather than an angle one.
-static constexpr float BELT_MM_PER_COUNT     = BELT_MM_PER_MOTOR_REV / (float)ENC_CPR;  // 1.4648 um
+static constexpr float BELT_MM_PER_COUNT     = BELT_MM_PER_MOTOR_REV / (float)ENC_CPR;  // 0.3662 um
 // One pinion tooth, at the encoder. A swing or return reading that moves by this
-// -- or a multiple of it -- is a TOOTH SKIP, not compliance. 16384/12 = 1365.33.
+// -- or a multiple of it -- is a TOOTH SKIP, not compliance. 65536/12 = 5461.33.
 static constexpr float ENC_CNT_PER_TOOTH     = (float)ENC_CPR / (float)PINION_TEETH;
 
 // COUNT THRESHOLDS ARE WRITTEN IN PHYSICAL UNITS and converted here, so a
