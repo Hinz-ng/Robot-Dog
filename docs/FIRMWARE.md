@@ -72,7 +72,8 @@ Every power-up:
 **Keys:** `g` go · `x`/`s` stop · `+`/`-` target · `o` open-loop · `t` torque(V) · `c` torque(I) ·
 `v` velocity · `f` align · `F` force fresh alignment · `V` verify stored ZEA · `e` encoder self-test
 (20000 reads; FAILs on any CRC error, span > 1 count, weak field / under-voltage, or all-zero frames;
-prints `span21`, the 21-bit still-shaft spread) · `E` encoder monitor, continuous · `l`/`L` burst capture
+prints `span21`, the 21-bit still-shaft spread) · `E` encoder monitor, continuous (`trans=` per window,
+`trans_per_s` at the end: count changes on a still shaft, i.e. the kd flicker rate) · `l`/`L` burst capture
 fast/slow · `k` step + capture positive · `K` negative · `j` zero-based step · `d` dump · `a` stats ·
 `q` print interval · `p` VBUS/ADC register dump (read-only, motor disabled) · `?` help.
 
@@ -111,7 +112,7 @@ gain. The inner clamp (1.6 A_rep) is compile-time. `+`/`-`, `k`, `K`, `j` are re
 m=<mode> run=<0/1> tgt= cnt= vel= Iq= Id= |I|= Uq= Ud= Vb= Vb_src= Vdma= perr= nmg= ovs= lps= pr_us=
 ```
 
-- `cnt` is the 14-bit raw angle (1 count = 0.0220° at the motor). `perr` = cumulative CRC failures;
+- `cnt` is the 16-bit raw angle (1 count = 0.0055° at the motor). `perr` = cumulative CRC failures;
   `nmg` = weak field or under-voltage; `ovs` = over-speed (all three from the encoder).
 
 - **`Vb` is the boot seed, not live** (`Vb_src=seed`).
@@ -164,8 +165,9 @@ RAM ring buffer, 1000 samples × 18 B = 18.0 kB (55% of RAM).
   (p, p_des, tau_cmd, tau reconstructed at dump time). For τ-vs-v checks, plot measured `tau`
   against v differentiated offline from `cnt` (`tau_law` vs `v` is true by construction).
 - **Step between two nonzero currents** (stepping from 0 puts the dead zone inside the measurement).
-- **`vel` is filtered at 20 ms — never fit inertia from it. Use `cnt`** (14-bit raw angle, wraps at
-  16383; unwrap before differentiating; 1 count = 0.0426 mrad at the output).
+- **`vel` is filtered at 20 ms — never fit inertia from it. Use `cnt`** (16-bit raw angle, wraps at
+  65535; unwrap before differentiating; 1 count = 0.0107 mrad at the output). In MIT captures the
+  `clamp` column is packed with `rawI` in the log record; the dump decodes it.
 
 ---
 

@@ -18,7 +18,7 @@ This is my low-cost version of that:
 | Motor | TYI 4006 KV360 brushless outrunner |
 | Reduction | 9:1 belt drive (10 mm GT2) |
 | Motor driver | STM32G431 field-oriented-control board, running SimpleFOC |
-| Encoder | 14-bit magnetic, 0.04 mrad resolution at the joint |
+| Encoder | 21-bit magnetic, read at 16 bits: 0.011 mrad at the joint |
 | Joint loop | ~12 kHz |
 | Leg | five-bar linkage (80 mm / 100 mm links), three belt-driven actuators per leg: two drive the five-bar, one swings the leg sideways (hip ab/ad) |
 | Power | 5S LiPo |

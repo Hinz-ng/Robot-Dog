@@ -57,7 +57,7 @@ Encoder: MT6835 (wiring: [`HARDWARE.md`](../HARDWARE.md); data: [`SENSING.md`](.
 2. `e`, shaft still: **`crc_err=0`** of 20000, **`span` ≤ 1**, **`no_mag=0`**, `over_speed=0` (status
    flags clear with the magnet fitted, so the gap is inside the chip's field range),
    `us_per_read` ≈ 11.7 → `ENC PASS`. Write down `span21`.
-3. `E`: **turn one full revolution** (some window shows `span=16383`; `HIT` is expected while
+3. `E`: **turn one full revolution** (some window shows `span=65535`; `HIT` is expected while
    turning), then hold still and flex each wire for 60 s (PB5–PB8, VCC, GND): `perr_total=0`,
    every still window `span` ≤ 1.
 
@@ -122,7 +122,7 @@ Wire this **before powering up**, and leave it in place for all of Step 4. The c
 | `I_reported` vs the §20.1 table | ±3 % (J01's supply; J03's softer pack read −5 % at pt 8, not a failure if `drift=` holds) |
 | Ibus span, pt 1 → 8 | 230–280 mA |
 | hot vs cold `R_eff` | ≤ 2 % |
-| `drift=` (counts) | within ±3 = ±1.2 mrad at the motor (J01 1, J02 3, J03 2 accepted). Creep shows as tens |
+| `drift=` | within ±1.2 mrad (printed beside the counts; J01, J02, J03 accepted at 0.4–1.2 mrad). Creep shows as ≥ 4 mrad |
 | `g` | 0.95–0.98 (J01 0.9621, J02 0.9690) |
 
 ## Step 5: M4, breakaway → `breakaway_A` (10 min)
@@ -135,7 +135,7 @@ Static breakaway (~0.3 A), not phase-5 dynamic drag (~0.1 A). References, motor-
 
 | Gate | Pass |
 |---|---|
-| each reading | no `NO MOTION` (0.80 A); `travel` ≤ 200 counts = 76.7 mrad at the motor (else redo it); ≤ 0.60 A |
+| each reading | no `NO MOTION` (0.80 A); `travel` ≤ 76.7 mrad (printed; else redo it); ≤ 0.60 A |
 | **mean of 10** | **0.20–0.40 A** |
 | sd | ≤ 0.12 A |
 

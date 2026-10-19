@@ -54,7 +54,7 @@ J01 harness acceptance passed). **Next: J01 Tier-0 encoder check and J03 MT6835 
 ### Closed
 
 - **M0** toolchain, own-firmware spin, e-stop, current-sense calibration, two working clone drivers.
-- **Encoder:** MT6835 SPI, 21-bit read at 14 (16384 counts/rev), CRC-8, link-health trip, permanent
+- **Encoder:** MT6835 SPI, 21-bit read at 16 (65536 counts/rev, since 2026-10-19), CRC-8, link-health trip, permanent
   magnet mount (SENSING §5). MT6816 retired 2026-10-13.
 - **Electrical model** (Kt, Ke, R_eff, L, τ_e, U0), `dead_zone` 0.005, current loop 412 Hz / 9.3%,
   control delay 0.958 loop periods with the MT6816 / 84–90 µs with the MT6835, INL 0.93 / 0.87° mech.
@@ -76,7 +76,7 @@ J01 harness acceptance passed). **Next: J01 Tier-0 encoder check and J03 MT6835 
 | **ENC** | **MT6835 migration, bench: J01 Tier-0 link check, once (FIRMWARE §11 encoder link health), and J03 stage 1 (CALIBRATION §21, encoder change)** | — | 🟡 firmware done 2026-10-13 (driver, link health, MT6816 path deleted, host tests). J01 harness acceptance passed: 0 CRC errors in 3.3 M reads, `Ke` +0.26%, INL 0.87° mech, `V` 1.49° |
 | — | Control delay as a fixed time (~88 µs) in `fleet_config.h`, from J01 + J03 phase 6 | J03 stage 1 | ⏸ |
 | — | Angle extrapolation θ + ω·T for commutation (torque loss 1.45% at 270 rad/s, 6.8% at 600) | — | ⏸ before the first dynamic (sprint / jump) test |
-| — | Encoder stage 2: read at 16 bits (4× finer velocity steps; SENSING §5) | — | ⏸ when the leg needs kd > 0.365 or a velocity filter < 1 ms **and** a re-measured MT6835 kd flicker blip shows noise still limits it (the 0.011° hysteresis may already suppress it). Needs `ENC_BITS` 16, log repack (clamp bits share `cnt`), span gate from `span21`; lowering HYST is not a prerequisite. 21 bits off the table: finer than the CAN position step, and the 32-bit position counter wraps in 43 s at 150 rad/s |
+| **ENC16** | **16-bit read: once on J01 (CALIBRATION §21, after an `ENC_BITS` change)**, incl. the at-rest flicker rate (`E` `trans_per_s`) | — | 🟡 firmware 2026-10-19 (`f03cc74`); last 14-bit build `b63eca3`. Tf_mit / kd retune not part of it: on the leg |
 | — | MT6835 user auto-calibration (INL ~±0.07°) | — | ⏸ when an MT6835 joint reads INL > 1.5° mech pk-pk, or leg tracking error shows a 1×/2× motor-rev component that matters. Datasheet §9.2: CAL_EN on a temporary jumper, spin 400–800 rpm in open loop for > 64 rev, then AUTOCALIB |
 | 7l | Output position: homing or a known boot pose (the encoder is absolute over one motor turn = 40° of output) | — | ⏸ before the contract freezes and before the leg. Then set per-joint P travel limits (now ±2π) |
 | B10 | Tooth-skip threshold (static lever + spring gauge) | — | ⏸ before any command above 1.6 A and before the leg; raises the envelope (≥ 6% below demonstrated-safe current) |

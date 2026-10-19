@@ -8,10 +8,10 @@
 
 ## 5. Encoder — MT6835, 4-wire SPI
 
-21-bit, read at 14 bits (16384 counts/rev; the driver truncates `ANGLE >> 7`), bit-banged SPI
+21-bit, read at 16 bits since 2026-10-19 (65536 counts/rev; the driver truncates `ANGLE >> 5`), bit-banged SPI
 mode 3, read-only. Wiring: [`HARDWARE.md`](HARDWARE.md). Chip facts with datasheet sections
-(MagnTek Rev 1.3): `src/mt6835.h`. At 14 bits 1 count = 0.0220° at the motor = 0.0426 mrad at the
-output = 1.465 µm of belt.
+(MagnTek Rev 1.3): `src/mt6835.h`. At 16 bits 1 count = 0.0055° at the motor = 0.0107 mrad at the
+output = 0.366 µm of belt. Counts quoted from before 2026-10-19 are 14-bit (4× these).
 
 | Quantity | Value | Source |
 |---|---|---|
@@ -19,7 +19,7 @@ output = 1.465 µm of belt.
 | Integrity | CRC-8 over angle + status: every single-bit error caught, 0.39% of random garbage passes | host test |
 | Status in every frame | over-speed, weak field, under-voltage (`no_mag` = weak OR under-voltage) | datasheet §7.6 |
 | Propagation delay | 10 µs typ | datasheet §5 |
-| Hysteresis | 0.011° (HYST = 7, factory) = half a 14-bit count | datasheet, J01 boot |
+| Hysteresis | 0.011° (HYST = 7, factory) = 2 counts at 16 bits, half a count at 14 | datasheet, J01 boot |
 | Transition noise | 0.0015° rms at BW = 5 (factory) | datasheet §5 |
 | Commutation delay T (phase 6, belt off) | 84.3 / 88.1 µs at 12.08 kHz; 86.6 / 90.2 µs at 12.62 kHz | J01, 2026-10-13 |
 | INL | 0.845 / 0.868° mech pk-pk (two runs) | J01 |
@@ -35,11 +35,12 @@ after 0.35 ms / 2.8 ms / 67 ms / 15 s, and arming is refused from ~10⁻³ up.
   package) caused A1's lost motion, its "bearing whine" and its 1/rev disturbance.
 - **A dead MISO returns all-zero frames, which pass parity and CRC alike** (J03's and J02's MT6816
   boards, 2026-10-08). `e`, AUTOCALIB phase 1 and the link check all reject them.
-- **The span gate is 1 count, not 0:** 21 bits truncated to 14 can flicker at a count boundary. J01
-  read span 1 in 3 of 156 still-shaft windows.
-- **Velocity is quantised:** at 14 bits and ~11.5 kHz one count per loop is 4.4 rad/s at the motor.
-  The MIT estimator's 1 ms filter turns one count step into 0.039 rad/s, which at kd 0.365 is the
-  14 mN·m "kd flicker blip" measured at b1 (BELT_DRIVE §22.7).
+- **The span gate is 1 count, not 0:** a truncated reading can flicker at a count boundary. At 14
+  bits J01 read span 1 in 3 of 156 still-shaft windows; `E` now counts the flicker (`trans_per_s`).
+- **Velocity is quantised:** at ~11.5 kHz one count per loop is 1.1 rad/s at the motor at 16 bits
+  (4.4 at 14). Through the MIT estimator's 1 ms filter one count step is 0.0098 rad/s of output, so a
+  flicker costs kd × 0.0098 N·m: 3.6 mN·m at kd 0.365, against the 14 mN·m (kd × 0.039) measured at
+  14 bits at b1 (BELT_DRIVE §22.7).
 - Retired: ABZ via TIM4 (4096 counts/rev; no corruption check), the software `Encoder` class (lost
   edges above ~100 k/s), and the MT6816 (14-bit, 1-bit parity; replaced 2026-10-13).
 
@@ -74,7 +75,7 @@ cycles (J01 MT6835: 7 alignments, sd 2.04°, SE 0.97° elec; `V` 1.54° and 1.49
   movement`.
 - **`MOT: Skip dir calib` / `Skip offset calib` means no new measurement was taken.**
 - Quality gates: `Id ≈ 0` and `|I|/Iq ≈ 1.2247` (J01: 1.224 / 1.223 / 1.224 at 1.24 / 2.64 / 4.45 A).
-- Same-session repeatability belt-off: 0.15–0.77° elec (1–5 counts), torque cost < 0.15%. Do
+- Same-session repeatability belt-off: 0.15–0.77° elec (1–5 counts at 14 bits), torque cost < 0.15%. Do
   not chase it.
 
 ---

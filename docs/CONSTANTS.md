@@ -133,7 +133,7 @@ The MT6835's 10 µs propagation delay and 11.68 µs read are inside the measured
 | Centre distance C | 44.5 mm |
 | No-idler belt path | 230.96 mm; slack 1.04 mm on a 232 mm belt |
 | Belt travel per motor rev | 24.000 mm |
-| Encoder at the belt | 1 count = 1.4648 µm (16384 CPR) |
+| Encoder at the belt | 1 count = 0.3662 µm (65536 counts/rev, since 2026-10-19; 1.4648 µm at 14 bits before) |
 | Belt batch, n = 10 | σ(L) 0.158 mm, range 0.60 mm |
 | Idler bearing | OD 8.99 mm, width 4.96 mm |
 
@@ -154,7 +154,7 @@ The MT6835's 10 µs propagation delay and 11.68 µs read are inside the measured
 1.276 N (13.0%) · cogging 0.237 N (2.4%) · dynamic drag (moving, 0.078 A) 0.336 N (3.4%).
 
 **Belt on (J01, B11, recipe B):** drag_c fwd 0.3169 / rev 0.3330 A, drag_v 3.24e-3 / 2.66e-3
-A/(rad/s); breakaway 0.295 A; backlash G 8.5 µm of belt (5.8 counts; 0.014° output); k_beltline 67.2 kN/m at its
+A/(rad/s); breakaway 0.295 A; backlash G 8.5 µm of belt (5.8 counts at 14 bits; 0.014° output); k_beltline 67.2 kN/m at its
 clamp (±10% clamp-dependent); ring f_d 65.0 Hz, f_n 69.8 Hz, ζ 0.36. Detail: BELT_DRIVE §22.6.
 
 **Handling rule.** Three untouched consecutive readings: sd 0.0029 A (cv 1.2%), 30× tighter than

@@ -83,7 +83,7 @@ Absolute Ibus assumes ~1 W housekeeping; the **span (230–280 mA)** is what mat
 | Ibus span, point 1 → 8 | 230–280 mA | wiring, meter range, or the rotor moved |
 | Hot vs cold `R_eff` | ≤ 2% | thermal drift; shorten dwells and redo |
 | `dR` with `U0` held | +0.4 to +1.0% | refit with U0 constrained before reading it (R and U0 correlate −0.84) |
-| `drift=` (counts) | ±3 = ±1.2 mrad at the motor | creep shows as tens |
+| `drift=` | ±1.2 mrad (printed beside the counts) | creep shows as ≥ 4 mrad |
 
 **Coefficient checks** (a well-conditioned fit is not necessarily a clean one):
 
@@ -115,7 +115,7 @@ R 0.21536 Ω vs stored range 0.21556–0.21683 (0.09%).
 
 | # | What | How |
 |---|---|---|
-| **M4** | **Breakaway → `breakaway_A`** | `V` (or `f`, or phase 2) first. Belt off, pulley bare, leg **never** attached. At each of 5 positions ~72° apart: turn to the mark, **let go, wait 2 s** (settle into a detent), press `B`; then the same 5 with `b`. Ramp +0.005 A every 150 ms (~0.033 A/s); reports the current at \|ω\| > 0.5 rad/s as `M4,<dir>,<amps>,<raw>,<ramp_s>,<travel_cnt>`. Warns on `travel` > 200 counts = 76.7 mrad at the motor (biased high, redo) and > 0.60 A; `NO MOTION` at 0.80 A is a fault (bearing preload or magnet skimming the sensor). Static breakaway is not phase 5's dynamic drag (J01: 0.2923 vs 0.0783 A belt-off). **A/B comparisons:** same raw positions, compared pairwise |
+| **M4** | **Breakaway → `breakaway_A`** | `V` (or `f`, or phase 2) first. Belt off, pulley bare, leg **never** attached. At each of 5 positions ~72° apart: turn to the mark, **let go, wait 2 s** (settle into a detent), press `B`; then the same 5 with `b`. Ramp +0.005 A every 150 ms (~0.033 A/s); reports the current at \|ω\| > 0.5 rad/s as `M4,<dir>,<amps>,<raw>,<ramp_s>,<travel_cnt>`. Warns on `travel` > 76.7 mrad at the motor (printed beside the counts; biased high, redo) and > 0.60 A; `NO MOTION` at 0.80 A is a fault (bearing preload or magnet skimming the sensor). Static breakaway is not phase 5's dynamic drag (J01: 0.2923 vs 0.0783 A belt-off). **A/B comparisons:** same raw positions, compared pairwise |
 | M5 | Belt-on drag | Phase 5 belt on, both run orders (BELT_DRIVE B3) |
 | M6a | `J_rotor`, belt off | `t` → `g` → `k` → ~1 s → `x` → `d` (Uq step 0.20 → 0.80 V). α from raw `cnt` over the first ~50 ms; `J = (Kt·Iq − τ_drag)/α` with the belt-off drag map. **Done: 20.2 ± 2.4 × 10⁻⁶ kg·m², fleet constant** |
 | M6b | `J_total`, belt on | same, output unclamped (BELT_DRIVE B7); friction 40–60% of the impulse, ±20% |
@@ -188,6 +188,21 @@ arm either way.
    from the plant, its drag must not be pasted at all.
 5. Reflash, `V` ≤ 8° elec. Then Step 6 on Tier 0 (UID already recorded): `encok=1 crc=0`, one
    motor turn = 0.6981 ± 0.002 rad with the joint's recorded sign.
+
+### After an `ENC_BITS` change (once, on J01)
+
+Calibrations are stored in physical units and stay valid; this checks scale and sign.
+
+| # | Do | Pass |
+|---|---|---|
+| 1 | `e`, shaft still | `crc_err=0`, `span` ≤ 1, `us_per_read` ≈ 11.7 |
+| 2 | `E`: one full turn, then ≥ 60 s still | `span` reaches ENC_CPR − 1 (65535); record `trans_per_s` |
+| 3 | `V` | ≤ 8° elec |
+| 4 | AUTOCALIB `1`→`6`, no paste | `Ke` ±1% and `R_eff` ±3% of the row; INL 0.85–0.87° mech; `T_delay` 84–90 µs |
+| 5 | MIT (`m`, `m kp 5 kd 0.365`, `g`, `l`, `x`, `d`) | `clamp` column decodes; `p` continuous; `tau_law` steps at rest ≤ kd × 0.0098 N·m |
+| 6 | Tier 0 `-e T0_J01` | `encok=1`; one CW motor turn = −0.6981 ± 0.002 rad; disarmed `lps` 41–44 k |
+
+Rows 4 and 6 are the angle scale and sign: a miss means revert the `ENC_BITS` commit.
 
 ### The `V` command — press it after every flash
 

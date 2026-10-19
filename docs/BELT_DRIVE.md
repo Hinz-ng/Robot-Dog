@@ -310,7 +310,7 @@ raw intercept = G - s*I_f   ->   always friction-correct: G = intercept + slope*
 2. **Points:** ±0.6, 1.0, 1.4, 1.6 A.
 3. **Four legs per point:** `+cond` (discarded) → `−` → `+` → `−rpt`, 5 s dwell each (creep
    converges in ~4 s). `swing_a = + − m1`, `swing_b = + − m2`, `repeat = m2 − m1`.
-4. **Skip detector:** |repeat| ≥ 0.5 tooth = 1 mm of belt (1 tooth = 2 mm = 1365.3 counts) discards the point and
+4. **Skip detector:** |repeat| ≥ 0.5 tooth = 1 mm of belt (1 tooth = 2 mm = 5461.3 counts at 16 bits) discards the point and
    stops the ladder.
 5. **Output:** `SW,<amps>,<minus1>,<plus>,<minus2>,<swing_a>,<swing_b>,<swing>,<repeat>`. Refit
    offline. ~80 s. Ignore `lps` on the first telemetry line after the ladder.
@@ -322,12 +322,14 @@ raw intercept = G - s*I_f   ->   always friction-correct: G = intercept + slope*
 - Discard ladders run while the intercept was still climbing (new pulley bedding in).
 - Residuals are convex: the drive softens with load; linear fits are conveniences.
 
-**Scale:** 1 count = 1.4648 µm of belt at the pinion pitch line; 7.107 N belt force per
+**Scale:** 1 count = 0.3662 µm of belt at the pinion pitch line (16 bits since 2026-10-19; the ladder
+header prints it; 1.4648 µm at 14 bits); 7.107 N belt force per
 reported amp on J02 (`calKt` 0.027146 N·m/A_rep).
 
 ### 22.4.5 Swing results (SCB, belt 105.0)
 
-Swings in counts (1 count = 1.465 µm of belt).
+Swings in 14-bit counts (1 count = 1.465 µm of belt). **Every bracketed count in this file predates
+2026-10-19 and is 14-bit.**
 
 **No idlers (P5, P6):**
 
@@ -808,7 +810,8 @@ Every ring decays, no buzz, clamp 0. ζ rises at every kd rung. Belt secant K = 
   280–335. Output stiffness = kp·K/(kp+K): at kp 41, **80–89% of commanded** (60–77% at kp 100).
   Static stiffness ff/p: 206 at kp 41 vs 152 at kp 0.
 - kd buys ~0.75 ζ per N·m·s/rad on this mode.
-- **kd injects encoder-quantisation torque at rest: kd × 0.039 N·m** (6 / 10 / 14 mN·m measured).
+- **kd injects encoder-quantisation torque at rest: kd × 0.039 N·m at 14 bits** (6 / 10 / 14 mN·m
+  measured); kd × 0.0098 N·m at 16 bits.
   At kd 2.0 (`MIT_RANGES` ceiling) that is 78 mN·m. Plant-independent.
 - Measured τ ripples ±6% around command during the ring; peak current +4.5% over command.
 
