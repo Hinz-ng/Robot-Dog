@@ -510,11 +510,12 @@ struct LogSample {
                           // contribution: the direct measurement of angle lag.
   int16_t  sp_x1000;      // current SETPOINT * 1000
   int16_t  raw_x100;      // RAW unsynchronised |I| * 100 -- sees PWM-rate ripple that
-                          // the synchronously sampled dq path is blind to
-  uint16_t cnt;           // raw ENC_BITS angle, either chip (ground truth for velocity).
-                          // Wraps at ENC_CPR-1 = one motor rev: UNWRAP before
-                          // differentiating. 1 count = 0.02197 deg mech.
-                          // MODE_MIT puts the clamp flags in bits 14-15.
+                          // the synchronously sampled dq path is blind to.
+                          // MODE_MIT: bits 0-13 = |I| * 100 saturated at 163.83 A,
+                          // bits 14-15 = the IqClamp code (decode as uint16_t).
+  uint16_t cnt;           // raw ENC_BITS angle, 0..ENC_CPR-1 (ground truth for velocity).
+                          // Wraps at one motor rev: UNWRAP before differentiating.
+                          // 1 count = 360 / ENC_CPR deg mech.
 };
 LogSample logbuf[LOG_N];
 volatile uint16_t log_i = 0;
@@ -618,6 +619,10 @@ uint32_t mit_svc_cyc_max    = 0;         // longest mitService() since the last 
 MitCmd   log_mit_a = {}, log_mit_b = {};
 int16_t  log_mit_sw_i = -1, log_mit_rv_i = -1;
 int32_t  log_mit_cnt0 = 0;               // session counts at sample 0
+// MODE_MIT packs the IqClamp code (0..3) into raw_x100's top two bits.
+const uint8_t  MIT_LOG_CLAMP_SHIFT = 14;
+const uint16_t MIT_LOG_RAWI_MASK   = (1u << MIT_LOG_CLAMP_SHIFT) - 1u;   // 16383 = 163.83 A
+static_assert(IQ_CLAMP_REJECT < 4, "IqClamp must fit raw_x100's two top bits");
 int8_t   log_mit_dir  = 0;
 float    log_mit_tf_s = 0.0f, log_mit_tau_max = 0.0f;
 
@@ -776,9 +781,9 @@ static void mitDumpBody() {
   SerialUART.println(F("i,t_us,p,p_des,v,tau_law,tau_cmd,tau,sp,Iq,Id,Uq,rawI,cnt,clamp"));
   uint32_t t_acc = 0;
   int32_t  c_acc = log_mit_cnt0;
-  uint16_t raw_prev = logbuf[0].cnt & (uint16_t)(ENC_CPR - 1);
+  uint16_t raw_prev = logbuf[0].cnt;
   for (uint16_t k = 0; k < log_i; k++) {
-    const uint16_t raw = logbuf[k].cnt & (uint16_t)(ENC_CPR - 1);
+    const uint16_t raw = logbuf[k].cnt;
     int32_t d = (int32_t)raw - (int32_t)raw_prev;
     if      (d >  (int32_t)(ENC_CPR / 2)) d -= (int32_t)ENC_CPR;
     else if (d < -(int32_t)(ENC_CPR / 2)) d += (int32_t)ENC_CPR;
@@ -800,9 +805,10 @@ static void mitDumpBody() {
     SerialUART.print(iq, 3);                              SerialUART.print(',');
     SerialUART.print(logbuf[k].id_x1000 / 1000.0f, 3);    SerialUART.print(',');
     SerialUART.print(logbuf[k].uq_x1000 / 1000.0f, 3);    SerialUART.print(',');
-    SerialUART.print(logbuf[k].raw_x100 / 100.0f, 2);     SerialUART.print(',');
+    const uint16_t rw = (uint16_t)logbuf[k].raw_x100;     // MIT packing, see LogSample
+    SerialUART.print((rw & MIT_LOG_RAWI_MASK) / 100.0f, 2); SerialUART.print(',');
     SerialUART.print(raw);                                SerialUART.print(',');
-    SerialUART.println(logbuf[k].cnt >> 14);
+    SerialUART.println(rw >> MIT_LOG_CLAMP_SHIFT);
   }
   SerialUART.println(F("# END"));
 }
@@ -878,7 +884,8 @@ void logStats() {
     sUq  += logbuf[k].uq_x1000 / 1000.0f;
     sUd  += logbuf[k].ud_x1000 / ud_sc;
     sVel += logbuf[k].vel_x50 / vel_sc;
-    sRaw += logbuf[k].raw_x100 / 100.0f;
+    // MIT packs the clamp code into raw_x100's top bits (LogSample).
+    sRaw += (mit ? ((uint16_t)logbuf[k].raw_x100 & MIT_LOG_RAWI_MASK) : logbuf[k].raw_x100) / 100.0f;
     if (iq < iq_lo) iq_lo = iq;
     if (iq > iq_hi) iq_hi = iq;
   }
@@ -1799,10 +1806,15 @@ void loop() {
       if (log_mode == MODE_MIT) {        // slot reuse -- see mitDumpBody()
         e.vel_x50  = sat16(mit_est.v_out_rads * 1000.0f);
         e.ud_x1000 = sat16(mit_tau_law_Nm * 10000.0f);
-        // Clamp flags ride in cnt[15:14] (decoded by the dump's `cnt >> 14`).
-        // A wider ENC_BITS would overwrite them with angle bits, silently.
-        static_assert(ENC_BITS <= 14, "MODE_MIT log packs clamp flags into cnt bits 14-15: widen LogSample first");
-        e.cnt      = (uint16_t)(encoder.raw | ((uint16_t)mit_clamp << 14));
+        // The clamp code rides in raw_x100[15:14] (not in cnt: every cnt bit is
+        // angle at ENC_BITS = 16). |I| * 100 is saturated to 14 bits = 163.83 A,
+        // 100x the 1.6 A envelope. No new field: 2 B x LOG_N is 2 kB of RAM,
+        // and a static buffer growing into the stack has HardFaulted before.
+        {
+          const float i100 = sqrtf(lc.a*lc.a + lc.b*lc.b + lc.c*lc.c) * 100.0f;
+          const uint16_t ri = (i100 >= (float)MIT_LOG_RAWI_MASK) ? MIT_LOG_RAWI_MASK : (uint16_t)i100;
+          e.raw_x100 = (int16_t)(uint16_t)(ri | ((uint16_t)mit_clamp << MIT_LOG_CLAMP_SHIFT));
+        }
         if (log_i == 0) log_mit_cnt0 = mitEstDeltaCnt(mit_est);
       }
       if (++log_i >= LOG_N) {
