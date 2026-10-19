@@ -7,14 +7,17 @@ Detail and data live in the section docs; this file is the index of changes.
 
 ---
 
-## 2026-10-19 (firmware) — encoder read at 16 bits
+## 2026-10-19 (firmware + bench) — encoder read at 16 bits
 
 - `ENC_BITS` 14 → 16 (`f03cc74`): 1 count 0.0220° → 0.0055° at the motor, 1.465 → 0.366 µm of belt;
   kd flicker blip kd × 0.039 → kd × 0.0098 N·m. Count thresholds rescale (80 / 160 / 800 / 100);
   calibrations unchanged. Last 14-bit build `b63eca3`.
 - Prep: wrap-safe estimator counter (signed overflow removed), MIT log clamp code moved into
   `raw_x100`, drift / travel printed in mrad, `E` counts still-shaft transitions.
-- Bench check pending (CALIBRATION §21, after an `ENC_BITS` change). Bracketed counts in older docs
+- J01 acceptance passed (CALIBRATION §21, after an `ENC_BITS` change): `Ke` −0.74%, `R_eff` −0.34%;
+  kd blip 14 → 3.4–3.6 mN·m at kd 0.365; still-shaft flicker 0 in 35 s. T 84–90 → 84–93 µs, INL
+  0.85–0.87 → 0.85–0.90° (scatter, three runs). Tier 0 disarmed `lps` 40.8 k (was predicted 41–44 k).
+  One-turn gate ±0.002 → ±0.005 rad (hand alignment scatters ±0.003). Bracketed counts in older docs
   are 14-bit. Tf_mit stays 1 ms.
 
 ## 2026-10-12/13 (firmware + bench) — encoder migrated to the MT6835

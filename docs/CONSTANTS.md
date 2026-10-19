@@ -112,7 +112,7 @@ is not a fault.** M2 uses its own range-matched R.
 | Quantity | Value | Note |
 |---|---|---|
 | Kt | `calKt()` = 1.5 × Ke per row (never stored). Per reported amp `calKtCmd()` = Kt / `i_scale`: J01 0.027972, J02 0.028013 | Kt ≠ Ke in SimpleFOC's amplitude-invariant convention (Ke = Kt excluded at 15σ) |
-| **Control delay T** | MT6835 (J01): **84–90 µs** at 12.1–12.6 kHz, flat with loop rate. MT6816: 0.958 ± 0.015 loop periods (n = 7, 3 assemblies) | **Sim latency range 84–90 µs.** `T_DELAY_PER_LOOP` in `fleet_config.h` is still the MT6816 per-loop value: a fixed-time form waits on J03's phase 6 (README §15). **Belt-off only.** Torque loss at 270 / 600 rad/s: 1.45 / 6.8%. Angle compensation deferred (README §15) |
+| **Control delay T** | MT6835 (J01): **84–93 µs** at 12.1–12.6 kHz, flat with loop rate. MT6816: 0.958 ± 0.015 loop periods (n = 7, 3 assemblies) | **Sim latency range 84–93 µs.** `T_DELAY_PER_LOOP` in `fleet_config.h` is still the MT6816 per-loop value: a fixed-time form waits on J03's phase 6 (README §15). **Belt-off only.** Torque loss at 270 / 600 rad/s: 1.45 / 6.8%. Angle compensation deferred (README §15) |
 | PWM | 25 kHz, SVPWM | ceiling V_bus/√3 |
 | Loop rate | MT6835 (J01, 2026-10-13): harness 47.3 kHz disarmed, AUTOCALIB free spin 12.6 kHz | MT6816 (6.65 µs reads): harness 63.9 kHz disarmed, ~12.4 kHz MIT armed (BELT_DRIVE §22.7.7); Tier 0 11.5–12.2 kHz armed (N3) |
 | Telemetry print cost | ~950 µs at 921600 baud | float formatting dominates |

@@ -22,7 +22,7 @@ output = 0.366 µm of belt. Counts quoted from before 2026-10-19 are 14-bit (4×
 | Hysteresis | 0.011° (HYST = 7, factory) = 2 counts at 16 bits, half a count at 14 | datasheet, J01 boot |
 | Transition noise | 0.0015° rms at BW = 5 (factory) | datasheet §5 |
 | Commutation delay T (phase 6, belt off) | 84.3 / 88.1 µs at 12.08 kHz; 86.6 / 90.2 µs at 12.62 kHz | J01, 2026-10-13 |
-| INL | 0.845 / 0.868° mech pk-pk (two runs) | J01 |
+| INL | 0.845 / 0.868 / 0.897° mech pk-pk (three runs) | J01 |
 | Field range | 30–1000 mT; below it the chip flags weak field | datasheet §4 |
 
 **Link health** (`mt6835.h`, used by Tier 0, the harness run loop and AUTOCALIB): an invalid read
@@ -36,11 +36,13 @@ after 0.35 ms / 2.8 ms / 67 ms / 15 s, and arming is refused from ~10⁻³ up.
 - **A dead MISO returns all-zero frames, which pass parity and CRC alike** (J03's and J02's MT6816
   boards, 2026-10-08). `e`, AUTOCALIB phase 1 and the link check all reject them.
 - **The span gate is 1 count, not 0:** a truncated reading can flicker at a count boundary. At 14
-  bits J01 read span 1 in 3 of 156 still-shaft windows; `E` now counts the flicker (`trans_per_s`).
+  bits J01 read span 1 in 3 of 156 still-shaft windows. At 16 bits (2026-10-19): 0 changes in 35 s
+  still, disarmed; armed at kp 5 kd 0.365 the count walks over 5 counts (0.05 mrad output) at
+  ~150 changes/s, from rotor motion or PWM pickup (that capture cannot separate them).
 - **Velocity is quantised:** at ~11.5 kHz one count per loop is 1.1 rad/s at the motor at 16 bits
   (4.4 at 14). Through the MIT estimator's 1 ms filter one count step is 0.0098 rad/s of output, so a
-  flicker costs kd × 0.0098 N·m: 3.6 mN·m at kd 0.365, against the 14 mN·m (kd × 0.039) measured at
-  14 bits at b1 (BELT_DRIVE §22.7).
+  flicker costs kd × 0.0098 N·m: 3.4–3.6 mN·m measured at kd 0.365 (J01, 16 bits), against 14 mN·m
+  (kd × 0.039) at 14 bits at b1 (BELT_DRIVE §22.7).
 - Retired: ABZ via TIM4 (4096 counts/rev; no corruption check), the software `Encoder` class (lost
   edges above ~100 k/s), and the MT6816 (14-bit, 1-bit parity; replaced 2026-10-13).
 
@@ -51,9 +53,9 @@ after 0.35 ms / 2.8 ms / 67 ms / 15 s, and arming is refused from ~10⁻³ up.
 | Integrity check | 1-bit parity: ~50% of garbage passes | CRC-8: 0.39% passes |
 | Read time | 6.65 µs | 11.68 µs |
 | Harness loop rate, disarmed | 63.9 k/s | 47.3 k/s |
-| Commutation delay T | 71–76 µs at 12.9–13.4 kHz (0.958 × loop period) | 84–90 µs at 12.1–12.6 kHz |
+| Commutation delay T | 71–76 µs at 12.9–13.4 kHz (0.958 × loop period) | 84–93 µs at 12.1–12.6 kHz |
 | Torque loss from T at 270 / 600 rad/s | 0.95% / 4.8% | 1.45% / 6.8% |
-| INL (J01) | 1.03° mech pk-pk | 0.85–0.87° |
+| INL (J01) | 1.03° mech pk-pk | 0.85–0.90° |
 | Link failure seen as | a noisy angle (parity passes half) | a stale angle, tripped in 4 reads |
 
 The MT6835's T did not drop when the loop sped up from 12.08 to 12.62 kHz (a per-loop delay predicts

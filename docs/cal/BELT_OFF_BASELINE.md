@@ -83,9 +83,9 @@ passed this boot). `2` twitches; `5` spins both ways, so keep hands clear.
 | `R_eff` (board) | 0.222 Ω, current ladder | 0.211–0.233 Ω |
 | `U0` (board) | 0.015 V | 0.005–0.030 V |
 | **`Ke`** | 0.018097 | ±1 %: 0.017916–0.018278 |
-| `L` | 46.25 µH | 41.6–50.9 µH |
+| `L` | 46.25 µH | 41.6–50.9 µH; a phase-4 `drift` WARN alone does not void it (J01 bare motor: 11–33 mrad by rotor position, `L` unchanged) |
 | `drag_c` fwd / rev | 0.106 / 0.107 A | 0.075–0.139 A each |
-| `T_delay` (diagnostics) | 84–90 µs (J01, MT6835) | 80–95 µs |
+| `T_delay` (diagnostics) | 84–93 µs (J01, MT6835) | 80–95 µs |
 
 **`Ke` is the M1 cross-check.** A miss with the banner off → redo M1. A small miss with M1 and the banner both confirmed → the reference is suspect, not the board (J03: −1.09 %, J02's scale carries a 0.32 % ambiguity). Store the new board's own `Ke` and note why.
 
@@ -149,7 +149,8 @@ Store the mean (with n, sd and date) as `breakaway_A`. Save the 10 `M4,` rows as
    - The **`{ "J03", { 0x…, 0x…, 0x… } },`** line → paste into `JOINT_UID[]` (J03 entry).
 2. Status line (2 Hz, disarmed): **`encok=1 crc=0`**.
 3. Pen mark on the motor bell. Turn the motor **one revolution** by hand and read `p` on the status
-   line: it changes by **0.6981 ± 0.002 rad** (one motor turn through 9:1). Record the sign (J01: one
+   line: it changes by **0.6981 ± 0.005 rad** (one motor turn through 9:1; hand alignment
+   scatters ±0.003). Record the sign (J01: one
    CW revolution = −0.698 rad). Off by 9× = gear ratio; wrong sign on a repeat = `dir`.
 4. Flash the harness back: `pio run -e J03 -t upload`.
 
@@ -166,5 +167,5 @@ Store the mean (with n, sd and date) as `breakaway_A`. Save the 10 `M4,` rows as
 | `V` | | ≤ 8° elec |
 | M2: cold/hot R · Ibus span · **g ±** | | ≤ 2 % · 230–280 mA · 0.95–0.98 |
 | M4: mean / sd (n = 10) | | 0.20–0.40 / ≤ 0.12 A |
-| cs gains · UID row · one turn | | −36.458333 ×3 · recorded · 0.6981 ± 0.002 rad |
+| cs gains · UID row · one turn | | −36.458333 ×3 · recorded · 0.6981 ± 0.005 rad |
 

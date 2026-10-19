@@ -54,10 +54,10 @@ J01 harness acceptance passed). **Next: J01 Tier-0 encoder check and J03 MT6835 
 ### Closed
 
 - **M0** toolchain, own-firmware spin, e-stop, current-sense calibration, two working clone drivers.
-- **Encoder:** MT6835 SPI, 21-bit read at 16 (65536 counts/rev, since 2026-10-19), CRC-8, link-health trip, permanent
+- **Encoder:** MT6835 SPI, 21-bit read at 16 (65536 counts/rev; J01 acceptance 2026-10-19), CRC-8, link-health trip, permanent
   magnet mount (SENSING §5). MT6816 retired 2026-10-13.
 - **Electrical model** (Kt, Ke, R_eff, L, τ_e, U0), `dead_zone` 0.005, current loop 412 Hz / 9.3%,
-  control delay 0.958 loop periods with the MT6816 / 84–90 µs with the MT6835, INL 0.93 / 0.87° mech.
+  control delay 0.958 loop periods with the MT6816 / 84–93 µs with the MT6835, INL 0.93 / 0.85–0.90° mech.
 - **M1 `vbus_scale`, M2 `i_scale`** on J01, J02, J03 (§8.1c).
 - **J01 and J02 belt-off characterisation**, `J_rotor` 20.2 ± 2.4 × 10⁻⁶ kg·m².
 - **Belt drive:** idlers rebuilt, pulley recipe B of record, J01 B1–B6b + B11 (BELT_DRIVE §22.6).
@@ -73,10 +73,9 @@ J01 harness acceptance passed). **Next: J01 Tier-0 encoder check and J03 MT6835 
 | # | Task | Blocked by | Status |
 |---|---|---|---|
 | **CAN-T0** | **MIT contract over CAN, ESP32 ↔ J01 + J03** (branch `can-t0`) | — | 🟡 **N0–N4 closed on J01, 2026-10-04/06/10.** N1 0 bus errors, 1 late reply in 65k polls (status-print latency); one motor rev CW = −0.6998 rad. N2 all four refusals. N3 v +1.168 / −1.121 rad/s, step rest error 0.6 / 0.3 mrad, armed lps 11.5–12.2 k, 0 misses armed. N4 HOLD/DAMP/resume, cable pull, ESTOP, phone STOP, master reboot, phone dead-man. N4d (bare motor): resume with p_des 0.199 rad off → 59 refusals, CMD_TIMEOUT at 500 ms; hang and HardFault builds → master LOST → IWDG reset → reboots disarmed. Current-sense align changes nothing on J01 (gains = constructor −36.458333) → evidence for `skip_align` at leg boot. Tier 0 refuses to arm / trips on encoder link loss (4 invalid reads; arm after 1 s clean). **Next: N5/N6, after J03's MT6835 stage 1.** Tier 0 `-e T0_J01/T0_J03`; master `pio run -d master`, operated from the phone (WiFi `LegMaster`, http://192.168.4.1); contract `can_protocol/` (v0, not frozen). Bus: J01 and J03 keep R22 at the two ends, ESP32 breakout (jumper OFF) on a short mid stub, ≈ 60.5 Ω unpowered. Plan: `C:\Users\ACER\.claude\plans\read-the-attached-context-synchronous-aho.md` until §23.11 is written |
-| **ENC** | **MT6835 migration, bench: J01 Tier-0 link check, once (FIRMWARE §11 encoder link health), and J03 stage 1 (CALIBRATION §21, encoder change)** | — | 🟡 firmware done 2026-10-13 (driver, link health, MT6816 path deleted, host tests). J01 harness acceptance passed: 0 CRC errors in 3.3 M reads, `Ke` +0.26%, INL 0.87° mech, `V` 1.49° |
+| **ENC** | **MT6835 migration, bench: J01 Tier-0 link check steps 2–5, once (FIRMWARE §11 encoder link health), and J03 stage 1 (CALIBRATION §21, encoder change)** | — | 🟡 firmware done 2026-10-13 (driver, link health, MT6816 path deleted, host tests). J01 harness acceptance passed: 0 CRC errors in 3.3 M reads, `Ke` +0.26%, INL 0.87° mech, `V` 1.49°. J01 Tier 0 reads it clean (step 1: `encok=1 crc=0`, `lps` 40.8 k, 2026-10-19) |
 | — | Control delay as a fixed time (~88 µs) in `fleet_config.h`, from J01 + J03 phase 6 | J03 stage 1 | ⏸ |
 | — | Angle extrapolation θ + ω·T for commutation (torque loss 1.45% at 270 rad/s, 6.8% at 600) | — | ⏸ before the first dynamic (sprint / jump) test |
-| **ENC16** | **16-bit read: once on J01 (CALIBRATION §21, after an `ENC_BITS` change)**, incl. the at-rest flicker rate (`E` `trans_per_s`) | — | 🟡 firmware 2026-10-19 (`f03cc74`); last 14-bit build `b63eca3`. Tf_mit / kd retune not part of it: on the leg |
 | — | MT6835 user auto-calibration (INL ~±0.07°) | — | ⏸ when an MT6835 joint reads INL > 1.5° mech pk-pk, or leg tracking error shows a 1×/2× motor-rev component that matters. Datasheet §9.2: CAL_EN on a temporary jumper, spin 400–800 rpm in open loop for > 64 rev, then AUTOCALIB |
 | 7l | Output position: homing or a known boot pose (the encoder is absolute over one motor turn = 40° of output) | — | ⏸ before the contract freezes and before the leg. Then set per-joint P travel limits (now ±2π) |
 | B10 | Tooth-skip threshold (static lever + spring gauge) | — | ⏸ before any command above 1.6 A and before the leg; raises the envelope (≥ 6% below demonstrated-safe current) |

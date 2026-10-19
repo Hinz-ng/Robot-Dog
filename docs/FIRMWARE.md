@@ -143,7 +143,7 @@ line after a disarm averages `lps` over the armed period.
 **Bench verification, once (J01; repeat after any change to the check).** Tier 0 `-e T0_J01`, the
 N1–N4 bus (J01 R22 + breakout jumper ON, 60 Ω unpowered), master on the phone, J01 UART monitor.
 
-1. Disarmed, healthy: `encok=1 crc=0`; `lps` **41–44 k** (MT6816: 53.5–54.2 k; +5 µs per read).
+1. Disarmed, healthy: `encok=1 crc=0`; `lps` **≈ 40.8 k** (J01, 2026-10-19; MT6816: 53.5–54.2 k).
 2. Pull the MISO wire at the breakout. Next status line: **`encok=0`**. `arm 1` → refused, UART
    `encoder link: an invalid read ... in the last 1 s`.
 3. Reconnect. `encok=1` returns ≥ 1 s after the reconnect; `arm 1` arms; `disarm 1`.
