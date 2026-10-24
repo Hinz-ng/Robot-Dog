@@ -183,7 +183,8 @@ arm either way.
 2. [`cal/BELT_OFF_BASELINE.md`](cal/BELT_OFF_BASELINE.md) Step 2 (encoder) on the harness.
 3. Step 3 (AUTOCALIB, `1`→`6`). Gates against the row: **`Ke` ±1%** (a wrong angle scale moves it),
    **`R_eff` ±3%** (copper ~0.4 %/K), drag at 100 rad/s ±10% (J01 run-to-run 4%; a rubbing
-   magnet adds tens of %). Record INL and `T_delay`.
+   magnet adds tens of %). Record INL and `T_delay`. **ZEA residual ≤ 2° elec** (J01 0.78,
+   J03 0.63): a phase-2 PASS alone does not prove `zea` (FAILURE_MODES, jammed bearing).
 4. Paste **only `zea`, `dir` and `zea_enc`** from the phase-7 row. If the row's belt state differs
    from the plant, its drag must not be pasted at all.
 5. Reflash, `V` ≤ 8° elec. Then Step 6 on Tier 0 (UID already recorded): `encok=1 crc=0`, one

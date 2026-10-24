@@ -7,6 +7,15 @@ Detail and data live in the section docs; this file is the index of changes.
 
 ---
 
+## 2026-10-24 (bench + firmware) — J03 through the MT6835; fixed-time control delay
+
+- **J03** (belt off): `zea`/`dir` −1 / 0 → 1.0739 / +1; ZEA residual 0.63° elec; `R_eff` −0.11%,
+  `Ke` −0.06%, drag at 100 rad/s −1.4 / +0.9% vs row; INL 0.935° mech; T 95.6 / 98.5 µs.
+- A belt-on attempt first: PLA debris jammed a bearing; phase 2 passed 78° elec off, phase 5 stalled
+  at 6 A twice (FAILURE_MODES). Debris cleared; the belt-on value was discarded.
+- `T_DELAY_PER_LOOP` 0.958 (MT6816) → `T_DELAY_S` 91.5 ± 7.5 µs; sim latency range 84–93 → 84–99 µs.
+- New gate: phase 6 ZEA residual ≤ 2° elec (CALIBRATION §21, baseline sheet).
+
 ## 2026-10-19 (firmware + bench) — encoder read at 16 bits
 
 - `ENC_BITS` 14 → 16 (`f03cc74`): 1 count 0.0220° → 0.0055° at the motor, 1.465 → 0.366 µm of belt;

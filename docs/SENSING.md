@@ -53,9 +53,9 @@ after 0.35 ms / 2.8 ms / 67 ms / 15 s, and arming is refused from ~10⁻³ up.
 | Integrity check | 1-bit parity: ~50% of garbage passes | CRC-8: 0.39% passes |
 | Read time | 6.65 µs | 11.68 µs |
 | Harness loop rate, disarmed | 63.9 k/s | 47.3 k/s |
-| Commutation delay T | 71–76 µs at 12.9–13.4 kHz (0.958 × loop period) | 84–93 µs at 12.1–12.6 kHz |
+| Commutation delay T | 71–76 µs at 12.9–13.4 kHz (0.958 × loop period) | 84–99 µs at 12.1–12.6 kHz (J01 84–93, J03 96–99) |
 | Torque loss from T at 270 / 600 rad/s | 0.95% / 4.8% | 1.45% / 6.8% |
-| INL (J01) | 1.03° mech pk-pk | 0.85–0.90° |
+| INL | 1.03° mech pk-pk (J01) | J01 0.85–0.90°, J03 0.935° |
 | Link failure seen as | a noisy angle (parity passes half) | a stale angle, tripped in 4 reads |
 
 The MT6835's T did not drop when the loop sped up from 12.08 to 12.62 kHz (a per-loop delay predicts

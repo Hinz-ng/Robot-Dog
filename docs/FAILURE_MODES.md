@@ -47,6 +47,9 @@
 - Magnet slipping in its mount: escalating current at constant speed, then a stall that realignment
   "fixes". Keep the pen mark. A steel screw through a diametric magnet corrupts the field.
 - Magnet touching the package (zero gap): lost motion, a "bearing" whine, a 1/rev disturbance.
+- **Phase 2 PASS with a jammed bearing, 78° elec off:** PLA chips from tapping screws in a J03
+  bearing gave sd 3.6° (PASS), then a 6 A stall in phase 5 (2026-10-24). Phase 6's ZEA residual is
+  the check; blow out tapped holes before a motor goes near them.
 
 **Control / measurement**
 - **`motor.current` is not updated in voltage mode** (2.3.1 returns early). Iq/Id in TORQUE(V) and

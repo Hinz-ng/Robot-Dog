@@ -72,7 +72,7 @@ J02, same diagnostic: belt-off ~0.143 → no idlers 0.381 A, belt increment 0.23
 - **Alignment is friction-biased.** ZEA +2.88° elec with the posts, +0.15° without. Keep the
   belt-off ZEA; do not re-align belt-on.
 - **Phase 6 `T/T_loop` is belt-off only.** 0.958 → 1.042 → 1.291 as drag rises (≈ +0.57 per A).
-  `T_DELAY_PER_LOOP = 0.958` is the belt-off value and stays.
+  The fleet value is belt-off (`T_DELAY_S`, CONSTANTS §8).
 - **Belt-on `Ke` is never carried.** 0.017750 → 0.017952 → 0.018089 (+1.9%) tracking drag.
 - **Electrical constants are plant-independent:** `R_eff` −0.47%, `L` +2.1%, parity 0/4000.
 - Forward/reverse asymmetry with the posts: Coulomb 32.9%, viscous 167.5%; without them 0.3% /

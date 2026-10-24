@@ -85,7 +85,8 @@ passed this boot). `2` twitches; `5` spins both ways, so keep hands clear.
 | **`Ke`** | 0.018097 | ±1 %: 0.017916–0.018278 |
 | `L` | 46.25 µH | 41.6–50.9 µH; a phase-4 `drift` WARN alone does not void it (J01 bare motor: 11–33 mrad by rotor position, `L` unchanged) |
 | `drag_c` fwd / rev | 0.106 / 0.107 A | 0.075–0.139 A each |
-| `T_delay` (diagnostics) | 84–93 µs (J01, MT6835) | 80–95 µs |
+| ZEA residual (phase 6) | 0.63–0.80° elec (J01, J03) | ≤ 2° elec; a phase-2 PASS alone does not prove `zea` (a jammed bearing passed 78° off) |
+| `T_delay` (diagnostics) | 84–99 µs (J01, J03; MT6835) | 80–100 µs |
 
 **`Ke` is the M1 cross-check.** A miss with the banner off → redo M1. A small miss with M1 and the banner both confirmed → the reference is suspect, not the board (J03: −1.09 %, J02's scale carries a 0.32 % ambiguity). Store the new board's own `Ke` and note why.
 
