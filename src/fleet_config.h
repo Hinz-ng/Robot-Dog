@@ -96,21 +96,18 @@ static constexpr bool FLASH_PREFETCH = true;
 static constexpr float DEAD_ZONE = 0.005f;
 
 // ---------------------------------------------------------------------------
-// CONTROL TRANSPORT DELAY -- fleet, as a RATIO of the loop period
+// CONTROL TRANSPORT DELAY -- fleet, a FIXED TIME (MT6835)
 // ---------------------------------------------------------------------------
-// T_delay ~= one control-loop period, so it scales with 1/f_loop. Seven
-// parity-separation determinations, three assemblies, three loop rates:
-//     0.956 (16.77 kHz) | 0.953, 0.978 (12.91 kHz) | 0.945, 0.974 (13.35 kHz)
-//     | 0.937, 0.961 (J02, 13.35 kHz)  ->  mean 0.958, sd 0.015
-// The PWM period (40 us) is shorter than the loop period, so the loop period
-// dominates: loop rate buys transport delay one-for-one. BELT-OFF value (phase 6
-// is invalid belt-on). Torque loss at 270 rad/s and 13.3 kHz is 0.95%: no
-// angle compensation.
-static constexpr float T_DELAY_PER_LOOP    = 0.958f;   // n = 7
-static constexpr float T_DELAY_PER_LOOP_SD = 0.015f;
-static inline float tDelayAt(float f_loop_hz) {
-  return (f_loop_hz > 1.0f) ? (T_DELAY_PER_LOOP / f_loop_hz) : 0.0f;
-}
+// Phase-6 parity separation, belt off, MT6835 at 12.1-12.6 kHz:
+//     J01 84-93 us (three runs, 2026-10-13 / 10-19) | J03 95.6, 98.5 us (2026-10-24)
+// Flat when J01's loop went 12.08 -> 12.62 kHz (a per-loop delay predicts
+// -3.4 us): mostly fixed -- the chip's 10 us propagation plus the 11.6 us read.
+// The MT6816's per-loop form (0.958 x T_loop, n = 7) no longer applies.
+// BELT-OFF only: the estimate rises with drag (BELT_DRIVE §22.1). Diagnostic
+// use only (phase 6 comparison, current-loop ceiling print); torque loss from it
+// at 270 rad/s is 1.4-1.7%, so no angle compensation yet.
+static constexpr float T_DELAY_S      = 91.5e-6f;   // centre of 84-99 us
+static constexpr float T_DELAY_HALF_S = 7.5e-6f;    // half the observed range
 
 // ---------------------------------------------------------------------------
 // DRIVETRAIN -- frozen 2026-07-29 (ROBOT_DESIGN §17)

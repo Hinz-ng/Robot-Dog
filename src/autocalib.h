@@ -1116,9 +1116,8 @@ static void acP5() {
 // Forward-only data cannot separate the even terms from the odd one. The two
 // binned speeds give two independent T estimates; T must be speed-independent.
 //
-// T ~= ONE LOOP PERIOD (T/T_loop, fleet_config.h): loop rate buys transport
-// delay one-for-one, so T is reported with f_loop, and T/T_loop is the
-// transferable number.
+// On the MT6835 T is mostly a fixed time (T_DELAY_S, fleet_config.h). T/T_loop
+// is still printed with f_loop for comparison with the MT6816's per-loop data.
 // ===========================================================================
 static float acBinAngleDeg(uint8_t d, uint8_t s, uint8_t b) {
   if (ac_bin_n[d][s][b] == 0) return 0.0f;
@@ -1183,12 +1182,11 @@ static void acP6() {
     if (fl > 1.0f) {
       SerialUART.print(F(" T_loop=")); SerialUART.print(1e6f/fl, 1);
       SerialUART.print(F(" us  T/T_loop=")); SerialUART.print(ac_T[s]*fl, 3);
-      // T/T_loop is the transferable number; T in microseconds is only true at
-      // the loop rate it was taken at. Compare against the fleet constant so a
-      // drifting assembly shows up here rather than in a README table later.
-      SerialUART.print(F(" (fleet ")); SerialUART.print(T_DELAY_PER_LOOP, 3);
-      SerialUART.print(F("+-")); SerialUART.print(T_DELAY_PER_LOOP_SD, 3);
-      SerialUART.print(F(")"));
+      // Compare against the fleet constant so a drifting assembly shows up here
+      // rather than in a README table later.
+      SerialUART.print(F(" (fleet T ")); SerialUART.print(T_DELAY_S*1e6f, 1);
+      SerialUART.print(F("+-")); SerialUART.print(T_DELAY_HALF_S*1e6f, 1);
+      SerialUART.print(F(" us)"));
     }
     SerialUART.println();
   }
@@ -1393,7 +1391,9 @@ static void acP7() {
     SerialUART.print(F("  measured at f_loop=")); SerialUART.print(fl, 0);
     if (fl > 1.0f) {
       SerialUART.print(F(" -> T/T_loop=")); SerialUART.print(ac_T[AC_BIN_SPEEDS-1]*fl, 3);
-      SerialUART.println(F("  (expect ~0.95-0.98: T is ONE loop period)"));
+      SerialUART.print(F("  (fleet T ")); SerialUART.print(T_DELAY_S*1e6f, 1);
+      SerialUART.print(F("+-")); SerialUART.print(T_DELAY_HALF_S*1e6f, 1);
+      SerialUART.println(F(" us, belt off)"));
     } else SerialUART.println();
     SerialUART.print(F("  torque loss at 270 rad/s = "));
     SerialUART.print(100.0f*(1.0f - cosf((float)MOTOR_POLE_PAIRS*270.0f*ac_T[AC_BIN_SPEEDS-1])), 3);
@@ -1438,17 +1438,14 @@ static void acP7() {
     SerialUART.print(F("   for ")); SerialUART.print(AC_BW_HZ, 0);
     SerialUART.println(F(" Hz.  NOT APPLIED."));
     // Kp = L*w_bw, Ki = R*w_bw is an IDEAL-PLANT formula: it has no transport
-    // delay term, and this rig has a measured one of ~T_DELAY_PER_LOOP loop
-    // periods. A well-damped loop caps at roughly 1/(3T), and the configured
+    // delay term, and this rig has a measured one of ~T_DELAY_S. A well-damped
+    // loop caps at roughly 1/(3T), and the configured
     // gains were bench-tuned to 412 Hz at zeta = 0.60 -- already ~80% of that
     // ceiling. Raising Ki would eat phase margin the formula cannot see.
     // BENCH EVIDENCE OUTRANKS THE FORMULA. Treat this as a sanity check on
     // R and L, not as a recommendation.
     SerialUART.print(F("  delay ceiling ~1/(3T) = "));
-    float fl = ac_done[6] ? ac_T_floop[AC_BIN_SPEEDS-1] : 0.0f;
-    float Td = (fl > 1.0f) ? tDelayAt(fl) : 0.0f;
-    if (Td > 0.0f) { SerialUART.print(1.0f/(3.0f*Td), 0); SerialUART.print(F(" Hz")); }
-    else           { SerialUART.print(F("(run 6 for f_loop)")); }
+    SerialUART.print(1.0f/(3.0f*T_DELAY_S), 0); SerialUART.print(F(" Hz"));
     SerialUART.println(F("  -- not in the formula above. Do NOT paste these gains."));
   }
 
