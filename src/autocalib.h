@@ -170,6 +170,12 @@ const float    AC_W_V[AC_W_N] = { 0.50f, 0.90f, 1.30f, 1.70f, 2.00f };
 const uint16_t AC_W_SETTLE_MS = 3000;
 const uint16_t AC_W_MEAS_MS   = 1000;     // ~15 k samples, ~17 revolutions
 const float    AC_W_VLIMIT    = 2.60f;    // raised so 2.00 V is not clamped
+// First-point sanity floor: |vel| at AC_W_V[0] as a fraction of the no-load
+// speed (U - U0)/Ke. Below half, R*Iq has eaten half the voltage: ~1 A of drag
+// at 0.5 V, against 0.12 A bare and ~0.4 A belt-on (J01). Nameplate Ke, so it
+// works on a joint with no row yet (measured Ke is within ~1.2% of it).
+const float    AC_W_FIRST_MIN_FRAC = 0.50f;
+const float    AC_KE_NOMINAL  = 60.0f / (_2PI * MOTOR_KV_NAMEPLATE) / KT_PER_KE;
 const float    AC_KE_RMS_FAIL = 0.015f;   // V
 const float    AC_KE_RSE_FAIL = 0.02f;
 const float    AC_KE_C_WARN   = 0.030f;   // |intercept| -> R or U0 is off
@@ -1021,6 +1027,22 @@ static void acP5() {
       SerialUART.print(F(" Id=")); SerialUART.print(mId, 4);
       SerialUART.print(F(" ratio=")); SerialUART.print(mR, 3);
       SerialUART.print(F(" n=")); SerialUART.println(n);
+
+      // FIRST-POINT SANITY, per direction, before stepping up. A jammed bearing,
+      // a ZEA tens of degrees off or a blocked output all show here as a slow (or
+      // reversed) first point, at the lowest-energy step. Without it J03
+      // (2026-10-24, debris in a bearing, ZEA 78 deg elec off) ran 7.9 of
+      // ~27 rad/s at 0.5 V, then stalled at 4-6 A into its belt at 0.9 and 1.3 V.
+      if (k == 0) {
+        const float v_nl = (AC_W_V[0] - ac_U0) / AC_KE_NOMINAL;
+        if (mV * sgn < AC_W_FIRST_MIN_FRAC * v_nl) {
+          ac_abort = true;  ac_guard = true;
+          SerialUART.print(F("\n  !! ABORT first point: vel ")); SerialUART.print(mV * sgn, 1);
+          SerialUART.print(F(" rad/s < ")); SerialUART.print(AC_W_FIRST_MIN_FRAC * v_nl, 1);
+          SerialUART.println(F(" (half of no-load). Jam, wrong ZEA or blocked output:"));
+          SerialUART.println(F("     hand-turn the output both ways, then 'V'."));
+        }
+      }
     }
     if (!ac_abort) acRampTarget(0.0f);
     motor.disable(); running = false;
