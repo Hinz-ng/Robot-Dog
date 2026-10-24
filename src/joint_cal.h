@@ -133,8 +133,13 @@ const JointCal JOINTS[] = {
   { "J02", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
   // -- J03 -- board_3 (new) + motor_2 (J02's motor). Bare motor, belt off.
-  //    ENCODER: MT6835 fitted (recorded 2026-10-13); zea/dir NOT MEASURED through
-  //    it yet -- AUTOCALIB. R_eff, U0, Ke, L from AUTOCALIB 2026-10-08 (banner
+  //    ENCODER: MT6835 (recorded 2026-10-13). zea/dir: AUTOCALIB phase 2
+  //    2026-10-24, BELT ON (alignment is friction-biased; J01's belt-on vs
+  //    belt-off ZEA differed 0.62 deg elec), n = 7, sd 3.57 deg elec, SE 1.69.
+  //    Only zea/dir/zea_enc were taken from that run. Its phase 3 read R 0.21408,
+  //    -7.2% on R_eff below, within 0.9% of the M2 self-fit R (which corrects
+  //    for supply sag): R_eff below is not edited by an encoder change.
+  //    R_eff, U0, Ke, L from AUTOCALIB 2026-10-08 (banner
   //    11.98 V vs UT89X 11.97 V; R_eff +-0.75%).
   //    vbus_scale: M1 on the SEED path, meter at the pads, 12.02 / 22.70 V; the
   //    two single-point ratios agree to 0.005%. Do not derive M1 from the DMA
@@ -145,13 +150,13 @@ const JointCal JOINTS[] = {
   //    M4 2026-10-10: 0.2545 A, n = 10, sd 0.078, fwd 0.243 / rev 0.266.
   //    Raw: docs/cal/J03/.
   { "J03", "board_3", "motor_2", "2026-10-08", "OFF",
-     -1.0f, 0, 0.23068f,           // zea, dir (MT6835: not measured), R_eff
+     2.4326f, +1, 0.23068f,        // zea, dir (MT6835, 2026-10-24, belt on), R_eff
      0.01919f,                     // U0
      0.017900f, 45.75e-6f,         // Ke, L   (Kt = calKt() = 0.026850)
      0.008357f, 0.9797f,           // vbus_scale (M1 2026-10-08), i_scale (M2 2026-10-09, PROVISIONAL)
      0.0935f, 0.1058f,             // drag_c fwd, rev   (reported A, belt OFF, bare motor)
      0.001143f, 0.000713f,         // drag_v fwd, rev
-     0.2545f, 0 },                 // breakaway_A  (M4 2026-10-10, bare motor); zea_enc
+     0.2545f, ENC_MT6835 },        // breakaway_A  (M4 2026-10-10, bare motor); zea_enc
   // -- J04 .. J12 -- NOT BUILT. Every measurable field 0.0f = not measured;
   //    zea -1 / dir 0 force a full alignment; i_scale 1.0 is its inert value.
   //    New joint: docs/cal/BELT_OFF_BASELINE.md (M1, AUTOCALIB, paste, M2, M4).
