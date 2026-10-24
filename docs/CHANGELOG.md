@@ -15,6 +15,10 @@ Detail and data live in the section docs; this file is the index of changes.
   at 6 A twice (FAILURE_MODES). Debris cleared; the belt-on value was discarded.
 - `T_DELAY_PER_LOOP` 0.958 (MT6816) → `T_DELAY_S` 91.5 ± 7.5 µs; sim latency range 84–93 → 84–99 µs.
 - New gate: phase 6 ZEA residual ≤ 2° elec (CALIBRATION §21, baseline sheet).
+- **J03 accepted:** `V` 2.73° elec; Tier 0 `cal=1`, `encok=1 crc=0`, `lps` 40.4–40.7 k, one CW turn
+  −0.6984 rad. README ENC row reduced to the J01 link check.
+- **J01 encoder refitted** (magnet gap matched to J03): `E` 0 CRC errors in 1.2 M reads, full turn
+  `span=65535`; `V` 2.42° elec, so `zea` 5.9879 stands.
 
 ## 2026-10-19 (firmware + bench) — encoder read at 16 bits
 
