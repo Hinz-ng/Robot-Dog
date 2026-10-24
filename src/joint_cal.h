@@ -134,11 +134,14 @@ const JointCal JOINTS[] = {
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
   // -- J03 -- board_3 (new) + motor_2 (J02's motor). Bare motor, belt off.
   //    ENCODER: MT6835 (recorded 2026-10-13). zea/dir: AUTOCALIB phase 2
-  //    2026-10-24, BELT ON (alignment is friction-biased; J01's belt-on vs
-  //    belt-off ZEA differed 0.62 deg elec), n = 7, sd 3.57 deg elec, SE 1.69.
-  //    Only zea/dir/zea_enc were taken from that run. Its phase 3 read R 0.21408,
-  //    -7.2% on R_eff below, within 0.9% of the M2 self-fit R (which corrects
-  //    for supply sag): R_eff below is not edited by an encoder change.
+  //    2026-10-24, belt off, n = 7, sd 2.31 deg elec; phase 6 ZEA residual
+  //    0.634 deg elec. Only zea/dir/zea_enc were taken from that run. Same run,
+  //    against this row: R 0.23042 (-0.11%), Ke 0.017889 (-0.06%), drag at
+  //    100 rad/s fwd -1.4% / rev +0.9%, L 43.3 uH; INL 0.935 deg mech; T 95.6 /
+  //    98.5 us at 12.55 kHz.
+  //    An earlier belt-on run that day had PLA debris jamming a bearing: phase 2
+  //    PASSED at sd 3.57 deg elec but was 77.8 deg elec off, phase 3 read R
+  //    -7.2%, and phase 5 stalled. Debris cleared, the bearing re-tested above.
   //    R_eff, U0, Ke, L from AUTOCALIB 2026-10-08 (banner
   //    11.98 V vs UT89X 11.97 V; R_eff +-0.75%).
   //    vbus_scale: M1 on the SEED path, meter at the pads, 12.02 / 22.70 V; the
@@ -150,7 +153,7 @@ const JointCal JOINTS[] = {
   //    M4 2026-10-10: 0.2545 A, n = 10, sd 0.078, fwd 0.243 / rev 0.266.
   //    Raw: docs/cal/J03/.
   { "J03", "board_3", "motor_2", "2026-10-08", "OFF",
-     2.4326f, +1, 0.23068f,        // zea, dir (MT6835, 2026-10-24, belt on), R_eff
+     1.0739f, +1, 0.23068f,        // zea, dir (MT6835, 2026-10-24, belt off), R_eff
      0.01919f,                     // U0
      0.017900f, 45.75e-6f,         // Ke, L   (Kt = calKt() = 0.026850)
      0.008357f, 0.9797f,           // vbus_scale (M1 2026-10-08), i_scale (M2 2026-10-09, PROVISIONAL)
