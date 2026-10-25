@@ -19,13 +19,13 @@ Plant for B1–B8: belt fitted, idlers per §22.2, output pulley bare, leg links
 
 | # | Step | Procedure | Gate | J01 result |
 |---|---|---|---|---|
-| **B0** | Fit belt | Idlers per §22.2, belt per §22.3, C = 44.5 mm. Then run the idler acceptance test (§22.2) | rollers coast ≥ 1 s, no axial walk | done |
+| **B0** | Fit belt | Idler acceptance (§22.2) before the belt goes on, then belt per §22.3, C = 44.5 mm | belt off: rollers coast ≥ 1 s · belt on: pen mark rotates in phase 5, no axial walk | done |
 | **B1** | Alignment | `V` | ≤ 8° elec from stored ZEA | 0.62° (recipe B) |
 | **B2** | Electrical tripwire | `1` then `3` (phases 1 and 3 only; phase 4 ratchets belt-on, §22.6.6) | `R_eff` within ~2% of stored | 0.22404 Ω (+0.26%) |
 | **B3** | Belt drag | Phase 5, then again with direction order swapped (`-` then `5`). Store each direction **pooled over both orders** | `drag_c` 0.30–0.40 A (J01 band; restate per joint). Belt-on `Ke` is never carried | 0.3169 / 0.3330 A (§22.6.6) |
-| **B4** | Breakaway | `B`/`b`, output **free**, 10 positions × 2 directions. Between presses rotate by hand and **let the rotor settle into a detent** (a rotor left mid-creep reads far low in the opposite direction). For A/B comparisons use the **same raw positions** as the reference session and compare pairwise (position sd ≈ 0.095 A). Compare breakaway with breakaway, never with `drag_c` | each reading: no `NO MOTION` (0.80 A), `travel` ≤ 200 counts (76.7 mrad at the motor), ≤ 0.60 A | 0.295 A, n = 20 (§22.6.4) |
+| **B4** | Breakaway | `B`/`b`, output **free**, 10 positions × 2 directions. Between presses rotate by hand and **let the rotor settle into a detent** (a rotor left mid-creep reads far low in the opposite direction). For A/B comparisons use the **same raw positions** as the reference session and compare pairwise (position sd ≈ 0.095 A). Compare breakaway with breakaway, never with `drag_c` | each reading: no `NO MOTION` (0.80 A), `travel` ≤ 76.7 mrad at the motor, ≤ 0.60 A | 0.295 A, n = 20 (§22.6.4) |
 | **B5** | INL | Phases 5 + 6. Read INL only; phase 6's `T/T_loop` is invalid belt-on | 1/rev, 2/rev vs belt-off | 1/rev −3.3%, even-part r = 0.9986 (2026-08-12) |
-| **B6a** | Backlash | Key `w` (swing ladder), output clamped (2 × M3×10 countersunk into the top plate, perpendicular). Readout and rules: §22.4.4 | friction-corrected G ≤ 29 µm of belt (20 counts) pass · 29–59 µm marginal · > 59 µm slack | G = 8.5 µm (5.8 counts) (§22.6.3) |
+| **B6a** | Backlash | Key `w` (swing ladder), output clamped (2 × M3×10 countersunk into the top plate, perpendicular). Readout and rules: §22.4.4 | friction-corrected G ≤ 29 µm of belt pass · 29–59 µm marginal · > 59 µm slack | G = 8.5 µm (5.8 counts) (§22.6.3) |
 | **B6b** | Belt stiffness (ring) | Output clamped. `t` → `g` → `k` (+ step) or `K` (− step) → wait for `CAPTURE done` → `x` → `d`. **4 × `k` + 4 × `K`.** Fit f_d from `cnt` vs `t_us` (cycle count or damped sine), f_n = f_d/√(1−ζ²). Record the boot each burst came from (boot-to-boot scatter ~8× within-boot) and the ring amplitude (f depends on it, §22.3) | no band; fleet use is the J01-vs-J02 comparison below | f_d 65.0 Hz, f_n 69.8 Hz (§22.6.5) |
 | **B7** | J_total | Output bare and **unclamped**. `t` → `g` → `k` → 1 s → `x` → `d`. J01 only (fleet quantity) | predicted 20.5–22 × 10⁻⁶ kg·m²; friction is 40–60% of the impulse, so ±20% | — |
 | **B8** | Hot vs cold `R_eff` | Phase 3 cold → load hard 60 s → phase 3 | ΔR/R > 15% = peak force sags mid-jump | — |
@@ -97,9 +97,11 @@ IDLER, per side (x2):
   Flanges      none. The idler does not track the belt; the output pulley does
 ```
 
-**Acceptance (part of B0):** flick each roller — it must coast ≥ 1 s (if not, clamp load is
-reaching an outer race). Pen-mark it, run phase 5: the mark rotated and the roller has not
-walked axially.
+**Acceptance (part of B0):**
+
+1. Belt off: flick each roller — it must coast ≥ 1 s (if not, clamp load is reaching an outer race).
+2. Belt on (the belt holds the roller; it does not coast): pen-mark it, run phase 5 — the mark
+   rotated and the roller has not walked axially.
 
 Measured effect: sliding brass posts 0.385 A → rolling bearing idlers **0.048 A** (J02, §22.4.8).
 
