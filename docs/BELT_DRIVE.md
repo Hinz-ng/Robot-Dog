@@ -34,6 +34,11 @@ Plant for B1–B8: belt fitted, idlers per §22.2, output pulley bare, leg links
 | **B12** | MIT impedance law | §22.7 | — | **CLOSED** 2026-10-03 |
 | **B13** | Next joint | M1 → AUTOCALIB → M2 → M4 → B0–B6b | — | — |
 
+**Long-shaft output pulley (extra output bearing; J01 from 2026-10-25).** The B3/B4 bands above and
+in the B11 rows are short-shaft values and are not carried over; no long-shaft band is set yet. First
+long-shaft set: `docs/cal/J01/J01_2026-10-25_belt-on baseline (long-shaft pulley).txt`. B6a friction
+correction on this plant: §22.4.4.
+
 Then: leg links on, M14 force-per-amp (load cell), Jacobian characterisation.
 
 The contact offset ~12 mm below the foot pin must appear identically in the IK, the sim model
@@ -321,6 +326,8 @@ raw intercept = G - s*I_f   ->   always friction-correct: G = intercept + slope*
 - G = intercept + slope × I_f per ladder; report mean and spread when > 1 ladder.
 - **Single-ladder noise ±10 µm** (±7 counts), so a G within ~10 µm of the 29 µm gate is not a clear pass or fail.
 - I_f = this plant's B4 mean (`B`/`b`). State the value used. Compare joints only at matched I_f.
+- Long-shaft pulley: its extra bearing is clamped during the ladder, but it adds to the B4 mean, so
+  I_f = B4 mean overstates G. Report G at the B4 mean and at the short-shaft I_f (0.295 A), both.
 - Discard ladders run while the intercept was still climbing (new pulley bedding in).
 - Residuals are convex: the drive softens with load; linear fits are conveniences.
 
