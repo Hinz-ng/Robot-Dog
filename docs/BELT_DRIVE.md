@@ -34,10 +34,10 @@ Plant for B1–B8: belt fitted, idlers per §22.2, output pulley bare, leg links
 | **B12** | MIT impedance law | §22.7 | — | **CLOSED** 2026-10-03 |
 | **B13** | Next joint | M1 → AUTOCALIB → M2 → M4 → B0–B6b | — | — |
 
-**Long-shaft output pulley (extra output bearing; J01 from 2026-10-25).** The B3/B4 bands above and
-in the B11 rows are short-shaft values and are not carried over; no long-shaft band is set yet. First
-long-shaft set: `docs/cal/J01/J01_2026-10-25_belt-on baseline (long-shaft pulley).txt`. B6a friction
-correction on this plant: §22.4.4.
+**Long-shaft output pulley (J01; 2 output bearings since 2026-10-28).** The B3/B4 bands above are
+short-shaft values and are not carried over; no long-shaft band is set yet. J01 set:
+`docs/cal/J01/J01_2026-10-28_belt-on baseline (long-shaft pulley, 2 bearings).txt`; values in the
+J01 B11 row. B6a on this plant: §22.4.4.
 
 Then: leg links on, M14 force-per-amp (load cell), Jacobian characterisation.
 
@@ -326,8 +326,9 @@ raw intercept = G - s*I_f   ->   always friction-correct: G = intercept + slope*
 - G = intercept + slope × I_f per ladder; report mean and spread when > 1 ladder.
 - **Single-ladder noise ±10 µm** (±7 counts), so a G within ~10 µm of the 29 µm gate is not a clear pass or fail.
 - I_f = this plant's B4 mean (`B`/`b`). State the value used. Compare joints only at matched I_f.
-- Long-shaft pulley: its extra bearing is clamped during the ladder, but it adds to the B4 mean, so
-  I_f = B4 mean overstates G. Report G at the B4 mean and at the short-shaft I_f (0.295 A), both.
+- Long-shaft pulley (J01): G is not readable. At 277 µm/A, ±0.1 A of I_f moves G ±28 µm, and the
+  I_f acting in the ladder (motor side; output clamped) is not measured. Record intercept and slope
+  only; D17 decides (§22.8).
 - Discard ladders run while the intercept was still climbing (new pulley bedding in).
 - Residuals are convex: the drive softens with load; linear fits are conveniences.
 
@@ -854,7 +855,7 @@ Every ring decays, no buzz, clamp 0. ζ rises at every kd rung. Belt secant K = 
 | D14 | Stepped vs ramped loading, no-idler ratchet | Only if the no-idler swing is used as a QC step again |
 | D15 | B6b J01-vs-J02 15% comparison (4 + 4 in `t` mode, plus B4) | When J02 has a working board and recipe-B pulley |
 | D16 | Cogging vs position-dependent preload in B4's ±0.18 A | If the sim friction model needs the ripple's period/phase (dense angle sweep) |
-| D17 | Control-side backlash tolerance test (kp steps in position hold, watch for limit cycle, ~10 min) | If any fleet joint fails G ≤ 29 µm (20 counts) |
+| D17 | Control-side backlash tolerance test (kp steps in position hold, watch for limit cycle, ~10 min) | If any fleet joint fails G ≤ 29 µm (20 counts). J01 (G unreadable): first block of the hanging leg; pass = no oscillation ≥ 1 mrad p-p at the output lasting > 1 s at any kp step up to 41 |
 | D18 | Drag run-order effect (+0.10–0.13 A second direction) | If a drag feed-forward needs better than ±20%. Test: one direction twice with a rest vs back-to-back |
 | O1/O2 | Roll-back at zero torque; friction vs output angle | When a friction feed-forward is proposed, or rest errors exceed bounds |
 | — | Flash wait states 8 → 4 (§22.7.7) | Tier-0 loop with CAN measured below its need, or a loop-rate gap fails a gate |

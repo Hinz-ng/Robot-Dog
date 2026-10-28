@@ -49,9 +49,9 @@ bring-up (§23) · N0–N6 CAN-T0 ladder · D/O deferred items and observations 
 **Binding milestone:** MIT contract over CAN on two joints (CAN-T0), then the leg.
 **Now:** J01 fully characterised belt-on (B12 closed 2026-10-03), belt off since 2026-10-10 (bare
 motor); CAN-T0 N0–N4 closed on J01 (2026-10-10); J01 and J03 on the MT6835 at 16 bits (J03 accepted
-2026-10-24). Final assembly done; J01 belt-on baselines B1–B6b taken 2026-10-25 on the
-long-shaft output pulley (extra bearing; no long-shaft band set, BELT_DRIVE §22). **Next: J03
-baselines, B11 rows for both, then N5/N6.**
+2026-10-24). Final assembly done; J01 belt-on baseline and B11 row 2026-10-28 on the
+long-shaft output pulley, 2 output bearings (BELT_DRIVE §22; G unreadable there, D17 at the hanging
+leg). **Next: J03 baselines on the short-shaft pulley, J03 B11 row, then N5/N6.**
 
 ### Closed
 
