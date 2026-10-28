@@ -93,7 +93,8 @@ static inline float calKt(const JointCal& c) { return c.Ke * KT_PER_KE; }
 const JointCal JOINTS[] = {
 
   // -- J01 -- B-SPI-01 / M-SPI-01, the reference actuator. BELT-ON row (B11),
-  //    pulley recipe B, 2026-09-30 (BELT_DRIVE §22.6). -e J01 flashes this.
+  //    long-shaft output pulley, 2 output bearings, 2026-10-28 (BELT_DRIVE §22).
+  //    -e J01 flashes this. Raw: docs/cal/J01/J01_2026-10-28_*.
   //    The belt-off baseline is the LAST row of the table (index 13).
   //    ENCODER: MT6835 since 2026-10-12. zea/dir: AUTOCALIB phase 2 2026-10-13,
   //    belt off, n = 7, sd 2.04 deg elec. Only zea/dir/zea_enc were taken from
@@ -103,27 +104,30 @@ const JointCal JOINTS[] = {
   //    Belt-on Ke is drag-contaminated and never carried. Phase 3 R reads a
   //    different chord of the same curved R (0.22404 2026-09-30, 0.22612
   //    2026-10-13) -- not a reason to edit.
-  //    DRAG (B3): phase 5 in both orders; each direction pooled over orders,
-  //    because the direction run second reads 0.10-0.13 A higher:
-  //        fwd first   fwd 0.2265 + 0.004009*|w|   rev 0.3576 + 0.002597*|w|
-  //        rev first   rev 0.3084 + 0.002730*|w|   fwd 0.4072 + 0.002466*|w|
-  //    BREAKAWAY (B4): 10 positions x 2 dirs, mean 0.295 A, SEM 0.027, range
-  //    0.080-0.475 (one reading over the 200-count creep flag; 0.286 without it).
-  //    Not fields: backlash G 5.8 counts; k 67.2 kN/m true at its clamp; ring
-  //    f_d 65.0 Hz.
+  //    DRAG (B3): phase 5 x9 (5 fwd-first, 4 rev-first); each direction is the
+  //    mean of the two order-group means. Intercept and slope trade off run to
+  //    run (intercept sd 0.032/0.038 A); at 60 rad/s the sd is 0.016/0.022 A:
+  //        fwd 0.494 / 0.676 / 0.858 A   rev 0.514 / 0.649 / 0.784 A  at 20/60/100 rad/s
+  //    The direction run second reads +0.013/+0.016 A at 60 rad/s (was 0.10-0.13).
+  //    BREAKAWAY (B4): mean of 5 position pairs, each the mean of its + and -
+  //    readings (repeated creep-flagged readings kept; position 1 = the redo
+  //    pair). SEM 0.045, pair range 0.280-0.528. Readings 0.160-0.660 A.
+  //    Not fields: ladder intercept -28.7 um, slope 277 um/A (k 53 kN/m), G not
+  //    readable on this plant (BELT_DRIVE §22.4.4); ring, reverse kicks, f_d 74.1 Hz,
+  //    zeta 0.28. R_eff 0.22395 (+0.22%) and V 1.11 deg elec on this plant.
   //    Belt-off diagnostics, MT6835, two runs 2026-10-13: INL 0.845 / 0.868 deg
   //    mech pk-pk; ZEA residual 0.780 / 0.802 deg elec; Ke 0.018025 / 0.017988
   //    (+0.47 / +0.26% vs row: scale check). Delay T 84-90 us, flat when the loop
   //    went 12.08 -> 12.62 kHz (T/T_loop 1.02-1.14): a fixed delay, not per-loop.
   //    M2 fit: P_bus = 0.8027 + 0.0348*I + 0.34816*I^2;  U_del = 0.01350 + 0.22332*I.
-  { "J01", "B-SPI-01", "M-SPI-01", "2026-09-30", "10mm-9:1",
+  { "J01", "B-SPI-01", "M-SPI-01", "2026-10-28", "10mm-9:1",
      5.9879f, +1, 0.22346f,        // zea, dir (MT6835, 2026-10-13); R_eff CARRIED
      0.01037f,                     // U0                   CARRIED
      0.017941f, 43.77e-6f,         // Ke, L                CARRIED -- belt-on Ke never
      0.008448f, 0.9621f,           // vbus_scale, i_scale  CARRIED
-     0.3169f, 0.3330f,             // drag_c fwd, rev      RECIPE B, B3 pooled over both orders
-     3.24e-3f, 2.66e-3f,           // drag_v fwd, rev      RECIPE B, B3 pooled over both orders
-     0.295f, ENC_MT6835 },         // breakaway_A          RECIPE B, B4 n=20 (reported A); zea_enc
+     0.4017f, 0.4449f,             // drag_c fwd, rev      LONG SHAFT, B3 pooled over both orders
+     4.59e-3f, 3.39e-3f,           // drag_v fwd, rev      LONG SHAFT, B3 pooled over both orders
+     0.427f, ENC_MT6835 },         // breakaway_A          LONG SHAFT, B4 5 pairs (reported A); zea_enc
 
   // -- J02 -- RETIRED 2026-10-13, now an unbuilt row: the B-ABZ-01 ESC board
   //    failed after P8, its motor is J03's motor_2, and its MT6816 board died.
