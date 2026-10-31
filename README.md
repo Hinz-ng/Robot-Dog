@@ -58,7 +58,8 @@ boards are clones, and they disagree with their documentation more often than yo
 
 | Doc | What's in it |
 |---|---|
-| [Engineering hub](docs/README.md) | live status board and an index of everything below |
+| [Technical reference](docs/TECHNICAL_REFERENCE.md) | index of engineering references and procedures |
+| [Working memory](docs/WORKING_MEMORY.md) | active work, assembly state, blockers and deferred gates |
 | [Hardware](docs/HARDWARE.md) | parts, clone vs genuine board differences, pin map, thermal limits |
 | [Constants](docs/CONSTANTS.md) | every measured number in one table |
 | [Firmware](docs/FIRMWARE.md) | the joint command contract and how a bench session runs |

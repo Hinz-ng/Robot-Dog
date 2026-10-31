@@ -1,11 +1,17 @@
 # Belt-off joint baseline: command sheet
 
+*Router: [TECHNICAL_REFERENCE.md](../TECHNICAL_REFERENCE.md). Applicability and gate conflicts:
+[WORKING_MEMORY §24](../WORKING_MEMORY.md#24-unresolved-documentation-decisions).*
+
 Produces a joint's `joint_cal.h` row, its Tier-0 board ID, and raw records in `docs/cal/Jnn/`. About 1.5 h.
 **Plant:** bare motor, clamped by its body, belt off, not in the plate.
-**Firmware:** bench harness `-e Jnn`, plus one Tier-0 boot at the end.
+**Firmware:** MT6835 / 16-bit build, bench harness `-e Jnn`, plus one Tier-0 boot at the end.
+Source reference: can-t0 `21cec6c`; main in this checkout is legacy and must not be flashed for this procedure.
 Written with J03's numbers; for another joint, swap the number and use its motor's reference row.
 
-**Board numbers are stored** (`vbus_scale`, `i_scale`, `R_eff`, `U0`, `zea`/`dir`). **Motor numbers are gates** against the motor's existing row (`Ke`, `L`, drag, breakaway).
+Store accepted board/pairing calibration and motor estimates per row; compare motor Ke/L
+against its own reference. Drag and breakaway belong to the assembly. ZEA/direction must be
+measured through MT6835 with matching `zea_enc`; old MT6816 alignment never carries.
 
 ## Setup
 
@@ -50,14 +56,16 @@ Back to ~12 V for the rest.
 
 ## Step 2: encoder (2 min)
 
-Press `e`: parity **0/20000**, `no_mag` **0**. Then `E` and **turn one full revolution**: `perr=0`, and some window shows `span=16383`. (`HIT` flags are expected while turning.)
+Press `e`: require `ENC PASS`, zero CRC failures and clean sensor status. Then `E` and turn
+one full revolution: raw angle must move and wrap in the configured 0–65535 range; no CRC,
+weak-field, undervoltage or overspeed errors. Do not demand a sampled span of exactly 65535.
 
-> ⚠ **`e` alone is not a pass.** A chip that never drives MISO returns all-zero frames, which pass parity and `no_mag` while `raw` sits at 0 (J03, 2026-10-08).
+If raw is stuck: power down, check PB5→CSN, PB6→MOSI, PB7→MISO, PB8→SCK and common ground;
+check the MT6835 board's supply/wiring against its pin labels, then repeat. Do not use the
+legacy MT6816 HVPP check. If wiring/power are correct and reads remain stuck, test a known-good
+sensor board. A clean stationary frame alone cannot prove that angle sensing works.
 
-**If `raw` is stuck:**
-1. Power on, firmware running: VDD and HVPP **3.3 V**, CSN **≈1.85 V**, SCK **≈2.5–3.0 V**. Those two are meter averages of lines that toggle every loop; flat 0 or 3.3 V = not toggling.
-2. Power off: continuity PB5→CSN, `HA/A`→MOSI, `HB/B`→MISO, `HC/Z`→SCK, and MISO not shorted to GND.
-3. All fine → **swap the encoder board.** J03's original had a dead MISO output.
+
 
 ## Step 3: AUTOCALIB (10 min)
 
@@ -73,7 +81,7 @@ Press **`Y 1 2 3 4 5 6 7`**, one at a time, waiting for each result line. `2` tw
 | **`Ke`** | 0.018097 | ±1 %: 0.017916–0.018278 |
 | `L` | 46.25 µH | 41.6–50.9 µH |
 | `drag_c` fwd / rev | 0.106 / 0.107 A | 0.075–0.139 A each |
-| `T/T_loop` | 0.958 | 0.913–1.003 |
+| MT6835 phase-6 delay | 91.5 µs; recorded range 84–99 µs | diagnostic comparison, not a transferred MT6816 ratio gate |
 
 **`Ke` is the M1 cross-check.** A miss with the banner off → redo M1. A small miss with M1 and the banner both confirmed → the reference is suspect, not the board (J03: −1.09 %, J02's scale carries a 0.32 % ambiguity). Store the new board's own `Ke` and note why.
 
@@ -98,7 +106,7 @@ Wire this **before powering up**, and leave it in place for all of Step 4. The c
 
 **Reading:** Ibus falls point by point, **~337 → ~81 mA** (§20.1 burden column). At each point let the reading settle, then write **Ibus to 0.1 mA** (e.g. `336.8`) and **Vbus** (pads) beside that point's `M2,` line, then press any key. The firmware auto-advances after 12 s, so read within that window.
 
-1. Gate: banner vs meter **±0.03 V**, else reboot. With the ammeter in, the pads sit ~0.06 V under the banner at idle (J03: 11.80 vs 11.86), because boot draws less current; that is expected. If in doubt, check without the ammeter first. Write the idle Ibus and whether the ST-LINK USB is plugged (unplugged adds 4.8 mA; HARDWARE §16a).
+1. Verify the voltage scale **without the series ammeter**, banner vs pads **±0.03 V**, else reboot/recheck. Power down before inserting the ammeter, reboot, and record this boot's seed. Under load use measured pad voltage in both fit equations (CALIBRATION M2); never subtract burden again. The historical ~0.06 V idle drop with the ammeter is a load/burden effect, not a wider scale gate. Record idle Ibus and ST-LINK USB state.
 2. `1`, `2`, `3` → **cold `R_eff`**.
 3. `N`: at each of 8 points, record **Vbus** and **Ibus to 0.1 mA**, then any key (auto-advances at 12 s).
 4. `3` again at once → **hot `R_eff`**.
@@ -109,8 +117,8 @@ Wire this **before powering up**, and leave it in place for all of Step 4. The c
 | `I_reported` vs the §20.1 table | ±3 % (J01's supply; J03's softer pack read −5 % at pt 8, not a failure if `drift=` holds) |
 | Ibus span, pt 1 → 8 | 230–280 mA |
 | hot vs cold `R_eff` | ≤ 2 % |
-| `drift=` | within ±3 cnt (encoder jitter; J01 1, J02 3, J03 2 accepted). Creep shows as tens |
-| `g` | 0.95–0.98 (J01 0.9621, J02 0.9690) |
+| `drift=` | within ±1.15 mrad motor (legacy ±3 counts; ±12 at 16-bit). Confirm firmware gate agrees |
+| `g` | positive, valid fit with quantified uncertainty; CALIBRATION M2 governs acceptance, no fixed 0.95–0.98 band |
 
 ## Step 5: M4, breakaway → `breakaway_A` (10 min)
 
@@ -122,7 +130,7 @@ Static breakaway (~0.3 A), not phase-5 dynamic drag (~0.1 A). References, motor-
 
 | Gate | Pass |
 |---|---|
-| each reading | no `NO MOTION` (0.80 A); `travel` ≤ 200 (else redo it); ≤ 0.60 A |
+| each reading | no `NO MOTION` (0.80 A); `travel` ≤ 76.7 mrad motor (legacy 200 counts; 800 at 16-bit; else redo it); ≤ 0.60 A |
 | **mean of 10** | **0.20–0.40 A** |
 | sd | ≤ 0.12 A |
 
@@ -143,11 +151,11 @@ Store the mean (with n, sd and date) as `breakaway_A`. Save the 10 `M4,` rows as
 | | Measured | Pass |
 |---|---|---|
 | Vm1 / Vb1 / Vm2 / Vb2 → `vbus_scale` | | ratios ≤ 0.3 %, banner ±0.03 V |
-| encoder parity / no_mag / full sweep | | 0 / 0 / yes |
+| encoder CRC / status / full sweep | | clean / clean / yes, configured 16-bit |
 | R_eff · U0 · **Ke** · L | | see Step 3 |
 | drag_c fwd / rev · T/T_loop | | see Step 3 |
 | `V` | | ≤ 8° elec |
-| M2: cold/hot R · Ibus span · **g ±** | | ≤ 2 % · 230–280 mA · 0.95–0.98 |
+| M2: cold/hot R · Ibus span · **g ±** | | ≤ 2 % · 230–280 mA · valid g with uncertainty |
 | M4: mean / sd (n = 10) | | 0.20–0.40 / ≤ 0.12 A |
 | cs gains · UID row | | −36.458333 ×3 · recorded |
 

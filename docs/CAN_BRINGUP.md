@@ -4,7 +4,7 @@ Classic CAN at 1 Mbit/s, ESP32-S3 master ↔ ESC1 clones. The ladder is complete
 robustness tests A, C, D passed 2026-08-13 → 15). This file holds the measured facts, the Tier-0
 init checklist, and the deferred 12-board termination rework.
 
-*Hub: [`README.md`](README.md). Sketches: [`tools/can_bringup/`](../tools/can_bringup/).*
+*Hub: [`TECHNICAL_REFERENCE.md`](TECHNICAL_REFERENCE.md). Sketches: [`tools/can_bringup/`](../tools/can_bringup/).*
 
 ---
 
@@ -18,7 +18,6 @@ init checklist, and the deferred 12-board termination rework.
 | S1c | ESC1 FDCAN loopback + mux test | ✅ 2026-08-14: HSE 8 MHz, AF9 mux on both pins (§23.7) |
 | S2 | ESP32 ↔ ESC1 on real wire | ✅ 2026-08-14: 21,800+ frames, 0 errors (§23.9) |
 | A, C, D | loopback babble, reboot isolation, TEC recovery | ✅ 2026-08-15 (§23.10). B dropped (answered by C) |
-| S1e | width of the real control frame | deferred until the CAN message spec is frozen |
 
 ---
 
@@ -48,21 +47,25 @@ unpowered; no firmware-switched terminator exists.
 | Bench: 1 ESC1 + 1 SN65HVD230 | **59.5 Ω** measured unpowered | 60 Ω | ✅ |
 | Robot: 12 ESC1 + master | 9.2 Ω | ≥ 45 Ω | 🔴 bus dead |
 
-**Rule: termination lives in the harness, never on a joint.** Every ESC1 loses its resistor;
-none ever terminates.
+**Rule (2026-10-31): exactly two terminators at the physical bus ends.** Keep R22 on two
+endpoint joints; remove it from the other ten. Master on a middle stub: jumper OFF. This saves
+two removals; changing endpoint positions requires rechecking topology and resistance.
 
 | | Bus end 1 | Bus end 2 |
 |---|---|---|
-| Bench, after rework | SN65HVD230 breakout, jumper ON | discrete 120 Ω in the test lead |
-| Robot, 13 nodes | master's transceiver board | discrete 120 Ω at the far end |
+| Bench, two endpoint ESCs + middle master | first ESC R22 | last ESC R22; master jumper OFF |
+| Robot, 12 joints + middle master | first endpoint joint R22 | last endpoint joint R22; other ten removed |
 
 **Measure termination UNPOWERED.** A powered transceiver's bias network adds a fixed ~450 Ω
 parallel path (2 terminators: 53 Ω powered vs 59.5 Ω unpowered; 3 terminators: 37 Ω powered).
 With 12 powered ESC1s those paths are ~38 Ω, which hides any termination error.
 
-### Rework procedure — ⏸ deferred until the first bus with more than two nodes
+### Rework procedure
 
-A third node on an unreworked bus fails outright. ~3–4 h, irreversible. Optional de-risk: do J03 alone first.
+Promotion and work status: [WORKING_MEMORY.md §15](WORKING_MEMORY.md#15-work-board).
+
+A third enabled terminator overloads the bus; a third unterminated node is permitted.
+Label the two endpoint joints first; apply removal steps only to the other ten.
 
 0. Before the first board, unpowered: measure CANH→GND and CANL→GND. Both open (> 1 MΩ) = single
    120 Ω, remove one resistor. Both ~60 Ω = split termination, remove two.
@@ -76,7 +79,7 @@ A third node on an unreworked bus fails outright. ~3–4 h, irreversible. Option
 
 | Check | Pass |
 |---|---|
-| Unpowered resistance CANH–CANL | open (> 1 MΩ) |
+| Isolated board, unpowered CANH–CANL | middle joint: open (> 1 MΩ); retained endpoint: approximately 120 Ω |
 | Functional, with the S1b probe (`x`, `r`, `t`) | board still talks |
 
 **Whole bus after rework, everything unpowered: ~60 Ω.** The S1b GPIO probe sketch is lost:
@@ -206,9 +209,10 @@ bounded at S2 (§23.7, §23.9). The bit rate is independent of SYSCLK, so PWM, l
 **Preference:** polled / round-robin master. It removes arbitration contention (the 0.026%
 single-shot drop rate). Decide it before the frame IDs.
 
-**Still to design (unblocked):** the CAN message spec (frame IDs, packing and scaling of
-`{p_des, v_des, kp, kd, τ_ff}` → `{p, v, τ}`, poll schedule) and the RL observation/action vector,
-frozen together.
+**Freeze together:** the CAN message spec (frame IDs, packing and scaling of
+`{p_des, v_des, kp, kd, τ_ff}` → `{p, v, τ}`, poll schedule) and the RL observation/action vector.
+Design/freeze status: [WORKING_MEMORY work board](WORKING_MEMORY.md#15-work-board);
+dated v0 acceptance: [§23.11](#2311-can-t0-acceptance--2026-10-0410).
 
 ### Init checklist — every value measured
 
@@ -323,11 +327,16 @@ Make sure the ESC1 is **not** in loopback (`e`) when the ESP32 starts (Test A).
 | **A** | Does a node in loopback babble over a live bus? | **Yes.** ESC1 in `e` on a live bus → ESP32 `BUS_OFF` (7 frames = 35 ms after the switch). Basis of constraint 2 |
 | **B** | Does an error-passive node throttle a joiner? (S1d) | Dropped: answered by C (the ESP32 was error-passive and retransmitting at 7874/s when the ESC1 rejoined; both clean within ~640 ms) |
 | **C** | Does a rebooting joint disturb the bus? | **No.** ESC1 `RST` held to GND ~9 s, three times: ESP32 TEC parked at 128, never `BUS_OFF`, `buserr` 7,874/s (same signature as an unpowered partner). PC11 floats → Standby → transmitter off |
-| **D** | TEC recovery from 128 | Exactly −1 per successful frame: **640 ms** at 200 Hz. Back inside one 100 Hz policy cycle; no Tier-1 rejoin logic needed |
+| **D** | TEC recovery from 128 | Exactly −1 per successful frame: **640 ms** at 200 Hz to TEC = 0 (64 cycles at 100 Hz). Communication can resume before TEC reaches zero; this result does not establish first-reply latency or authorize automatic re-arming |
 
 **Drop rate (Tx Event FIFO, `drop = sent − txok`, single node):** partner absent → `drop` climbs at
 200 Hz (frames discarded, not retried); after rejoin → frozen; **0 new drops in ~10,000 frames**
 (upper bound ~0.03%). The Tx Event FIFO is 3 deep on the G4: drain it every `loop()`.
 
-**Untested:** a joint **power-cycling** (VCC ramping on the transceiver) rather than resetting.
-Promote when the power distribution can cycle one joint independently.
+Power-cycle follow-up: [WORKING_MEMORY.md](WORKING_MEMORY.md#other-promotion-gates).
+
+## 23.11 CAN-T0 acceptance — 2026-10-04/10
+
+Imported from the technical README; dated results, not current work status.
+
+**N0–N4 closed on J01, 2026-10-04/06/10.** N1 0 bus errors, 1 late reply in 65k polls (status-print latency); one motor rev CW = −0.6998 rad. N2 all four refusals. N3 v +1.168 / −1.121 rad/s, step rest error 0.6 / 0.3 mrad, armed lps 11.5–12.2 k, 0 misses armed. N4 HOLD/DAMP/resume, cable pull, ESTOP, phone STOP, master reboot, phone dead-man. N4d (bare motor): resume with p_des 0.199 rad off → 59 refusals, CMD_TIMEOUT at 500 ms; hang and HardFault builds → master LOST → IWDG reset → reboots disarmed. Current-sense align changes nothing on J01 (gains = constructor −36.458333) → evidence for `skip_align` at leg boot. Tier 0 refuses/trips on all-zero encoder frames. Tier 0 `-e T0_J01/T0_J03`; master `pio run -d master`, operated from the phone (WiFi `LegMaster`, http://192.168.4.1); contract `can_protocol/` (v0, not frozen). Bus: J01 and J03 keep R22 at the two ends, ESP32 breakout (jumper OFF) on a short mid stub, ≈ 60.5 Ω unpowered. Original plan: `C:\Users\ACER\.claude\plans\read-the-attached-context-synchronous-aho.md`

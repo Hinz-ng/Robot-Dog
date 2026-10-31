@@ -1,12 +1,27 @@
 # Sensing — encoder, alignment, current sense
 
-§5 encoder (MT6816 SPI) · §6 alignment / ZEA · §7 current-sense calibration and sensor INL.
+§5 encoder (MT6835; MT6816 legacy) · §6 alignment / ZEA · §7 current-sense calibration and sensor INL.
 
-*Hub: [`README.md`](README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
+*Hub: [`TECHNICAL_REFERENCE.md`](TECHNICAL_REFERENCE.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
+
+Encoder/build applicability: [WORKING_MEMORY.md](WORKING_MEMORY.md#snapshot-and-provenance-conflicts).
 
 ---
 
-## 5. Encoder — MT6816, 4-wire SPI
+## 5. Encoder — MT6835, 4-wire SPI
+
+All forward work uses MT6835 (user decision, 2026-10-31). Source inspected: `can-t0` at
+`21cec6c`, `src/mt6835.h`, `fleet_config.h`, `joint_cal.h`; the current main checkout is legacy.
+
+- 21-bit chip read at **16 bits / 65536 counts per motor revolution**. `angle21` is diagnostic.
+- Mode 3; PB5 CSN / PB6 MOSI / PB7 MISO / PB8 SCK. Read-only driver; CRC-8 and
+  weak-field/undervoltage/overspeed status replace MT6816 parity checks.
+- `e`: require `ENC PASS`; `E`: turn the shaft and verify changing raw angle and clean CRC/status.
+  Do not reuse the old 16383-span test or MT6816 HVPP wiring.
+- Stored ZEA/direction must have matching `zea_enc`. Count conversion and delay:
+  [CONSTANTS](CONSTANTS.md#81-electrical--shared).
+
+### Legacy MT6816 wiring and measurements
 
 14-bit, 16384 cnt/rev, bit-banged mode 3: PB5 = CSN, PB6 = MOSI, PB7 = MISO, PB8 = SCK; HVPP → 3V3.
 Parity is checked per read; `No_Mag_Warning` and `Over_Speed` are available over SPI. Propagation
@@ -30,7 +45,9 @@ delay 1 µs typ / 3 µs max (not a delay source).
 ## 6. Alignment (ZEA) — a stored constant
 
 `zea` and `dir` are stored per joint in `joint_cal.h` and reproduce across power cycles (J01: 7
-alignments, SE 1.57° elec). `f` forces a fresh alignment; `V` verifies the stored value (§21).
+alignments, SE 1.57° elec). `f` loads usable stored alignment, otherwise aligns; `F` always aligns. `V` measures then
+restores the stored value (§21). MT6835 additionally requires a matching `zea_enc`.
+Clamped: only `f` with a previously verified usable row; never `F` or `V`.
 
 - **Align belt-off.** Alignment settles where alignment torque balances friction: J01 read +2.88°
   elec with sliding-post idlers, +0.15° without. Belt-on, use `V` as a check (≤ 8° elec; J01
@@ -68,7 +85,7 @@ motor.linkCurrentSense(&currentSense);   // enables foc_current + CS alignment i
 holds only when Id ≈ 0 (standstill); spinning, Id grows and the naive ratio climbs (1.230 → 1.289
 up to 42 rad/s) while the general form holds to 0.2–0.9%.
 
-**Channel imbalance (deferred):**
+**Channel imbalance (measured reference):**
 
 | Order | Amplitude | Cause |
 |---|---|---|
@@ -76,7 +93,7 @@ up to 42 rad/s) while the general form holds to 0.2–0.9%.
 | 14/rev | 0.070 A | ~9% gain mismatch between channels |
 
 In current mode the loop chases these and turns them into real torque ripple (0.93 N pp at the
-foot on A1). Below friction; deferred (§8.3).
+foot on A1). Below friction; work gate: [WORKING_MEMORY.md §8.3](WORKING_MEMORY.md#83-deferred-electrical-work).
 
 ### Sensor INL (J01, SPI, 2026-08-06)
 
@@ -94,5 +111,4 @@ Parity-separated even part of the angle error, ±109.5 rad/s, 32 bins:
 - INL is the dominant angle-error term (7.7× the ZEA residual) but repeatable and non-accumulating:
   no compensation needed.
 - Belt tension does not grow it: J01 belt off → on (no idlers) 1/rev 0.3690° → 0.3569°, 2/rev
-  0.2035° → 0.1977°, even-part r = 0.9986 over 32 bins. Re-measure at real tension as a cheap
-  confirmation (B5 / M7).
+  0.2035° → 0.1977°, even-part r = 0.9986 over 32 bins. These are historical INL results; the supported phase-4/5/6 calibration sequence is belt-off.

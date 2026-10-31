@@ -3,7 +3,7 @@
 §12 failure modes that each cost at least one session · §13 diagnostic ladder.
 **Read this before believing any number.**
 
-*Hub: [`README.md`](README.md).*
+*Hub: [`TECHNICAL_REFERENCE.md`](TECHNICAL_REFERENCE.md).*
 
 ---
 
@@ -46,7 +46,8 @@
   chunked non-blocking emit.
 - A capture taken disarmed looks healthy. `m=` and `run=` are recorded at `logStart`; check them first.
 - A measurement filter in a loop is a damping lever, not a bandwidth lever.
-- Gain ratio beats filter tuning: measure L, compute P/I, then tune the filter.
+- d/q current-loop PI formulas assume an ideal RL plant. Use them as estimates; measured
+  locked-rotor step response decides adoption (CONTROL §10), not the printed suggestion.
 - `Id` cannot detect commutation drift in current mode (the d-loop zeroes the apparent Id); the
   cos(δ) torque loss remains. Use voltage mode to diagnose alignment.
 - `current_limit` does not bind in voltage torque mode. Torque mode has no speed limit.

@@ -2,21 +2,21 @@
 
 §17 robot-level design decisions · §19 battery specification.
 
-*Hub: [`README.md`](README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
+*Hub: [`TECHNICAL_REFERENCE.md`](TECHNICAL_REFERENCE.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
 
 ---
 
 ## 17. Robot-level design decisions (frozen 2026-07-29)
 
-Frozen on measured constants. Re-open only with new bench data. Pack choice: §24.3.
+Frozen on measured constants. Re-open only with new bench data. Pack choice: [WORKING_MEMORY §24.3](WORKING_MEMORY.md#24-unresolved-documentation-decisions).
 
 | Parameter | Value | Reasoning |
 |---|---|---|
-| Target mass | **4.0 kg**, 12 DOF (3 vs 4 kg: §24.2) | mass is nearly free for jumping; the limit is voltage |
+| Target mass | **4.0 kg**, 12 DOF | mass is nearly free for jumping; the limit is voltage |
 | Proximal link | **80 mm** | L₁ sets stroke |
 | Distal link | **100 mm** | longer distal links reduce stroke (h → L₁cos α + L₂); keep L₂/L₁ ≈ 1.25 |
 | Reduction | **9:1** | jump optimum ~10:1; 9:1 within 2% |
-| Battery | 5S or 6S (§19) | no board change either way (divider spans 34.2 V) |
+| Battery | **6S frozen, 2026-10-31** (§19) | availability decision; commissioning remains a separate gate |
 | Belt | **10 mm GT2** | tooth load `Kt·I/r_pinion` = 208 N at 30 A exceeds a 6 mm belt; independent of ratio |
 | Workspace | α ∈ [40°, 70°] | snap-through margin; reflected inertia worsens toward full extension |
 
@@ -25,8 +25,7 @@ Frozen on measured constants. Re-open only with new bench data. Pack choice: §2
 **Jump apex ~478 mm is an upper bound:** it contains no pack-sag term (a no-sag reconstruction gives
 653 mm at 21.0 V and 358 mm at 18.5 V; use §19 for real packs), and it is not stated whether it used
 the 4.0 kg body or the 5.24 kg effective mass. If 4.0 kg, the stroke-limited model `h ≈ F·s/(m·g) − s`
-gives **352 mm**. **Settle from the apex spreadsheet before the controller energy budget is written
-or 478 mm is quoted outside this repo.**
+gives **352 mm**. Resolution gate: [WORKING_MEMORY.md](WORKING_MEMORY.md#other-promotion-gates).
 
 **Reflected inertia** (`J_rotor` 20.2 × 10⁻⁶ kg·m²):
 
@@ -79,13 +78,13 @@ speed loss → 86% apex loss.
 | 6S 1800 110C ×1 | ~33.4 mΩ | 17.5 V | 10.11 V | 2.28 m/s | 266 mm |
 | 6S 1800 110C ×2 parallel | ~18.7 mΩ | 20.9 V | 12.07 V | 3.54 m/s | 639 mm |
 
-Resistances are estimates until measured (protocol below).
+Resistances are estimates until measured (protocol below). 5S rows are historical comparisons; 6S is selected.
 
 ### Target spec
 
 | Parameter | Target | Rationale |
 |---|---|---|
-| Cells | 6S if commissioning passes, else 5S | |
+| Cells | **6S** | frozen by availability; complete commissioning before loaded use |
 | **Internal resistance** | **≤ 20 mΩ total pack** | sets apex directly. Ask the seller (*内阻多少毫欧?*) |
 | Capacity | 1800–3000 mAh | below: runtime; above: mass beats sag benefit |
 | Advertised C | ≥ 100C at 1800 mAh | assume ~50% derate |
@@ -113,8 +112,8 @@ before connecting, same model and age. Capacitors cannot fix sag (200 A for 35 m
 
 ### 6S staged commissioning
 
-Cleared: FETs 60 V (datasheet); regulator, 3.3 V rail, bulk capacitance (ran at 22.5 V); ADC range
-(34.2 V). Not cleared: electrolytic capacitor markings unreadable; switching at 25.2 V under load.
+Commissioning progress: [WORKING_MEMORY.md](WORKING_MEMORY.md#other-promotion-gates).
+The following steps are the procedure, not evidence of completion.
 
 Abort at the first sign of anything warm that should not be:
 1. Power only, no motor, 22.5 V, 10 min. Electrolytics at ambient.

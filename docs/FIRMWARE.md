@@ -3,7 +3,9 @@
 §4 firmware contract and the known-good `platformio.ini` · §11 session workflow, commands and
 telemetry · §18 sketch known gaps.
 
-*Hub: [`README.md`](README.md).*
+*Hub: [`TECHNICAL_REFERENCE.md`](TECHNICAL_REFERENCE.md).*
+
+Encoder/build applicability: [WORKING_MEMORY.md](WORKING_MEMORY.md#snapshot-and-provenance-conflicts).
 
 ---
 
@@ -64,13 +66,13 @@ Every power-up:
      exist and an integrator that will wind up.
 3. **Meter at the board's `7V-48V`/`GND` pads vs banner `Vbus`:** |Δ| > 0.03 V → power-cycle and
    re-check. Write the reading in the session header even when it passes.
-4. `V` (verify stored ZEA), or `f` for a fresh alignment (twitch visible, no `Skip offset calib`).
+4. Output free: `V` measures alignment then restores the stored ZEA. `f` loads usable stored alignment, otherwise aligns; `F` always aligns. Clamped: only `f` with a previously verified chip-matching row, never `F` or `V`.
 5. `v` / `t` / `c` → `g`.
 6. **Check `m=` before interpreting anything.**
 
 **Keys:** `g` go · `x`/`s` stop · `+`/`-` target · `o` open-loop · `t` torque(V) · `c` torque(I) ·
-`v` velocity · `f` align · `F` force fresh alignment · `V` verify stored ZEA · `e` encoder self-test
-(20000 reads; FAILs on all-zero frames) · `E` encoder monitor, continuous · `l`/`L` burst capture
+`v` velocity · `f` load usable alignment (else align) · `F` force fresh alignment · `V` verify stored ZEA · `e` encoder self-test
+(CRC/status snapshot; also rejects all-zero data) · `E` encoder monitor, continuous · `l`/`L` burst capture
 fast/slow · `k` step + capture positive · `K` negative · `j` zero-based step · `d` dump · `a` stats ·
 `q` print interval · `p` VBUS/ADC register dump (read-only, motor disabled) · `?` help.
 
@@ -133,18 +135,12 @@ RAM ring buffer, 1000 samples × 18 B = 18.0 kB (55% of RAM).
   (p, p_des, tau_cmd, tau reconstructed at dump time). For τ-vs-v checks, plot measured `tau`
   against v differentiated offline from `cnt` (`tau_law` vs `v` is true by construction).
 - **Step between two nonzero currents** (stepping from 0 puts the dead zone inside the measurement).
-- **`vel` is filtered at 20 ms — never fit inertia from it. Use `cnt`** (14-bit raw angle, wraps at
-  16383; unwrap before differentiating).
+- **`vel` is filtered at 20 ms — never fit inertia from it. Use `cnt`** (MT6835 configured 16-bit raw angle, wraps at
+  65535; unwrap before differentiating). Legacy MT6816 logs wrap at 16383; use each log banner.
+  `angle21` is diagnostic only, not the downstream count unit.
 
 ---
 
-## 18. Sketch — known gaps
+## 18. Firmware work
 
-- `logStats()` skips the first 25% of the buffer — right for steady sweeps, misleading after a `k`.
-- `VBUS_LIVE = false` (§8.3).
-- Bus voltage is not in the burst log. If added (`uint16_t vbus_x100`), drop `LOG_N` 1000 → 900 and
-  read the free-RAM figure first (a static buffer colliding with the stack HardFaults). Only worth
-  it once sampling is live.
-- The single disable path is shareable (`stopMotor()` in `safety.h`) but not single: bare
-  `motor.disable()` sites remain in `autocalib.h`. Closing it is a behaviour change needing design
-  review.
+See [WORKING_MEMORY.md §18](WORKING_MEMORY.md#18-firmware-work--known-gaps).

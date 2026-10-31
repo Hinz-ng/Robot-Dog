@@ -2,7 +2,7 @@
 
 §10 current loop, bandwidth limits, velocity loop (harness only), per-unit calibration policy.
 
-*Hub: [`README.md`](README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
+*Hub: [`TECHNICAL_REFERENCE.md`](TECHNICAL_REFERENCE.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
 
 ---
 
@@ -10,18 +10,15 @@
 
 ### Current loop (`foc_current`) — closed
 
-| | Value |
-|---|---|
-| `PID_current_q/d.P` | **0.1** |
-| `PID_current_q/d.I` | **335** |
-| `LPF_current_q/d.Tf` | **0.00025** |
-| `PID_current_q/d.limit` | `voltage_limit` |
-| `current_limit` | 2.0 A |
+Settings: [CONSTANTS.md §8.5](CONSTANTS.md#85-bench-tuning-reference).
 
 Measured step 0.5 → 1.5 A, locked rotor: **412 Hz, 9.3% overshoot, rise 850 µs, ζ 0.60, zero
-steady-state error**, Iq sd 0.0094 A. That is ~80% of the transport-delay ceiling (~1/(3T) ≈ 500 Hz);
-more bandwidth needs a faster loop, not different gains. Lowering `Tf` further buys damping, not
-bandwidth.
+steady-state error**, Iq sd 0.0094 A (legacy bench measurement).
+The former 500 Hz / 80%-of-ceiling claim was unsupported: legacy T ≈ 71 µs gives
+1/(3T) ≈ 4.7 kHz; MT6835's 91.5 µs gives ≈ 3.64 kHz. Neither is an established closed-loop
+ceiling: filtering, PWM/sample delay, controller phase and selected margin matter. At 412 Hz,
+a pure 91.5 µs delay contributes about 13.6° phase lag. Retain measured gains and revalidate
+after plant/build changes; higher bandwidth is not guaranteed by this arithmetic.
 
 | Config | Overshoot | Bandwidth |
 |---|---|---|
@@ -51,12 +48,7 @@ series spring: output stiffness = kp·K/(kp+K) (80–89% of commanded at kp 41).
 The Tier-0 contract has no cascaded velocity PID; velocity mode (`v`) is a test instrument.
 It closes on the current loop (`PID_velocity.limit = CURR_LIMIT_A_rep`).
 
-| Gain | Value |
-|---|---|
-| `PID_velocity.P` | **0.2 A/(rad/s)** |
-| `PID_velocity.I` | **1.5** |
-| `PID_velocity.D` | **0** (quantised encoder + filtered velocity = noise amplifier) |
-| `LPF_velocity.Tf` | 0.02 |
+Settings: [CONSTANTS.md §8.5](CONSTANTS.md#85-bench-tuning-reference).
 
 Voltage-mode history: P_crit ≈ 1.0; tracked 2–5 rad/s to ±0.02; steps settled < 300 ms with
 8–12% overshoot. Size P against disturbance headroom (`P ≤ headroom / (ripple × filter
@@ -71,7 +63,7 @@ attenuation)`), not P_crit. Not re-swept on the current loop; test with steps, n
 | `R_eff` | motor + board | yes | current-loop gain only |
 | `U0` | board | yes | sub-1 N of transparency |
 | `Ke`, `Kt` | motor | yes | ±5% stiffness error in impedance control |
-| `L` | motor | no | current-loop gain only |
+| `L` | motor | store per-unit estimate; QC against motor reference | shared gains still require response validation |
 | `J_rotor` | geometry | no | ±1% |
 | INL | assembly | measure once | angle-error floor |
 | Drag map, breakaway | assembly | yes | dominates transparency |

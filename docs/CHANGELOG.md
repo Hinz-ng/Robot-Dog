@@ -1,11 +1,21 @@
-# Changelog — dated sessions, newest first
+# Changelog — milestones and accepted changes
 
-One entry per session: what closed, which values changed (old → new), where the detail lives.
-Detail and data live in the section docs; this file is the index of changes.
+At milestone close, record what closed, accepted value changes (old → new), and links to the
+owning evidence. Current tasks and session state belong in [WORKING_MEMORY.md](WORKING_MEMORY.md).
+Older session-granularity entries below remain historical records, not active instructions.
 
-*Hub: [`README.md`](README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
+*Hub: [`TECHNICAL_REFERENCE.md`](TECHNICAL_REFERENCE.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
 
 ---
+
+## 2026-10-31 — documentation decisions and consistency review
+
+- Forward reference: MT6835 / 16-bit; 6S frozen by availability; two endpoint joints retain R22.
+- Corrected alignment-key semantics, phase-6 workflow, M2 voltage/uncertainty policy, calibration
+  ownership, PI-gain guidance and ±0.03 V scale verification. Owners: SENSING / CALIBRATION / CONTROL.
+- Corrected ring ceiling arithmetic 20–29 → 20–24 Hz and J02 belt scale 7.107 → 7.334 N/A_rep;
+  removed unsupported 500 Hz / 80% current-loop ceiling. Historical measurement tables retained.
+- Clarified CAN recovery stages, conditional backlash and high-confidence inferred regulator feed.
 
 ## 2026-10-10 (bench) — J01 idle current; logic-supply heat closed
 

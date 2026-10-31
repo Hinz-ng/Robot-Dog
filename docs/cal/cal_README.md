@@ -1,11 +1,16 @@
 # `docs/cal/` — raw calibration records
 
+*Detail router: [TECHNICAL_REFERENCE.md](../TECHNICAL_REFERENCE.md).*
+
 Raw serial output, verbatim, so a fit can be redone offline against exactly what the firmware
 emitted. Summary constants do not go here; they go in the `JointCal` row in `src/joint_cal.h`.
 Nothing in the firmware reads this directory.
 
 **Naming:** `docs/cal/Jnn/Jnn_<what> (<plant>).csv`, e.g. `J03/J03_autocalib (bare motor).csv`.
 New-joint procedure: [`BELT_OFF_BASELINE.md`](BELT_OFF_BASELINE.md).
+Belt-on command sheet: [Belt-On Baseline Procedure.md](Belt-On%20Baseline%20Procedure.md).
+Both command sheets target MT6835; archived MT6816 records remain legacy. Check
+[build/plant applicability](../WORKING_MEMORY.md#24-unresolved-documentation-decisions) before use. They complement [CALIBRATION methods](../CALIBRATION.md), not replace them.
 
 **What goes in:** the full phase-7 output (including the `BIN,` and `LSB,` blocks and `DRAG,` lines),
 `M2,` and `M4,` rows, capture dumps — unedited, with a header line giving joint, date, plant state,

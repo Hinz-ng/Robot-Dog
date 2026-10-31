@@ -3,7 +3,7 @@
 §1 hardware · §1a assemblies · §2 clone vs genuine · §2a vendor documentation · §3 board pin
 truths · §14 ST tooling · §16 thermal · §16a logic supply and idle current. CAN hardware: [`CAN_BRINGUP.md`](CAN_BRINGUP.md) §23.
 
-*Hub: [`README.md`](README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
+*Hub: [`TECHNICAL_REFERENCE.md`](TECHNICAL_REFERENCE.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
 
 ---
 
@@ -12,20 +12,20 @@ truths · §14 ST tooling · §16 thermal · §16a logic supply and idle current
 | Component | Part | Notes |
 |---|---|---|
 | Motor | TYI 4006, **KV360**, 12N14P (7 pole pairs) | Kt = 1.5 × Ke per joint (`calKt()`): J01 0.026912, J02 0.027145 N·m/A_true (§8.1). Nameplate 18 A/60 s assumes propeller airflow (§16). A photographed nameplate reads KV380; the bench rules it out (KV380 is ~6.6% off measured Kt, KV360 +1.0–1.1%). Do not reopen on a photo |
-| Driver | B-G431B-ESC1 **clone** ("火柴" FOC; silkscreen version unconfirmed, §24.7) | not a 1:1 copy (§2). ~89 RMB |
+| Driver | B-G431B-ESC1 **clone** ("火柴" FOC; silkscreen version unconfirmed, [WORKING_MEMORY §24.7](WORKING_MEMORY.md#24-unresolved-documentation-decisions)) | not a 1:1 copy (§2). ~89 RMB |
 | MOSFETs | **HG5511D** ×6 | 60 V V(BR)DSS, 40 A cont (25 °C) / 25 A (100 °C), 120 A pulsed, R_DS(on) 11 mΩ at 10 V, R_θJA 35 °C/W. 6S at 25.2 V with 1.5× overshoot = 63% of breakdown |
 | Bus voltage sense | **PA0**, resistive divider | **per board:** `B-SPI-01` 0.008448, `B-ABZ-01` 0.008516 (M1, UT89X). Full scale 34.60 / 34.87 V. 6S at 25.2 V = 73% of range. Seed-only (§12) |
 | Reference driver | genuine B-G431B-ESC1 | acceptance test not run |
-| Encoder | **MT6816** (AMR) on XJX-135 breakout | 4-wire SPI, 14-bit, 16384 cnt/rev (0.022°), bit-banged. Propagation 1 µs typ / 3 µs max |
+| Encoder | **MT6835** for forward work | SPI mode 3, CRC checked; 21-bit chip read at 16 bits / 65536 counts per motor rev. MT6816 is legacy; SENSING §5 |
 | Magnet | N35 D6 × 3 mm diametric, jig-centred, CA-bonded | no ferromagnetic material in or behind the field path. Gap 0.5–1.0 mm |
 | Reduction | 9:1 GT2 10 mm belt, 12T alu pinion (r_pitch 3.82 mm) → 108T printed pulley | belt 232 mm, C = 44.5 mm, take-up 1.04 mm (§22) |
 | Idlers | 2 × 3×9×5 ZZ bearings per side, fixed holes (1.72, ±10.00) | spec §22.2 |
 | Programmer | clone ST-Link V2.1 | PlatformIO/OpenOCD ✓. **Never attempt an ST firmware upgrade — brick risk** |
-| Power | 3S LiPo (~11.3 V) bench; 5S frozen for the robot (6S: §24.3) | divider spans 34.2 V, so 5S and 6S fit unchanged. Board ran at 22.5 V unloaded (2026-08-01); 25.2 V under load untested (§19) |
+| Power | 3S LiPo (~11.3 V) bench; 6S frozen for the robot (commissioning: [WORKING_MEMORY §24.3](WORKING_MEMORY.md#24-unresolved-documentation-decisions)) | divider spans 34.2 V, so 5S and 6S fit unchanged. Board ran at 22.5 V unloaded (2026-08-01); 25.2 V under load untested (§19) |
 
 ## 1a. Assemblies
 
-Joint-by-joint status and constants: [`CONSTANTS.md`](CONSTANTS.md) §8. `zea` and
+Assembly status: [WORKING_MEMORY.md](WORKING_MEMORY.md). Constants: [`CONSTANTS.md`](CONSTANTS.md) §8. `zea` and
 `sensor_direction` never transfer between joints; a wrong one refuses to run or inverts torque.
 
 ---
@@ -51,7 +51,7 @@ never moves; §4). The vendor's "all B-G431B-ESC1 examples work directly" is fal
 ## 2a. Vendor documentation (火柴 / HFOC listing, rank 4 — narrows unknowns, never overrules a measurement)
 
 The listing photographs a board silkscreened **V1.0**; the schematic is the sole source for
-`CAN_SHD` = PC11, `Temp_ADC` = PB14 and the HSE routing. Read your board's silkscreen (§24.7).
+`CAN_SHD` = PC11, `Temp_ADC` = PB14 and the HSE routing. Read your board's silkscreen ([WORKING_MEMORY §24.7](WORKING_MEMORY.md#24-unresolved-documentation-decisions)).
 
 | Parameter | Claimed | Note |
 |---|---|---|
@@ -105,7 +105,7 @@ staged commissioning.
 | `CAN_TX` / `CAN_RX` | PB9 / PA11 (AF9) | certain; AF9 proven at S1c |
 | `CAN_SHD` (transceiver `S`) | PC11 | measured at S1b |
 | `H1/A`, `H2/B`, `H3/Z` | PB6, PB7, PB8 (= BOOT0) | certain |
-| MT6816 SPI | PB5 = CSN, PB6 = MOSI, PB7 = MISO, PB8 = SCK | bench |
+| MT6835 SPI (legacy MT6816 used same MCU pins) | PB5 = CSN, PB6 = MOSI, PB7 = MISO, PB8 = SCK | bench |
 | `GPIO_BEMF` | PB5 | high; does not load PB5 as CSN |
 | `TXD2` / `RXD2` | PB3 / PB4 | bench |
 | `BUTTON` / `PWM` input | PC10 / PA15 | high |
@@ -205,13 +205,13 @@ into circular DMA (16-bit, right-aligned): ADC1 buffer `0x2000050A` (5 elements)
   is a buck converter).
 - **Hot vs cold `R_eff` (M10):** phase 3 cold → load 60 s → phase 3 again (6 s per run).
   ΔR/R > 15% means peak force sags during a jump sequence. Copper +0.39%/K.
-- **Board rating below the design point** (§2a, §24.9): < 10 A continuous / < 40 A instantaneous
+- **Board rating below the design point** (§2a, [WORKING_MEMORY §24.9](WORKING_MEMORY.md#24-unresolved-documentation-decisions)): < 10 A continuous / < 40 A instantaneous
   vs 30 A peak per motor. The FETs are not the limit. Instrument it: M10 plus FET temperature after
   a realistic duty cycle.
 - **PB14 thermistor:** measures the board, not the winding. Vendor formula not adopted. A single
   continuous DMA-path session (self-heating, fixed bus) read **1367 → 1427 counts, rising** (the
   vendor's sign); the earlier falling pair was cross-session through `analogRead` and is suspect.
-  Close it with one continuous run at 1.5 A for 2 min watching PB14 (§24.8). Read it from the DMA
+  Close it with one continuous run at 1.5 A for 2 min watching PB14 ([WORKING_MEMORY §24.8](WORKING_MEMORY.md#24-unresolved-documentation-decisions)). Read it from the DMA
   buffer (rank 4); `analogRead()` is forbidden after `currentSense.init()` (§12).
 
 ### 16a. Logic supply and idle current (J01, 2026-10-10)
@@ -225,8 +225,8 @@ into circular DMA (16-bit, right-aligned): ADC1 buffer `0x2000050A` (5 elements)
                  └─ "L352" (SOT-23-5, no inductor = LDO) ─ 3.3 V: G431, LEDs, 3V pads   [inferred]
 ```
 
-The 78L05 is not on the bus: at 6S the whole board draws 39.3 mA, below the ~45–55 mA a 5 V / 3.3 V
-tree of these parts needs (datasheet typicals, not measured). Settled by one reading: 78L05 input
+High-confidence inference: the 78L05 is not directly bus-fed: at 6S the whole board draws 39.3 mA, below the ~45–55 mA a 5 V / 3.3 V
+tree of these parts needs (datasheet typicals, not measured). Direct confirmation would be one reading: 78L05 input
 pin on 6S, probe one pin at a time.
 
 **Idle current**, motor disabled, UT89X 600 mA in series. V_pads = V_pack − I × 2.30 Ω (J03 M2 fit).
@@ -239,8 +239,8 @@ pin on 6S, probe one pin at a time.
 
 - 6S/3S current ratio 0.66 (constant power 0.52, linear 1.00) → the board is a mostly
   constant-power load: I ∝ V^−0.64, −3.1 mA/V at 12 V. Normalise: `I_ref = I · (V_ref / V_pads)^−0.64`.
-  Valid while the buck regulates. The 9.5 V rail on 3S suggests it does there; the K36 node on 6S
-  confirms it. If it does not, the 3S slope is ~0 and J01's delta below is +3.3 mA (still ≤ 40 mW).
+  Valid while the buck regulates. The 9.5 V rail on 3S suggests it does there; a K36 reading on 6S
+  would confirm it (no value recorded here). If it does not, the 3S slope is ~0 and J01's delta below is +3.3 mA (still ≤ 40 mW).
 - **Unplugging the ST-LINK USB adds 4.8 mA** (the board powers part of the ST-LINK). Record the USB
   state and the pad voltage with every idle reading.
 
@@ -255,12 +255,13 @@ pin on 6S, probe one pin at a time.
 | J01 | 2026-10-10 | 62.6 | unplugged |
 
 J01 vs August: +1.7 mA if August was plugged, +6.3 mA if not; ≤ 75 mW either way, so it cannot cause
-the hot corner. Gate at milestone close (USB plugged, pads measured): **≤ 61 mA at 12.28 V; > 61 = a
+the hot corner. Idle-load gate (USB plugged, pads measured; scheduling in WORKING_MEMORY): **≤ 61 mA at 12.28 V; > 61 = a
 new idle load, look for a warm part.**
 
-**Hot corner = the 78L05, by design.** ≈ (9.5 − 5) V × ~50 mA ≈ 0.22 W in SOT-89 (θ_JA ~125–225 K/W,
-typical, not measured) → +28–50 K. The L352 dissipates ≈ 0.07 W. The rail is regulated, so the
-dissipation does not depend on pack voltage, and it is the same on every board. **No heatsink:** a
+**Practically settled working conclusion, high-confidence inference: normal 78L05 dissipation explains the hot corner.** ≈ (9.5 − 5) V × ~50 mA ≈ 0.22 W in SOT-89 (θ_JA ~125–225 K/W,
+typical, not measured) → +28–50 K. The L352 dissipates ≈ 0.07 W. With the inferred regulated feed, dissipation is approximately pack-independent at comparable
+load. This is a model, not a measured temperature or proof of identical heating on every board.
+The user accepts the practical conclusion (2026-10-31); further measurement is conditional on
+the existing thermal promotion gate. **No heatsink:** a
 SOT-89 sheds heat through its tab into the copper, and bare aluminium beside fine-pitch pads is a
-short risk. Promote when the electronics bay is sealed or has no airflow, or a board resets when
-hot: first measure the 78L05 input pin and the K36 node on the robot pack.
+short risk. Revisit gate: [WORKING_MEMORY.md](WORKING_MEMORY.md#other-promotion-gates).

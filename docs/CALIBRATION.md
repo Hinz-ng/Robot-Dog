@@ -6,14 +6,15 @@
 New joint, step by step: [`cal/BELT_OFF_BASELINE.md`](cal/BELT_OFF_BASELINE.md). This file holds
 the method behind those steps.
 
-*Hub: [`README.md`](README.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
+*Hub: [`TECHNICAL_REFERENCE.md`](TECHNICAL_REFERENCE.md). Master table: [`CONSTANTS.md`](CONSTANTS.md) §8.*
 
 ---
 
 ## 20. Manual calibration — what AUTOCALIB does not measure
 
 AUTOCALIB (`Y`, phases 1–7) measures `zea`, `dir`, `R_eff`, `U0`, `Ke`, `L`, the drag map,
-`T/T_loop` and INL in ~70 s of motor time. Phase 6 is belt-off only; phase 4 is belt-off only.
+`T/T_loop` and INL in ~70 s of motor time. Phase 4 is belt-off only. Phase 6 computes from completed phases 4 and 5 (no motor actuation).
+Run the supported sequence belt-off; a standalone belt-on 5 → 6 lacks required phase-4 data.
 
 ### 20.1 Per board, once — needs an external reference
 
@@ -32,9 +33,15 @@ with I and would report g ≈ 0.95 on a perfect board. Fit eight points:
 P_bus = a + b*I + c*I^2      a = housekeeping, b = switching + dead time
 U_del = U0 + R*I             <- this run's own slope (self-fit R)
 g     = 1.5 * R / c
-U_del = Uq_cmd * (V_s - Ibus*R_b) / V_seed      V_seed = the banner value
+V_term = voltage measured at BOARD PADS under each ladder load
+P_bus = V_term * Ibus
+U_del = Uq_cmd * V_term / V_seed              V_seed = this boot's banner
+# Only when voltage is measured UPSTREAM of the ammeter:
+V_term = V_source - Ibus*R_b                  # subtract burden ONCE
 ```
 
+- Use the same pad voltage in both fits. With one meter, reconstruct pad voltage only with
+  justified source/burden stability and include that uncertainty.
 - **Use the run's own R** (same session, current range, thermal state), never a phase-3 `R_eff`.
 - **`R_b`** = ammeter burden, 4-wire and **unpowered**: 1.547 Ω on the UT89X 600 mA range. It
   largely cancels (±16% on R_b → ±0.9% on g).
@@ -50,10 +57,12 @@ U_del = Uq_cmd * (V_s - Ibus*R_b) / V_seed      V_seed = the banner value
 | C | Pack + one meter: current sweep, then volts at the top and bottom point only | ~±2.5% |
 
 **Procedure** (leg off, hands off the shaft, motor clamped):
-1. Banner `Vbus=` vs meter at the pads: **> 0.03 V → power-cycle and re-check.** `V_seed` lands
+1. Without a series ammeter, banner `Vbus=` vs meter at the pads: **> 0.03 V → power-cycle and re-check.** `V_seed` lands
    1:1 on g, and the seed has a real per-boot offset of up to 0.05 V. Record the reading even
    when it passes.
-2. Measure `R_b` (unpowered) if the meter or leads changed.
+2. Measure `R_b` (unpowered) if the meter or leads changed. Power down before inserting the
+   ammeter and reboot. Record this boot's seed and pad voltage at every load; burden changes
+   terminal voltage, not the ±0.03 V voltage-scale verification criterion.
 3. `1`, `2` (alignment must PASS).
 4. `3` → **cold `R_eff`**.
 5. `N` → 8 points. At each, let the meter settle and write **Vbus** and **Ibus to 0.1 mA** next to
@@ -78,12 +87,12 @@ Absolute Ibus assumes ~1 W housekeeping; the **span (230–280 mA)** is what mat
 
 | Gate | Pass | If not |
 |---|---|---|
-| Banner vs meter at start | ±0.03 V | reboot |
+| Banner vs meter, voltage-scale check without series ammeter | ±0.03 V | reboot/recheck; use per-point pad voltage during M2 |
 | `I_reported` vs table | ±3% | lock not holding, or wrong joint flashed. A softer pack can read −5% at point 8; not a failure if `drift=` holds |
 | Ibus span, point 1 → 8 | 230–280 mA | wiring, meter range, or the rotor moved |
 | Hot vs cold `R_eff` | ≤ 2% | thermal drift; shorten dwells and redo |
 | `dR` with `U0` held | +0.4 to +1.0% | refit with U0 constrained before reading it (R and U0 correlate −0.84) |
-| `drift=` | ±3 counts | creep shows as tens |
+| `drift=` | ±1.15 mrad motor (legacy ±3 counts; ±12 at 16-bit) | excess means creep; check configured resolution |
 
 **Coefficient checks** (a well-conditioned fit is not necessarily a clean one):
 
@@ -93,16 +102,17 @@ Absolute Ibus assumes ~1 W housekeeping; the **span (230–280 mA)** is what mat
 | `b` | ≈ 1.5·U0 W/A | +0.035 vs 0.020 |
 | U0 self-fit | phase-3 cold U0, ±0.003 V | 0.01350 vs 0.01686 |
 
-| g | Action |
+| Fit result | Action |
 |---|---|
-| 0.98–1.02 | `i_scale = 1.0`; record the measured g and SE in the row comment |
-| within ±2σ of 1.0 | store it, marked **provisional** |
-| 0.94–0.98 or 1.02–1.06 | store g as `i_scale` (the torque boundary corrects commands and feedback). Do not touch `R_eff`, `L`, `Ke` or the loop gains |
-| outside ±6% | fix at source in the `LowsideCurrentSense` constructor, then re-run phases 3 and 4 |
-| c ≤ 0 or SE(c) > 10% | fit failed; check the Ibus span and rotor motion |
+| c ≤ 0, g ≤ 0, inadequate span, creep or failed thermal gate | Reject fit; diagnose setup |
+| SE(c) > 10% | Too imprecise; improve measurement quality |
+| Valid positive g with quantified uncertainty | Store measured g as i_scale with uncertainty/provenance; provisional if uncertainty exceeds the intended torque-accuracy need |
+| Unity inside uncertainty interval | Scale error not resolved; do not call the board faulty or silently round the estimate to 1 |
+| Large departure from unity | Verify meter, wiring, burden and self-fit before considering a constructor change; no automatic ±6% correction |
 
-Limit ±2% (dominated by the meter's DCA gain, 0.8%; a repeat buys ~0.1%). τ_actual = τ_des / g, so
-an uncorrected 5%-high sense means 5% low torque with nothing flagging it.
+There is no physical basis for a universal 0.95–0.98 gate. g = I_rep/I_true; the torque
+boundary divides by g. Include meter/model systematics as well as fit SE. This policy change
+does not rewrite existing stored calibrations.
 
 #### M3b — electrical tripwire on a locked plant
 
@@ -115,11 +125,11 @@ R 0.21536 Ω vs stored range 0.21556–0.21683 (0.09%).
 
 | # | What | How |
 |---|---|---|
-| **M4** | **Breakaway → `breakaway_A`** | `V` (or `f`, or phase 2) first. Belt off, pulley bare, leg **never** attached. At each of 5 positions ~72° apart: turn to the mark, **let go, wait 2 s** (settle into a detent), press `B`; then the same 5 with `b`. Ramp +0.005 A every 150 ms (~0.033 A/s); reports the current at \|ω\| > 0.5 rad/s as `M4,<dir>,<amps>,<raw>,<ramp_s>,<travel_cnt>`. Warns on `travel` > 200 counts (biased high, redo) and > 0.60 A; `NO MOTION` at 0.80 A is a fault (bearing preload or magnet skimming the sensor). Static breakaway is not phase 5's dynamic drag (J01: 0.2923 vs 0.0783 A belt-off). **A/B comparisons:** same raw positions, compared pairwise |
+| **M4** | **Breakaway → `breakaway_A`** | `V` (or `f`, or phase 2) first. Belt off, pulley bare, leg **never** attached. At each of 5 positions ~72° apart: turn to the mark, **let go, wait 2 s** (settle into a detent), press `B`; then the same 5 with `b`. Ramp +0.005 A every 150 ms (~0.033 A/s); reports the current at \|ω\| > 0.5 rad/s as `M4,<dir>,<amps>,<raw>,<ramp_s>,<travel_cnt>`. Warns on `travel` > 76.7 mrad motor (legacy 200 counts; 800 at 16-bit) (biased high, redo) and > 0.60 A; `NO MOTION` at 0.80 A is a fault (bearing preload or magnet skimming the sensor). Static breakaway is not phase 5's dynamic drag (J01: 0.2923 vs 0.0783 A belt-off). **A/B comparisons:** same raw positions, compared pairwise |
 | M5 | Belt-on drag | Phase 5 belt on, both run orders (BELT_DRIVE B3) |
 | M6a | `J_rotor`, belt off | `t` → `g` → `k` → ~1 s → `x` → `d` (Uq step 0.20 → 0.80 V). α from raw `cnt` over the first ~50 ms; `J = (Kt·Iq − τ_drag)/α` with the belt-off drag map. **Done: 20.2 ± 2.4 × 10⁻⁶ kg·m², fleet constant** |
 | M6b | `J_total`, belt on | same, output unclamped (BELT_DRIVE B7); friction 40–60% of the impulse, ±20% |
-| M7 | INL after belt fitting | phases 5 + 6 (read INL only) |
+| M7 | INL reference | Supported phase-4/5/6 sequence belt-off; historical belt-on comparisons are evidence, not a standalone 5 → 6 procedure |
 | **M8** | **Magnet gap and centring** | 0.5–1.0 mm, **never zero**, centred. Zero gap caused A1's count loss; centring sets the 1/rev INL |
 | M9 | Gear ratio, teeth, lever arm | calipers and a tooth count |
 
@@ -129,7 +139,7 @@ R 0.21536 Ω vs stored range 0.21556–0.21683 (0.09%).
 |---|---|---|---|
 | **M10** | Hot vs cold `R_eff` | any time | phase 3 cold → load 60 s → phase 3. ΔR/R > 15% = peak force sags in a jump |
 | M11 | `U0` | bus voltage change | dead time is a fraction of the PWM period, so U0 scales with V_bus |
-| M12 | Current-loop gains | after R or L changes | `Kp = L·ω_bw`, `Ki = R·ω_bw`. AUTOCALIB prints a suggestion; **do not paste it** (§10) |
+| M12 | Current-loop gains | after R or L changes | `Kp = L·ω_bw`, `Ki = R·ω_bw` estimates an ideal RL plant. For d/q current-loop PI gains, the locked-rotor measured step decides adoption; **do not paste** AUTOCALIB suggestions (CONTROL §10) |
 | M14 | Force per amp | leg exists | load cell; `F = 2·G·η·Kt·I` |
 
 ---
@@ -147,7 +157,7 @@ pio run -e J01 -t upload
 flash) so a human reviews every constant, each change is a dated git diff, and no flash write can
 fail halfway.
 
-**Row fields:** `zea`, `dir`, `R_eff`, `U0`, `Ke`, `L`, `vbus_scale`, `i_scale`, `drag_c_fwd/rev`,
+**Row fields:** `zea`, `dir`, `zea_enc` (MT6835 source), `R_eff`, `U0`, `Ke`, `L`, `vbus_scale`, `i_scale`, `drag_c_fwd/rev`,
 `drag_v_fwd/rev` (positive magnitudes; the consumer applies sign(ω)), `breakaway_A`, serials, date,
 belt state. `Kt` is derived (`calKt()` = 1.5·Ke), never stored. AUTOCALIB phase 7 emits a pasteable
 row and **carries** `vbus_scale`, `i_scale` and `breakaway_A` from the flashed row (blocked, with
@@ -170,7 +180,7 @@ board (J01 0.008448, J02 0.008516, J03 0.008357). Unbuilt rows carry `0.0f` = no
 
 ### Safe default for unfilled rows
 
-`zea = -1.0f`, `dir = 0`: `runInitFOC()` falls back to a full alignment, and the banner prints
+`zea = -1.0f`, `dir = 0`, or chip-mismatched `zea_enc`: bench `runInitFOC()` falls back to full alignment, and the banner prints
 `!! UNCALIBRATED joint`.
 
 ### The `V` command — press it after every flash

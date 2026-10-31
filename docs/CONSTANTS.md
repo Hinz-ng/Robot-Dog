@@ -1,25 +1,25 @@
 # Master table — measured constants
 
-**This file outranks every other number in the doc set.** §8 is the master table; §9 is
+**Canonical numerical reference for this doc set; independent bench evidence and inspected
+source take precedence when they disagree.** §8 is the master table; §9 is
 drivetrain health. Per-joint values live in `src/joint_cal.h`; fleet values in
 `src/fleet_config.h`. Belt-on plant states are per-plant and live in
 [`BELT_DRIVE.md`](BELT_DRIVE.md).
 
-*Hub: [`README.md`](README.md).*
+*Hub: [`TECHNICAL_REFERENCE.md`](TECHNICAL_REFERENCE.md).*
 
 ---
 
-## 8. Assemblies
+## 8. Calibration reference
 
-| Name | Motor / board | Status |
-|---|---|---|
-| A1 | `M-ABZ-01` on `B-ABZ-01`, ABZ encoder | historical: rubbing encoder magnet contaminated every friction number (`drag_c` 1.05 A, "4.5 N / 46%"). Not used; voltage-derived numbers 1.89% low |
-| **J01** (= A2) | `B-SPI-01`, MT6816 SPI | reference actuator, belt on (recipe B) |
-| **J02** (= rebuilt A1) | `M-ABZ-01` on `B-ABZ-01`, MT6816 SPI | belt on (SCB pulley). ESC board failed after P8; its MT6816 board found dead 2026-10-08 (MISO stuck low) and replaced, so its stored `zea`/`dir` belong to the old encoder |
-| J03 | board_3 + motor_2 | belt-off baseline complete (2026-10-10) |
+Calibration identities and historical validity are below. Present assembly state is in
+[WORKING_MEMORY.md](WORKING_MEMORY.md#snapshot-and-provenance-conflicts).
 
-`zea` and `dir` never transfer between joints. `R_eff`, `U0`, `Ke`, `L`, `vbus_scale`, `i_scale`
-are per board (§21).
+ZEA/direction belong to the motor/magnet/sensor assembly and must match `zea_enc` (MT6835).
+Ke/L physically belong to the motor; voltage/current scale and U0 to the board; R_eff includes
+the motor/board path. Store measured estimates per joint row. Shared tuning does not make L a
+fleet constant. Invalidation: [CALIBRATION](CALIBRATION.md#what-invalidates-what).
+Tables below retain dated identities; legacy MT6816 ZEA is not usable MT6835 calibration.
 
 ### 8.1a — J01, belt off (AUTOCALIB 2026-08-07, rescaled by M1 ×1.010768 on 2026-08-18)
 
@@ -112,7 +112,7 @@ is not a fault.** M2 uses its own range-matched R.
 | Quantity | Value | Note |
 |---|---|---|
 | Kt | `calKt()` = 1.5 × Ke per row (never stored). Per reported amp `calKtCmd()` = Kt / `i_scale`: J01 0.027972, J02 0.028013 | Kt ≠ Ke in SimpleFOC's amplitude-invariant convention (Ke = Kt excluded at 15σ) |
-| **`T/T_loop`** | **0.958 ± 0.015**, n = 7, 3 assemblies | transport delay = one loop period. `T_DELAY_PER_LOOP` in `fleet_config.h`. **Belt-off only.** Torque loss at 270 rad/s 0.95%: **no angle compensation** |
+| Legacy MT6816 **`T/T_loop`** | **0.958 ± 0.015**, n = 7, 3 assemblies | transport delay = one loop period. `T_DELAY_PER_LOOP` in `fleet_config.h`. **Belt-off only.** Torque loss at 270 rad/s 0.95%: **no angle compensation** |
 | PWM | 25 kHz, SVPWM | ceiling V_bus/√3 |
 | Loop rate | 13.5 kHz TORQUE(I) armed, 15 kHz TORQUE(V), 21 kHz OPENLOOP armed, 126 kHz disarmed | J01 MIT build: ~12.4 kHz TORQUE(I) armed (BELT_DRIVE §22.7.7) |
 | Telemetry print cost | ~950 µs at 921600 baud | float formatting dominates |
@@ -120,11 +120,20 @@ is not a fault.** M2 uses its own range-matched R.
 | Seed linearity | J02 seed vs UT89X at 12.24 / 12.25 / 22.73 V: −0.16 / −0.11 / +0.04% | |
 | Seed boot-to-boot | per-boot offset up to 0.05 V | check banner vs meter at session start (±0.03 V, else reboot) |
 
-Encoder excluded as a delay source (MT6816 1 µs typ / 3 µs max).
+MT6835 reference (`can-t0` `21cec6c`, fleet_config.h): `T_DELAY_S = 91.5 µs`, observed
+84–99 µs, half-range 7.5 µs (not statistical SE), belt-off phase-6 records dated
+2026-10-13/19/24. Fixed-time diagnostic model replaces the MT6816 per-loop model; this does
+not establish a current-loop bandwidth ceiling or require angle compensation.
+
+MT6835 configured counts: 65536/rev; 1 count = 0.09587 mrad motor = 0.01065 mrad output =
+0.36621 µm belt. Legacy 14-bit counts are four times larger in physical units.
 
 ### 8.2 Mechanical / drivetrain
 
 **Geometry:**
+
+Force/amp calculation: 4.145 / 5.000 N/A at α = 70 / 40°; 4.186 at 55°
+(closed-form Jacobian). The old 4.32 is the stroke mean, 4.296; η awaits M14.
 
 | Quantity | Value |
 |---|---|
@@ -133,7 +142,7 @@ Encoder excluded as a delay source (MT6816 1 µs typ / 3 µs max).
 | Centre distance C | 44.5 mm |
 | No-idler belt path | 230.96 mm; slack 1.04 mm on a 232 mm belt |
 | Belt travel per motor rev | 24.000 mm |
-| Encoder at the belt | 1 count = 1.4648 µm (16384 CPR) |
+| Encoder at the belt | MT6835 16-bit: 0.36621 µm/count; legacy 14-bit: 1.4648 µm/count |
 | Belt batch, n = 10 | σ(L) 0.158 mm, range 0.60 mm |
 | Idler bearing | OD 8.99 mm, width 4.96 mm |
 
@@ -153,7 +162,7 @@ Encoder excluded as a delay source (MT6816 1 µs typ / 3 µs max).
 **J01 belt-off terms per leg** (η included): breakaway 1.321 N (13.5%) · mechanical without cogging
 1.276 N (13.0%) · cogging 0.237 N (2.4%) · dynamic drag (moving, 0.078 A) 0.336 N (3.4%).
 
-**Belt on (J01, B11, recipe B):** drag_c fwd 0.3169 / rev 0.3330 A, drag_v 3.24e-3 / 2.66e-3
+**Dated belt-on reference (J01, B11, recipe B, 2026-09-30; not present assembly state):** drag_c fwd 0.3169 / rev 0.3330 A, drag_v 3.24e-3 / 2.66e-3
 A/(rad/s); breakaway 0.295 A; backlash G 5.8 counts (0.014° output); k_beltline 67.2 kN/m at its
 clamp (±10% clamp-dependent); ring f_d 65.0 Hz, f_n 69.8 Hz, ζ 0.36. Detail: BELT_DRIVE §22.6.
 
@@ -176,19 +185,9 @@ Friction referred to the foot scales with G exactly as useful torque does, so th
 link lengths cannot improve transparency on the friction axis. Only lower friction or firmware
 cancellation can.
 
-### 8.3 Deferred, with promotion conditions
+### 8.3 Deferred work
 
-| Item | Size | Promotes when |
-|---|---|---|
-| J_total | — | M6b on a built actuator |
-| Force per amp | 4.145 / 5.000 N/A at α = 70 / 40° (closed-form Jacobian); 4.186 at 55° (the old 4.32 is the stroke mean, 4.296) | needs the real leg (M14) to validate η |
-| Sense gain mismatch (14/rev) | ~9% | if impedance force ripple above ~1 N matters |
-| Genuine-board acceptance run | — | completes the EG2124A evidence table |
-| **`DRIVER_VOLT_LIMIT` 6.0 → ~V_bus** | phase voltage capped at **3.46 V** (Uq_max = 0.5774 × 6.0); rig tops out near 190 rad/s unloaded | **before the first commanded velocity above 150 rad/s.** Raising it invalidates only `U0` and the low-side current-sense window (`R_eff` and `Ke` cancel). Afterwards re-run phase 3 and check phase 1 and the phase-5 \|I\| ratio |
-| Live Vbus (`VBUS_LIVE`) | robot sag 3–7 V; at 10 A, 2.4% on R/U0/Ke | PA0 is already ADC1 rank 5 in the DMA buffer, but that converter is uncalibrated (`CALFACT = 0`, reads ~60 counts low). Promote when bench currents exceed ~10 A, the first multi-actuator bus, or constants must be compared across sessions. **Acceptance: `Vdma` vs a terminal meter at two voltages ≥ 5 V apart** (not seed vs DMA) |
-| `CALFACT` noise floor | never measured | before comparing two `CALFACT` values. Cost: 5 power cycles |
-| PB14 thermistor | — | when a joint runs unattended. Hot/cold `R_eff` is M10 (phase 3 before/after 60 s of load) |
-| U₀ feed-forward | J01: 0.078 A ≈ 3% of standing load at 5S | when a board measures `U0` > 0.03 V. `dead_zone = 0.005` stays |
+See [WORKING_MEMORY.md §8.3](WORKING_MEMORY.md#83-deferred-electrical-work).
 
 ### 8.4 How to interpret `|I|`
 
@@ -197,6 +196,30 @@ cancellation can.
 - Spinning, in one telemetry line: **not** trustworthy (one unsynchronised instant; print-block
   commutation freeze, §12). Seen 6.9–15.5 A against a true 1.2 A.
 - `Uq` at its limit: meaningless. Check `Uq` first.
+
+### 8.5 Bench tuning reference
+
+Imported from CONTROL §10; these are the documented bench settings, not a claim about
+flashed firmware. Owning configuration: `src/open_test.cpp`. Plant changes require revalidation.
+
+#### Current loop
+
+| | Value |
+|---|---|
+| `PID_current_q/d.P` | **0.1** |
+| `PID_current_q/d.I` | **335** |
+| `LPF_current_q/d.Tf` | **0.00025** |
+| `PID_current_q/d.limit` | `voltage_limit` |
+| `current_limit` | 2.0 A |
+
+#### Velocity test mode
+
+| Gain | Value |
+|---|---|
+| `PID_velocity.P` | **0.2 A/(rad/s)** |
+| `PID_velocity.I` | **1.5** |
+| `PID_velocity.D` | **0** (quantised encoder + filtered velocity = noise amplifier) |
+| `LPF_velocity.Tf` | 0.02 |
 
 ---
 
