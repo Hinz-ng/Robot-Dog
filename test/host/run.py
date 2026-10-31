@@ -22,7 +22,7 @@ CASES = [
     ("mit_law estimator wrap-safe", "test_mit_law.cpp", []),
     # joint_cal.h encoder-chip guard: (JOINT_ID, calZeaUsable expected, banner text)
     ("joint_cal J01 (MT6835 zea)",  "test_joint_cal.cpp", ["-DJOINT_ID=1", "-DEXPECT_USABLE=1", "-DEXPECT_TEXT=\"press 'V'\""]),
-    ("joint_cal J03 (not measured)", "test_joint_cal.cpp", ["-DJOINT_ID=3", "-DEXPECT_USABLE=0", "-DEXPECT_TEXT=\"UNCALIBRATED\""]),
+    ("joint_cal J03 (MT6835 zea)",  "test_joint_cal.cpp", ["-DJOINT_ID=3", "-DEXPECT_USABLE=1", "-DEXPECT_TEXT=\"press 'V'\""]),
     ("joint_cal J04 (unbuilt)",     "test_joint_cal.cpp", ["-DJOINT_ID=4", "-DEXPECT_USABLE=0", "-DEXPECT_TEXT=\"UNCALIBRATED\""]),
     # Row 14 = J01 belt-off baseline: zea measured through the MT6816 -> ignored.
     ("joint_cal row 14 (stale chip)", "test_joint_cal.cpp", ["-DJOINT_ID=14", "-DEXPECT_USABLE=0", "-DEXPECT_TEXT=\"IGNORED\""]),
