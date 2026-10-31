@@ -24,7 +24,7 @@ then the hanging leg. The work order below is carried from the local docs, not r
 |---|---|---|
 | Local checkout inspected 2026-10-31 | `main`, `d78a55b`; `src/fleet_config.h` configures MT6816, 14 bits; `joint_cal.h` dates J01 belt-on row 2026-09-30 and J03 belt-off row 2026-10-08 | Software snapshot; does not identify flashed firmware or present assembly |
 | Imported technical README, status through 2026-10-10 | J01 belt off since 2026-10-10; CAN-T0 N0–N4 accepted; J03 belt-off baseline complete | Historical work-status snapshot |
-| `docs/cal/Belt-On Baseline Procedure.md` | MT6835 banner and post-assembly checks; updated reference docs target MT6835 / 16-bit; historical records retain original resolution | Forward standard confirmed: MT6835 / 16-bit; source is can-t0 21cec6c, not this legacy main checkout. Confirm physical plant before applying gates |
+| `docs/cal/Belt-On Baseline Procedure.md` | MT6835 banner and post-assembly checks; updated reference docs target MT6835 / 16-bit; historical records retain original resolution | Forward standard confirmed: MT6835 / 16-bit; source is can-t0 21cec6c, now merged into main. Confirm physical plant before applying gates |
 
 The GitHub-facing root README is an overview, not the technical reference or live work board.
 Historical instructions in handoffs/exports do not override current AGENTS.md or the user.
@@ -200,6 +200,7 @@ Imported from FIRMWARE; inspect the selected source/build before treating a gap 
 ## Documentation refresh
 
 2026-11-01: user approved documentation and branch integration. can-t0 is merged into main;
-J01 and T0_J01 builds passed. Sources refresh is in progress; verify uploaded contents before
-claiming synchronization. docs/cal remains excluded. The closing response records the final
+J01 and T0_J01 builds passed. Sources refresh is pending: ChatGPT returned an error on replacement, then Cloudflare
+human verification blocked access. No successful deletion/upload was confirmed. Verify the
+authoritative list and uploaded content after access is restored. docs/cal remains excluded. The closing response records the final
 refresh result; instructions require a refresh after future documentation-changing sessions.
