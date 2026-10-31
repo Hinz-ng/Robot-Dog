@@ -199,8 +199,8 @@ Imported from FIRMWARE; inspect the selected source/build before treating a gap 
 
 ## Documentation refresh
 
-2026-11-01: user approved documentation and branch integration. can-t0 is merged into main;
-J01 and T0_J01 builds passed. Sources refresh is pending: ChatGPT returned an error on replacement, then Cloudflare
-human verification blocked access. No successful deletion/upload was confirmed. Verify the
-authoritative list and uploaded content after access is restored. docs/cal remains excluded. The closing response records the final
-refresh result; instructions require a refresh after future documentation-changing sessions.
+2026-11-01: reviewed documentation committed; can-t0 merged into main. J01 and T0_J01 builds
+and documentation link checks passed; host test runner stalled without results. No hardware
+was operated. The closing response and external upload manifest record Sources verification;
+future documentation-changing sessions must refresh changed Sources and verify their content.
+docs/cal remains excluded from durable uploads.
