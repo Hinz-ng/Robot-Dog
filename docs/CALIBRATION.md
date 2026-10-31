@@ -160,7 +160,7 @@ fail halfway.
 **Row fields:** `zea`, `dir`, `zea_enc` (MT6835 source), `R_eff`, `U0`, `Ke`, `L`, `vbus_scale`, `i_scale`, `drag_c_fwd/rev`,
 `drag_v_fwd/rev` (positive magnitudes; the consumer applies sign(ω)), `breakaway_A`, serials, date,
 belt state. `Kt` is derived (`calKt()` = 1.5·Ke), never stored. AUTOCALIB phase 7 emits a pasteable
-row and **carries** `vbus_scale`, `i_scale` and `breakaway_A` from the flashed row (blocked, with
+row (with `zea_enc`) and **carries** `vbus_scale`, `i_scale` and `breakaway_A` from the flashed row (blocked, with
 `*** CARRY BLOCKED ***`, if the flashed row is another joint's).
 
 Which file a constant belongs in: the *Three homes* table in `CLAUDE.md`. `vbus_scale` is per
@@ -177,11 +177,47 @@ board (J01 0.008448, J02 0.008516, J03 0.008357). Unbuilt rows carry `0.0f` = no
 | Motor | `Ke`, `L`, cogging | rewinding, magnet replacement |
 | Board | `vbus_scale`, `i_scale`, `U0` | board swap |
 | The pairing | **`zea`**, **`dir`**, `R_eff`, INL, drag, `breakaway_A` | any motor ↔ board swap, or touching the magnet mount |
+| The encoder | **`zea`**, **`dir`**, `zea_enc`, INL | encoder board or chip swap (drag and breakaway too if the magnet mount was touched) |
 
 ### Safe default for unfilled rows
 
 `zea = -1.0f`, `dir = 0`, or chip-mismatched `zea_enc`: bench `runInitFOC()` falls back to full alignment, and the banner prints
 `!! UNCALIBRATED joint`.
+
+### Changing a joint's encoder board or chip
+
+1. Desk: in the row set `zea = -1.0f`, `dir = 0`, `zea_enc = 0`; keep every other field (board,
+   motor and plant are unchanged). Commit only when requested.
+2. [`cal/BELT_OFF_BASELINE.md`](cal/BELT_OFF_BASELINE.md) Step 2 (encoder) on the harness.
+3. Step 3 (AUTOCALIB, `1`→`6`). Gates against the row: **`Ke` ±1%** (a wrong angle scale moves it),
+   **`R_eff` ±3%** (copper ~0.4 %/K), drag at 100 rad/s ±10% (J01 run-to-run 4%; a rubbing
+   magnet adds tens of %). Record INL and `T_delay`. **ZEA residual ≤ 2° elec** (J01 0.78,
+   J03 0.63): a phase-2 PASS alone does not prove `zea` (FAILURE_MODES, jammed bearing).
+4. Paste **only `zea`, `dir` and `zea_enc`** from the phase-7 row. If the row's belt state differs
+   from the plant, its drag must not be pasted at all.
+5. Reflash, `V` ≤ 8° elec. Then Step 6 on Tier 0 (UID already recorded): `encok=1 crc=0`, one
+   motor turn = 0.6981 ± 0.005 rad with the joint's recorded sign (hand alignment to a pen mark
+   scatters ±0.003 rad; a resolution error is ≥ 75% off, gear ratio 89%, sign 200%).
+
+### After an `ENC_BITS` change (once, on J01)
+
+Calibrations are stored in physical units and stay valid; this checks scale and sign.
+
+| # | Do | Pass |
+|---|---|---|
+| 1 | `e`, shaft still | `crc_err=0`, `span` ≤ 1, `us_per_read` ≈ 11.7 |
+| 2 | `E`: one full turn, then ≥ 60 s still | `span` reaches ENC_CPR − 1 (65535); record `trans_per_s` |
+| 3 | `V` | ≤ 8° elec |
+| 4 | AUTOCALIB `1`→`6`, no paste | `Ke` ±1% and `R_eff` ±3% of the row; INL 0.85–0.90° mech; `T_delay` 84–93 µs |
+| 5 | MIT (`m`, `m kp 5 kd 0.365`, `g`, `l`, `x`, `d`) | `clamp` column decodes; `p` continuous; `tau_law` steps at rest ≤ kd × 0.0098 N·m |
+| 6 | Tier 0 `-e T0_J01` | `encok=1`; one CW motor turn = −0.6981 ± 0.005 rad; disarmed `lps` ≈ 40.8 k |
+
+Rows 4 and 6 are the angle scale and sign: a miss means revert the `ENC_BITS` commit.
+
+J01, 14 → 16 bits, 2026-10-19 (`473ab9b`): passed. `e` 0 CRC, span 0, 11.70 µs · `E` span 65535,
+0 changes in 35 s still · `V` 2.10° · `R_eff` −0.34%, `Ke` −0.74% · INL 0.897° · `T_delay` 89.3 /
+93.1 µs · MIT clamp 0 throughout, `p` continuous through the count wrap, `tau_law` steps at rest
+3.4–3.6 mN·m (kd 0.365) · Tier 0 `encok=1 crc=0`, `lps` 40.8 k, one turn −0.6988 / +0.698–0.702 rad.
 
 ### The `V` command — press it after every flash
 

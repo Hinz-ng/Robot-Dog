@@ -6,7 +6,7 @@
 Produces a joint's `joint_cal.h` row, its Tier-0 board ID, and raw records in `docs/cal/Jnn/`. About 1.5 h.
 **Plant:** bare motor, clamped by its body, belt off, not in the plate.
 **Firmware:** MT6835 / 16-bit build, bench harness `-e Jnn`, plus one Tier-0 boot at the end.
-Source reference: can-t0 `21cec6c`; main in this checkout is legacy and must not be flashed for this procedure.
+Source reference: can-t0 `21cec6c`; the MT6835 implementation is merged into main.
 Written with J03's numbers; for another joint, swap the number and use its motor's reference row.
 
 Store accepted board/pairing calibration and motor estimates per row; compare motor Ke/L
@@ -54,7 +54,7 @@ Log header: `J03  date  board label  motor label  pack V  meter UT89X  magnet ga
 
 Back to ~12 V for the rest.
 
-## Step 2: encoder (2 min)
+## Step 2: encoder (3 min)
 
 Press `e`: require `ENC PASS`, zero CRC failures and clean sensor status. Then `E` and turn
 one full revolution: raw angle must move and wrap in the configured 0–65535 range; no CRC,
@@ -71,7 +71,8 @@ sensor board. A clean stationary frame alone cannot prove that angle sensing wor
 
 Gate first: banner `Vbus=` vs meter **±0.03 V**, else reboot.
 
-Press **`Y 1 2 3 4 5 6 7`**, one at a time, waiting for each result line. `2` twitches; `5` spins both ways, so keep hands clear.
+Press **`Y 1 2 3 4 5 6 7`**, one at a time, waiting for each result line (2–6 refuse until 1 has
+passed this boot). `2` twitches; `5` spins both ways, so keep hands clear.
 
 | Quantity | Reference (motor_2 / J02) | Pass |
 |---|---|---|
@@ -79,15 +80,17 @@ Press **`Y 1 2 3 4 5 6 7`**, one at a time, waiting for each result line. `2` tw
 | `R_eff` (board) | 0.222 Ω, current ladder | 0.211–0.233 Ω |
 | `U0` (board) | 0.015 V | 0.005–0.030 V |
 | **`Ke`** | 0.018097 | ±1 %: 0.017916–0.018278 |
-| `L` | 46.25 µH | 41.6–50.9 µH |
+| `L` | 46.25 µH | 41.6–50.9 µH; a phase-4 `drift` WARN alone does not void it (J01 bare motor: 11–33 mrad by rotor position, `L` unchanged) |
 | `drag_c` fwd / rev | 0.106 / 0.107 A | 0.075–0.139 A each |
-| MT6835 phase-6 delay | 91.5 µs; recorded range 84–99 µs | diagnostic comparison, not a transferred MT6816 ratio gate |
+| ZEA residual (phase 6) | 0.63–0.80° elec (J01, J03) | ≤ 2° elec; a phase-2 PASS alone does not prove `zea` (a jammed bearing passed 78° off) |
+| `T_delay` (diagnostics) | 84–99 µs (J01, J03; MT6835) | 80–100 µs |
 
 **`Ke` is the M1 cross-check.** A miss with the banner off → redo M1. A small miss with M1 and the banner both confirmed → the reference is suspect, not the board (J03: −1.09 %, J02's scale carries a 0.32 % ambiguity). Store the new board's own `Ke` and note why.
 
 Save the full phase-7 output **verbatim** as `docs/cal/J03/J03_<date>_autocalib (bare motor).csv`.
 
-> **Then:** paste the phase-7 row over the J03 row; fill `board_sn`, `motor_sn`, date and `"OFF"`; check `vbus_scale` is the M1 value. Flash `-e J03`, press **`V`**: **≤ 8° elec** and direction matches. 8–15° = check the magnet; > 15° = wrong row or magnet slipped.
+> **Then:** paste the phase-7 row over the J03 row (it ends `, ENC_MT6835 }`, the chip `zea` was
+> measured through); fill `board_sn`, `motor_sn`, date and `"OFF"`; check `vbus_scale` is the M1 value. Flash `-e J03`, press **`V`**: **≤ 8° elec** and direction matches. 8–15° = check the magnet; > 15° = wrong row or magnet slipped.
 
 ## Step 4: M2, current scale → `i_scale` (25 min)
 
@@ -142,7 +145,12 @@ Store the mean (with n, sd and date) as `breakaway_A`. Save the 10 `M4,` rows as
    - `can_proto self-test: PASS`, and `CAN: HSE ready ... NBTP=0x500 ... DAR=1`.
    - **`cs gains after align`: −36.458333 ×3.** This is the evidence for skipping the boot pulses at leg boot.
    - The **`{ "J03", { 0x…, 0x…, 0x… } },`** line → paste into `JOINT_UID[]` (J03 entry).
-2. Flash the harness back: `pio run -e J03 -t upload`.
+2. Status line (2 Hz, disarmed): **`encok=1 crc=0`**.
+3. Pen mark on the motor bell. Turn the motor **one revolution** by hand and read `p` on the status
+   line: it changes by **0.6981 ± 0.005 rad** (one motor turn through 9:1; hand alignment
+   scatters ±0.003). Record the sign (J01: one
+   CW revolution = −0.698 rad). Off by 9× = gear ratio; wrong sign on a repeat = `dir`.
+4. Flash the harness back: `pio run -e J03 -t upload`.
 
 ---
 
@@ -157,5 +165,5 @@ Store the mean (with n, sd and date) as `breakaway_A`. Save the 10 `M4,` rows as
 | `V` | | ≤ 8° elec |
 | M2: cold/hot R · Ibus span · **g ±** | | ≤ 2 % · 230–280 mA · valid g with uncertainty |
 | M4: mean / sd (n = 10) | | 0.20–0.40 / ≤ 0.12 A |
-| cs gains · UID row | | −36.458333 ×3 · recorded |
+| cs gains · UID row · one turn | | −36.458333 ×3 · recorded · 0.6981 ± 0.005 rad |
 

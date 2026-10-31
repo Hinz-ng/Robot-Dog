@@ -11,7 +11,7 @@ Encoder/build applicability: [WORKING_MEMORY.md](WORKING_MEMORY.md#snapshot-and-
 ## 5. Encoder — MT6835, 4-wire SPI
 
 All forward work uses MT6835 (user decision, 2026-10-31). Source inspected: `can-t0` at
-`21cec6c`, `src/mt6835.h`, `fleet_config.h`, `joint_cal.h`; the current main checkout is legacy.
+`21cec6c`, `src/mt6835.h`, `fleet_config.h`, `joint_cal.h`; this implementation is now merged into main.
 
 - 21-bit chip read at **16 bits / 65536 counts per motor revolution**. `angle21` is diagnostic.
 - Mode 3; PB5 CSN / PB6 MOSI / PB7 MISO / PB8 SCK. Read-only driver; CRC-8 and
@@ -21,24 +21,59 @@ All forward work uses MT6835 (user decision, 2026-10-31). Source inspected: `can
 - Stored ZEA/direction must have matching `zea_enc`. Count conversion and delay:
   [CONSTANTS](CONSTANTS.md#81-electrical--shared).
 
-### Legacy MT6816 wiring and measurements
 
-14-bit, 16384 cnt/rev, bit-banged mode 3: PB5 = CSN, PB6 = MOSI, PB7 = MISO, PB8 = SCK; HVPP → 3V3.
-Parity is checked per read; `No_Mag_Warning` and `Over_Speed` are available over SPI. Propagation
-delay 1 µs typ / 3 µs max (not a delay source).
+21-bit, read at 16 bits since 2026-10-19 (65536 counts/rev; the driver truncates `ANGLE >> 5`), bit-banged SPI
+mode 3, read-only. Wiring: [`HARDWARE.md`](HARDWARE.md). Chip facts with datasheet sections
+(MagnTek Rev 1.3): `src/mt6835.h`. At 16 bits 1 count = 0.0055° at the motor = 0.0107 mrad at the
+output = 0.366 µm of belt. Counts quoted from before 2026-10-19 are 14-bit (4× these).
+
+| Quantity | Value | Source |
+|---|---|---|
+| Read (48-clock burst + CRC-8) | 11.68 µs | J01, `e`, 2026-10-13 |
+| Integrity | CRC-8 over angle + status: every single-bit error caught, 0.39% of random garbage passes | host test |
+| Status in every frame | over-speed, weak field, under-voltage (`no_mag` = weak OR under-voltage) | datasheet §7.6 |
+| Propagation delay | 10 µs typ | datasheet §5 |
+| Hysteresis | 0.011° (HYST = 7, factory) = 2 counts at 16 bits, half a count at 14 | datasheet, J01 boot |
+| Transition noise | 0.0015° rms at BW = 5 (factory) | datasheet §5 |
+| Commutation delay T (phase 6, belt off) | 84.3 / 88.1 µs at 12.08 kHz; 86.6 / 90.2 µs at 12.62 kHz | J01, 2026-10-13 |
+| INL | 0.845 / 0.868 / 0.897° mech pk-pk (three runs) | J01 |
+| Field range | 30–1000 mT; below it the chip flags weak field | datasheet §4 |
+
+**Link health** (`mt6835.h`, used by Tier 0, the harness run loop and AUTOCALIB): an invalid read
+is a CRC failure or the all-zero word. Four in a row trips an armed joint (~0.35 ms of angle age);
+arming needs 1 s with no invalid read. Host model: at 99.65 / 50 / 20 / 5% errors the trip comes
+after 0.35 ms / 2.8 ms / 67 ms / 15 s, and arming is refused from ~10⁻³ up.
 
 - **Magnet:** diametric N35 D6 × 3 mm, centred ≤ 0.1–0.2 mm, **gap 0.5–1.0 mm, never zero**, tilt
   < 3°, non-ferromagnetic mount, bonded with a shaft-piloted jig. A zero gap (magnet rubbing the
-  package) caused A1's count loss, its "bearing whine" and its 1/rev disturbance.
-- **No field:** without a saturating field (~300 G) the angle engine outputs garbage that looks
-  like plausible motion, not zeros.
-- **A dead MISO returns all-zero frames, which pass parity and `No_Mag`** (J03's original encoder;
-  J02's encoder board, 2026-10-08). The harness `e` test now FAILs when every frame is 0x0000, and
-  Tier 0 refuses to arm / trips on them. Turn the shaft (`E`) to confirm `raw` moves.
-- **Velocity needs a minimum window:** differencing every loop at 15 kHz and 2 rad/s is 0.089
-  counts per sample (each estimate 0 or 22.6 rad/s). A 2 ms minimum window gives ±0.15 rad/s.
-- Retired paths: ABZ via TIM4 quadrature (4096 CPR; counts noise, cannot detect corruption) and the
-  software `Encoder` class (lost counts above ~100 k edges/s).
+  package) caused A1's lost motion, its "bearing whine" and its 1/rev disturbance.
+- **A dead MISO returns all-zero frames, which pass parity and CRC alike** (J03's and J02's MT6816
+  boards, 2026-10-08). `e`, AUTOCALIB phase 1 and the link check all reject them.
+- **The span gate is 1 count, not 0:** a truncated reading can flicker at a count boundary. At 14
+  bits J01 read span 1 in 3 of 156 still-shaft windows. At 16 bits (2026-10-19): 0 changes in 35 s
+  still, disarmed; armed at kp 5 kd 0.365 the count walks over 5 counts (0.05 mrad output) at
+  ~150 changes/s, from rotor motion or PWM pickup (that capture cannot separate them).
+- **Velocity is quantised:** at ~11.5 kHz one count per loop is 1.1 rad/s at the motor at 16 bits
+  (4.4 at 14). Through the MIT estimator's 1 ms filter one count step is 0.0098 rad/s of output, so a
+  flicker costs kd × 0.0098 N·m: 3.4–3.6 mN·m measured at kd 0.365 (J01, 16 bits), against 14 mN·m
+  (kd × 0.039) at 14 bits at b1 (BELT_DRIVE §22.7).
+- Retired: ABZ via TIM4 (4096 counts/rev; no corruption check), the software `Encoder` class (lost
+  edges above ~100 k/s), and the MT6816 (14-bit, 1-bit parity; replaced 2026-10-13).
+
+### MT6816 → MT6835 (2026-10-13, J01 belt off)
+
+| | MT6816 | MT6835 |
+|---|---|---|
+| Integrity check | 1-bit parity: ~50% of garbage passes | CRC-8: 0.39% passes |
+| Read time | 6.65 µs | 11.68 µs |
+| Harness loop rate, disarmed | 63.9 k/s | 47.3 k/s |
+| Commutation delay T | 71–76 µs at 12.9–13.4 kHz (0.958 × loop period) | 84–99 µs at 12.1–12.6 kHz (J01 84–93, J03 96–99) |
+| Torque loss from T at 270 / 600 rad/s | 0.95% / 4.8% | 1.45% / 6.8% |
+| INL | 1.03° mech pk-pk (J01) | J01 0.85–0.90°, J03 0.935° |
+| Link failure seen as | a noisy angle (parity passes half) | a stale angle, tripped in 4 reads |
+
+The MT6835's T did not drop when the loop sped up from 12.08 to 12.62 kHz (a per-loop delay predicts
+−3.4 µs): the excess over the MT6816 is mostly fixed (10 µs propagation plus the longer read).
 
 ---
 
@@ -56,7 +91,8 @@ Clamped: only `f` with a previously verified usable row; never `F` or `V`.
   movement`.
 - **`MOT: Skip dir calib` / `Skip offset calib` means no new measurement was taken.**
 - Quality gates: `Id ≈ 0` and `|I|/Iq ≈ 1.2247` (J01: 1.224 / 1.223 / 1.224 at 1.24 / 2.64 / 4.45 A).
-- Same-session repeatability belt-off: 1–5 counts, torque cost < 0.15%. Do not chase it.
+- Same-session repeatability belt-off: 0.15–0.77° elec (1–5 counts at 14 bits), torque cost < 0.15%. Do
+  not chase it.
 
 ---
 
@@ -95,20 +131,22 @@ up to 42 rad/s) while the general form holds to 0.2–0.9%.
 In current mode the loop chases these and turns them into real torque ripple (0.93 N pp at the
 foot on A1). Below friction; work gate: [WORKING_MEMORY.md §8.3](WORKING_MEMORY.md#83-deferred-electrical-work).
 
-### Sensor INL (J01, SPI, 2026-08-06)
+### Sensor INL
 
-Parity-separated even part of the angle error, ±109.5 rad/s, 32 bins:
+Direction-separated even part of the angle error, phase 5 bins (32 per rev), J01 belt off:
 
-| Harmonic | Electrical | Mechanical | Phase |
-|---|---|---|---|
-| **1/rev** | 2.298° | **0.328°** | +120.3° |
-| 2/rev | 1.297° | 0.185° | +8.5° |
-| 3/rev | 0.092° | 0.013° | −110.3° |
-| **Total pk-pk** | 6.51° | **0.93°** | — |
+| Harmonic (mech) | MT6816, 2026-08-06, ±109.5 rad/s | MT6835, 2026-10-13, ±108 rad/s |
+|---|---|---|
+| 1/rev | **0.328°** (2.298° elec) | 0.070° |
+| 2/rev | 0.185° | **0.326°** |
+| 3/rev | 0.013° | 0.012° |
+| Total pk-pk | 0.93° (6.51° elec) | 0.845° / 0.868° (two runs) |
 
-- Fixed in rotor position (phases agree between directions within 9°). 1/rev dominates → magnet
-  eccentricity / runout, reducible by better centring (M8). Inside the datasheet's ±1.5°.
-- INL is the dominant angle-error term (7.7× the ZEA residual) but repeatable and non-accumulating:
-  no compensation needed.
+- Fixed in rotor position (MT6816: phases agree between directions within 9°). MT6816 1/rev →
+  magnet eccentricity, reducible by centring (M8); MT6835 2/rev → tilt or channel gain, centring
+  good. Both inside their datasheets (MT6816 ±1.5°, MT6835 ±1.0° max).
+- INL is the dominant angle-error term (~7.6× the ZEA residual on both chips) but repeatable and
+  non-accumulating: no compensation needed. The MT6835's user auto-calibration (~±0.07°) is
+  deferred ([`README.md`](TECHNICAL_REFERENCE.md) §15).
 - Belt tension does not grow it: J01 belt off → on (no idlers) 1/rev 0.3690° → 0.3569°, 2/rev
   0.2035° → 0.1977°, even-part r = 0.9986 over 32 bins. These are historical INL results; the supported phase-4/5/6 calibration sequence is belt-off.

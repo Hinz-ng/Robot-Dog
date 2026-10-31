@@ -68,6 +68,14 @@ struct JointCal {
   float  breakaway_A;      // A, M4 STATIC threshold, mean over rotor positions
                            //    (n, sd, direction split in the row comment).
                            //    Belt off: > drag_c. Belt on: ~= drag_c.
+
+  // ---- PAIRING: the encoder chip zea and dir were measured THROUGH ----
+  uint16_t zea_enc;        // ENC_MT6816 / ENC_MT6835; 0 = not measured (unbuilt
+                           //    rows omit it). A different chip reads a different
+                           //    angle, so when this != ENC_CHIP (fleet_config.h)
+                           //    the stored zea/dir are IGNORED: the harness
+                           //    re-aligns, Tier 0 refuses to arm. AUTOCALIB phase 7
+                           //    emits it with the row.
 };
 
 // vbus_scale is PER BOARD (J01 and J02 measured 0.80% apart) and R_eff, U0 and
@@ -85,59 +93,61 @@ static inline float calKt(const JointCal& c) { return c.Ke * KT_PER_KE; }
 const JointCal JOINTS[] = {
 
   // -- J01 -- B-SPI-01 / M-SPI-01, the reference actuator. BELT-ON row (B11),
-  //    pulley recipe B, 2026-09-30 (BELT_DRIVE §22.6). -e J01 flashes this.
+  //    long-shaft output pulley, 2 output bearings, 2026-10-28 (BELT_DRIVE §22).
+  //    -e J01 flashes this. Raw: docs/cal/J01/J01_2026-10-28_*.
   //    The belt-off baseline is the LAST row of the table (index 13).
-  //    zea, dir, R_eff, U0, Ke, L: belt-off AUTOCALIB 2026-08-07, rescaled
+  //    ENCODER: MT6835 since 2026-10-12. zea/dir: AUTOCALIB phase 2 2026-10-13,
+  //    belt off, n = 7, sd 2.04 deg elec. Only zea/dir/zea_enc were taken from
+  //    that run: the belt is off, so its drag is the wrong plant for this row.
+  //    R_eff, U0, Ke, L: belt-off AUTOCALIB 2026-08-07, rescaled
   //    x1.010768 by M1 2026-08-18. i_scale: M2 2026-08-20, 0.9621 +-1.2%.
-  //    Belt-on Ke is drag-contaminated and never carried.
-  //    Belt-on tripwires 2026-09-30: V 0.62 deg elec; phase 3 R 0.22404 (a
-  //    different chord of the same curved R -- not a reason to edit).
-  //    DRAG (B3): phase 5 in both orders; each direction pooled over orders,
-  //    because the direction run second reads 0.10-0.13 A higher:
-  //        fwd first   fwd 0.2265 + 0.004009*|w|   rev 0.3576 + 0.002597*|w|
-  //        rev first   rev 0.3084 + 0.002730*|w|   fwd 0.4072 + 0.002466*|w|
-  //    BREAKAWAY (B4): 10 positions x 2 dirs, mean 0.295 A, SEM 0.027, range
-  //    0.080-0.475 (one reading over the 200-count creep flag; 0.286 without it).
-  //    Not fields: backlash G 5.8 counts; k 67.2 kN/m true at its clamp; ring
-  //    f_d 65.0 Hz.
-  //    Belt-off diagnostics: T/T_loop 0.974 / 0.945; INL 1.029 deg mech pk-pk
-  //    (1/rev 0.369, 2/rev 0.204); ZEA residual 0.467 deg elec.
+  //    Belt-on Ke is drag-contaminated and never carried. Phase 3 R reads a
+  //    different chord of the same curved R (0.22404 2026-09-30, 0.22612
+  //    2026-10-13) -- not a reason to edit.
+  //    DRAG (B3): phase 5 x9 (5 fwd-first, 4 rev-first); each direction is the
+  //    mean of the two order-group means. Intercept and slope trade off run to
+  //    run (intercept sd 0.032/0.038 A); at 60 rad/s the sd is 0.016/0.022 A:
+  //        fwd 0.494 / 0.676 / 0.858 A   rev 0.514 / 0.649 / 0.784 A  at 20/60/100 rad/s
+  //    The direction run second reads +0.013/+0.016 A at 60 rad/s (was 0.10-0.13).
+  //    BREAKAWAY (B4): mean of 5 position pairs, each the mean of its + and -
+  //    readings (repeated creep-flagged readings kept; position 1 = the redo
+  //    pair). SEM 0.045, pair range 0.280-0.528. Readings 0.160-0.660 A.
+  //    Not fields: ladder intercept -28.7 um, slope 277 um/A (k 53 kN/m), G not
+  //    readable on this plant (BELT_DRIVE §22.4.4); ring, reverse kicks, f_d 74.1 Hz,
+  //    zeta 0.28. R_eff 0.22395 (+0.22%) and V 1.11 deg elec on this plant.
+  //    Belt-off diagnostics, MT6835, two runs 2026-10-13: INL 0.845 / 0.868 deg
+  //    mech pk-pk; ZEA residual 0.780 / 0.802 deg elec; Ke 0.018025 / 0.017988
+  //    (+0.47 / +0.26% vs row: scale check). Delay T 84-90 us, flat when the loop
+  //    went 12.08 -> 12.62 kHz (T/T_loop 1.02-1.14): a fixed delay, not per-loop.
   //    M2 fit: P_bus = 0.8027 + 0.0348*I + 0.34816*I^2;  U_del = 0.01350 + 0.22332*I.
-  { "J01", "B-SPI-01", "M-SPI-01", "2026-09-30", "10mm-9:1",
-     6.0542f, +1, 0.22346f,        // zea, dir, R_eff      CARRIED (B1, B2 pass)
+  { "J01", "B-SPI-01", "M-SPI-01", "2026-10-28", "10mm-9:1",
+     5.9879f, +1, 0.22346f,        // zea, dir (MT6835, 2026-10-13); R_eff CARRIED
      0.01037f,                     // U0                   CARRIED
      0.017941f, 43.77e-6f,         // Ke, L                CARRIED -- belt-on Ke never
      0.008448f, 0.9621f,           // vbus_scale, i_scale  CARRIED
-     0.3169f, 0.3330f,             // drag_c fwd, rev      RECIPE B, B3 pooled over both orders
-     3.24e-3f, 2.66e-3f,           // drag_v fwd, rev      RECIPE B, B3 pooled over both orders
-     0.295f },                     // breakaway_A          RECIPE B, B4 n=20 (reported A)
+     0.4017f, 0.4449f,             // drag_c fwd, rev      LONG SHAFT, B3 pooled over both orders
+     4.59e-3f, 3.39e-3f,           // drag_v fwd, rev      LONG SHAFT, B3 pooled over both orders
+     0.427f, ENC_MT6835 },         // breakaway_A          LONG SHAFT, B4 5 pairs (reported A); zea_enc
 
-  // -- J02 -- B-ABZ-01 / M-ABZ-01 (the rebuilt A1). Belt-off AUTOCALIB
-  //    2026-08-08, rescaled x1.018904 by M1 2026-08-18. board_sn / motor_sn
-  //    still unlabelled (docs/README.md §15).
-  //    The ESC board failed after P8; the MT6816 board was found dead 2026-10-08
-  //    (MISO stuck low) and replaced -- zea/dir belong to the OLD encoder.
-  //    R_eff 0.22810 is the 0.28-1.96 A chord; phase 3 on the current 0.68 V
-  //    ladder reads ~0.222 on the same hardware -- not a fault.
-  //    vbus_scale 0.008516 carries an unresolved 0.32% ambiguity: two banner
-  //    pairings imply 0.008489 / 0.008516, below the UT89X's resolution.
-  //    i_scale 0.9690 +-2.7%, PROVISIONAL (1.15 sigma). M2 fit:
-  //        P_bus = 0.7924 + 0.0982*I + 0.34953*I^2;  U_del = 0.02419 + 0.22580*I
-  //    M4: n = 18 over 6 positions, 0.2983 +-0.0259 A, sd 0.1098.
-  //    Diagnostics: INL 1.449 deg mech pk-pk (1/rev 0.311, 2/rev 0.519 -- tilt
-  //    or channel gain, not centring); ZEA residual 0.240 deg elec; T/T_loop
-  //    0.937 / 0.961; M6a J 18.7e-6 (see J_ROTOR_KGM2).
-  { "J02", "___", "___", "2026-08-08", "OFF",
-     0.3482f, +1, 0.22810f,        // zea, dir, R_eff  @ 0.28-1.96 A  M1-rescaled x1.018904
-     0.014937f,                    // U0   M1-rescaled
-     0.018097f, 46.25e-6f,         // Ke, L   (Kt = calKt() = 0.027145)  M1-rescaled
-     0.008516f, 0.9690f,           // vbus_scale (M1, 0.32% ambiguity above), i_scale PROVISIONAL
-     0.1061f, 0.1074f,             // drag_c fwd, rev      unchanged (reported A)
-     0.000948f, 0.000845f,         // drag_v fwd, rev      unchanged (reported A)
-     0.2983f },                    // breakaway_A  M4, n=18, +-8.7%  (reported A)
-  // -- J03 -- board_3 (new) + motor_2 (J02's motor) + a new MT6816 board. Bare
-  //    motor, belt off. AUTOCALIB 2026-10-08 (banner 11.98 V vs UT89X 11.97 V):
-  //    zea sd 3.5 deg (n = 7); R_eff +-0.75%; INL 1.42 deg mech (1/rev, centring).
+  // -- J02 -- RETIRED 2026-10-13, now an unbuilt row: the B-ABZ-01 ESC board
+  //    failed after P8, its motor is J03's motor_2, and its MT6816 board died.
+  //    A row is never deleted (every later JOINT_ID would shift). The measured
+  //    values are in git at e3905f7 and quoted in the docs; a rebuilt J02 is a
+  //    new joint: docs/cal/BELT_OFF_BASELINE.md.
+  { "J02", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+  // -- J03 -- board_3 (new) + motor_2 (J02's motor). Bare motor, belt off.
+  //    ENCODER: MT6835 (recorded 2026-10-13). zea/dir: AUTOCALIB phase 2
+  //    2026-10-24, belt off, n = 7, sd 2.31 deg elec; phase 6 ZEA residual
+  //    0.634 deg elec. Only zea/dir/zea_enc were taken from that run. Same run,
+  //    against this row: R 0.23042 (-0.11%), Ke 0.017889 (-0.06%), drag at
+  //    100 rad/s fwd -1.4% / rev +0.9%, L 43.3 uH; INL 0.935 deg mech; T 95.6 /
+  //    98.5 us at 12.55 kHz.
+  //    An earlier belt-on run that day had PLA debris jamming a bearing: phase 2
+  //    PASSED at sd 3.57 deg elec but was 77.8 deg elec off, phase 3 read R
+  //    -7.2%, and phase 5 stalled. Debris cleared, the bearing re-tested above.
+  //    R_eff, U0, Ke, L from AUTOCALIB 2026-10-08 (banner
+  //    11.98 V vs UT89X 11.97 V; R_eff +-0.75%).
   //    vbus_scale: M1 on the SEED path, meter at the pads, 12.02 / 22.70 V; the
   //    two single-point ratios agree to 0.005%. Do not derive M1 from the DMA
   //    buffer: it gave 0.008302, 0.66% low (offset -58 / -49 counts, not constant).
@@ -147,13 +157,13 @@ const JointCal JOINTS[] = {
   //    M4 2026-10-10: 0.2545 A, n = 10, sd 0.078, fwd 0.243 / rev 0.266.
   //    Raw: docs/cal/J03/.
   { "J03", "board_3", "motor_2", "2026-10-08", "OFF",
-     0.3866f, +1, 0.23068f,        // zea, dir, R_eff
+     1.0739f, +1, 0.23068f,        // zea, dir (MT6835, 2026-10-24, belt off), R_eff
      0.01919f,                     // U0
      0.017900f, 45.75e-6f,         // Ke, L   (Kt = calKt() = 0.026850)
      0.008357f, 0.9797f,           // vbus_scale (M1 2026-10-08), i_scale (M2 2026-10-09, PROVISIONAL)
      0.0935f, 0.1058f,             // drag_c fwd, rev   (reported A, belt OFF, bare motor)
      0.001143f, 0.000713f,         // drag_v fwd, rev
-     0.2545f },                    // breakaway_A  (M4 2026-10-10, bare motor)
+     0.2545f, ENC_MT6835 },        // breakaway_A  (M4 2026-10-10, bare motor); zea_enc
   // -- J04 .. J12 -- NOT BUILT. Every measurable field 0.0f = not measured;
   //    zea -1 / dir 0 force a full alignment; i_scale 1.0 is its inert value.
   //    New joint: docs/cal/BELT_OFF_BASELINE.md (M1, AUTOCALIB, paste, M2, M4).
@@ -201,7 +211,7 @@ const JointCal JOINTS[] = {
      0.008448f, 0.9621f,           // vbus_scale (M1 2026-08-18), i_scale (M2 2026-08-20)
      0.0750f, 0.0816f,             // drag_c fwd, rev      unchanged (reported A)
      9.33e-4f, 7.27e-4f,           // drag_v fwd, rev      unchanged (reported A)
-     0.292f },                     // breakaway_A          unchanged (reported A)
+     0.292f, ENC_MT6816 },         // breakaway_A          unchanged (reported A); zea_enc
 };
 
 static constexpr uint8_t JOINT_COUNT = (uint8_t)(sizeof(JOINTS) / sizeof(JOINTS[0]));
@@ -249,6 +259,13 @@ static_assert(JOINT_ID >= 1 && JOINT_ID <= JOINT_COUNT,
 // `static` deliberately: a namespace-scope reference has EXTERNAL linkage, so
 // without it a second .cpp including this header would collide at link time.
 static const JointCal& CAL = JOINTS[JOINT_ID - 1];
+
+// The stored zea/dir may be used only if they were measured through the chip
+// this build reads. Every consumer of CAL.zea / CAL.dir goes through this.
+static inline bool calZeaChipMatches() { return CAL.zea_enc == ENC_CHIP; }
+static inline bool calZeaUsable() {
+  return CAL.zea >= 0.0f && CAL.dir != 0 && calZeaChipMatches();
+}
 
 // Kt for the selected joint. Derived every time, so it cannot disagree with Ke.
 static inline float calKt() { return calKt(CAL); }
@@ -357,7 +374,8 @@ static inline void printJointCal(Print& out) {
   out.print(F(" Kt=")); out.print(calKt(), 6); out.print(F("(derived)"));
   out.print(F(" L=")); out.print(CAL.L*1e6f, 1); out.print(F("uH"));
   out.print(F(" ZEA=")); out.print(CAL.zea, 4);
-  out.print(F(" DIR=")); out.println(CAL.dir);
+  out.print(F(" DIR=")); out.print(CAL.dir);
+  out.print(F(" ENC=MT")); out.println(ENC_CHIP);
 
   // Board scales. Both are pure multipliers on numbers the torque path uses, and
   // both are silent when wrong, so they get printed rather than assumed.
@@ -391,7 +409,12 @@ static inline void printJointCal(Print& out) {
   out.print(F("A+")); out.print(CAL.drag_v_rev, 6); out.print(F("*w"));
   out.print(F("  breakaway=")); out.print(CAL.breakaway_A, 4); out.println(F("A"));
 
-  if (CAL.zea < 0.0f || CAL.dir == 0)
+  if (CAL.zea >= 0.0f && CAL.dir != 0 && !calZeaChipMatches()) {
+    out.print(F("  !! ZEA/DIR were measured through "));
+    if (CAL.zea_enc) { out.print(F("MT")); out.print(CAL.zea_enc); } else out.print(F("an unrecorded chip"));
+    out.print(F(", this joint reads MT")); out.print(ENC_CHIP);
+    out.println(F(" -- IGNORED: 'f' aligns, Tier 0 refuses to arm. Run AUTOCALIB."));
+  } else if (CAL.zea < 0.0f || CAL.dir == 0)
     out.println(F("  !! UNCALIBRATED joint -- 'f' will do a full alignment. Run AUTOCALIB."));
   else
     out.println(F("  press 'V' to verify the stored ZEA against a fresh alignment"));

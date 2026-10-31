@@ -39,7 +39,7 @@ Amperes, radians, τ_e = L/R and other ratios are unchanged. `BIN,`/`LSB,` shape
 
 | Path | What |
 |---|---|
-| `J01/` | belt-off AUTOCALIB, M2, M4, hot/cold `R_eff`, belt-on no-idler drag (2026-08-12) |
+| `J01/` | belt-off AUTOCALIB, M2, M4, hot/cold `R_eff`, belt-on no-idler drag (2026-08-12); belt-on baselines on the long-shaft pulley: 3 bearings (2026-10-25, superseded plant), 2 bearings (2026-10-28: drag ×9 runs, B4 21 lines, ladders ×2, rings 4 + 4 over two boots) |
 | `J02/` | belt-off AUTOCALIB, M2, M4, hot/cold `R_eff`, belt-on drag tests (top on / off, idlers off) |
 | `J03/` | belt-off AUTOCALIB, M2, M4 (2026-10-08/09) |
 | `pulley acceptance/` | J01 recipe-B acceptance, 2026-09-30: swing ladder ×3, B4 breakaway (20 `M4,` rows), B6b ring (caps 1–4, 6–9), B3 dynamic drag both orders. Produced by a pre-2026-09-28 binary (banner prints `ladder 1/2/3 A`, `belt=OFF`) — read banners as build provenance, not plant state. Recipe-A raw rows were not kept |

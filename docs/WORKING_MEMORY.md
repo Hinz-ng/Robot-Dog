@@ -73,10 +73,9 @@ availability; ±0.03 V voltage-scale check; retain R22 on two endpoint joints an
 other ten; regulator-feed inference is high-confidence and the practical thermal conclusion
 is accepted. Owners: SENSING, ROBOT_DESIGN, CALIBRATION, CAN_BRINGUP and HARDWARE.
 
-Code inspected read-only: working `main` at `d78a55b` is legacy MT6816. Local `can-t0` at
+Code inspected read-only: pre-merge main at `d78a55b` was legacy MT6816. Merged `can-t0` at
 `21cec6c` contains MT6835, 16-bit reads, chip-tagged alignment and fixed delay 91.5 µs.
-No checkout, merge or firmware edit was performed. Use the identified MT6835 source before
-hardware work; do not flash legacy main merely because these docs are current.
+can-t0 was merged into main on 2026-11-01. Main now contains the MT6835 implementation; no hardware was operated.
 
 - Keys verified in both branches: f loads usable calibration, otherwise aligns; F always
   aligns; V measures then restores. MT6835 usability also checks zea_enc.
@@ -97,7 +96,7 @@ hardware work; do not flash legacy main merely because these docs are current.
   tables remain historical. Conditional backlash estimates must name friction equivalence;
   long-shaft J01 cannot inherit the short-pulley G verdict.
 
-These documentation resolutions await the user's final review before commit/Source refresh.
+User approved documentation, branch merge and Sources refresh on 2026-11-01.
 
 
 ### Evidence gaps and design gates (not contradictory facts)
@@ -149,7 +148,7 @@ against the fleet-QC rule before promotion.
 | D14 | Stepped vs ramped loading, no-idler ratchet | Only if the no-idler swing is used as a QC step again |
 | D15 | B6b J01-vs-J02 15% comparison (4 + 4 in `t` mode, plus B4) | When J02 has a working board and recipe-B pulley |
 | D16 | Cogging vs position-dependent preload in B4's ±0.18 A | If the sim friction model needs the ripple's period/phase (dense angle sweep) |
-| D17 | Control-side backlash tolerance test (kp steps in position hold, watch for limit cycle, ~10 min) | If any fleet joint fails G ≤ 20 |
+| D17 | Control-side backlash tolerance test (kp steps in position hold, watch for limit cycle, ~10 min) | If any fleet joint fails G ≤ 29 µm belt; J01 long-shaft (G unreadable): first hanging-leg block, no oscillation ≥ 1 mrad p-p output lasting > 1 s at any kp step up to 41 |
 | D18 | Drag run-order effect (+0.10–0.13 A second direction) | If a drag feed-forward needs better than ±20%. Test: one direction twice with a rest vs back-to-back |
 | O1/O2 | Roll-back at zero torque; friction vs output angle | When a friction feed-forward is proposed, or rest errors exceed bounds |
 | — | Flash wait states 8 → 4 (BELT_DRIVE §22.7.7). Hypothesis: branch-target misses at 8 wait states; prefetch hides only sequential misses. Test `FLASH_LATENCY_4` (in spec at 170 MHz); predicted TORQUE(I) armed lps ≥ +5% | Tier-0 loop with CAN measured below its need, or a loop-rate gap fails a gate |
@@ -195,12 +194,12 @@ Imported from FIRMWARE; inspect the selected source/build before treating a gap 
 | Idle-current recheck | At milestone close, ST-LINK USB plugged and pad voltage measured: use the dated reference and ≤ 61 mA at 12.28 V gate in HARDWARE §16a. |
 | Logic-supply thermal model | Revisit when the electronics bay is sealed/unventilated or a board resets hot; measure the 78L05 input and K36 node on the robot pack (HARDWARE §16a). |
 | 478 mm apex | Resolve spreadsheet mass and sag assumptions before using the controller energy budget (ROBOT_DESIGN §17). |
-| Encoder reference docs | Forward docs target MT6835 / 16-bit, verified against can-t0 21cec6c. Main remains legacy; source integration is pending separately. |
+| Encoder reference docs | Forward docs target MT6835 / 16-bit, verified against can-t0 21cec6c. Source integration into main completed 2026-11-01. |
 | CAN joint power cycling | Test VCC ramping on the transceiver, rather than reset only, when power distribution can cycle one joint independently (CAN_BRINGUP §23.10). |
 
 ## Documentation refresh
 
-2026-10-31: local documentation reorganization and router audit are uncommitted. Sources refresh
-is deferred until session end by the user. Refresh changed eligible docs and AGENTS after the
-user's final confirmation; `docs/cal/` remains excluded. Saved project instructions were reopened and
-verified to include the central router, conflict review and end-of-session report requirements.
+2026-11-01: user approved documentation and branch integration. can-t0 is merged into main;
+J01 and T0_J01 builds passed. Sources refresh is in progress; verify uploaded contents before
+claiming synchronization. docs/cal remains excluded. The closing response records the final
+refresh result; instructions require a refresh after future documentation-changing sessions.

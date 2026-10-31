@@ -49,13 +49,20 @@ static constexpr float AMP_INV_MAG     = 1.2247449f;   // sqrt(3/2)
 static constexpr float AMP_INV_MAG_INV = 0.8164966f;   // sqrt(2/3)
 
 // ---------------------------------------------------------------------------
-// ENCODER -- MT6816, 4-wire SPI, 14-bit absolute
+// ENCODER -- MT6835, 4-wire SPI, absolute, read at ENC_BITS (mt6835.h)
 // ---------------------------------------------------------------------------
 // One mechanical revolution per wrap. ENC_BITS is used as a shift when binning
 // by rotor position, so it and ENC_CPR are derived from each other here on
-// purpose: they cannot drift apart.
-static constexpr uint8_t  ENC_BITS = 14;
-static constexpr uint32_t ENC_CPR  = 1UL << ENC_BITS;              // 16384
+// purpose: they cannot drift apart. The chip is 21-bit; its driver truncates
+// to ENC_BITS. 16 since 2026-10-19 (stage 2: 4x finer velocity steps for the kd
+// term); 14 before, so counts quoted from earlier logs and docs are 14-bit.
+// ENC_CHIP is what JointCal.zea_enc is checked against: a row whose zea/dir
+// were measured through another chip (ENC_MT6816, until 2026-10-13) is ignored.
+#define ENC_MT6816 6816
+#define ENC_MT6835 6835
+#define ENC_CHIP   ENC_MT6835
+static constexpr uint8_t  ENC_BITS = 16;
+static constexpr uint32_t ENC_CPR  = 1UL << ENC_BITS;              // 65536
 static constexpr float    ENC_RAD_PER_COUNT = 6.28318531f / (float)ENC_CPR;
 
 // ---------------------------------------------------------------------------
@@ -89,21 +96,18 @@ static constexpr bool FLASH_PREFETCH = true;
 static constexpr float DEAD_ZONE = 0.005f;
 
 // ---------------------------------------------------------------------------
-// CONTROL TRANSPORT DELAY -- fleet, as a RATIO of the loop period
+// CONTROL TRANSPORT DELAY -- fleet, a FIXED TIME (MT6835)
 // ---------------------------------------------------------------------------
-// T_delay ~= one control-loop period, so it scales with 1/f_loop. Seven
-// parity-separation determinations, three assemblies, three loop rates:
-//     0.956 (16.77 kHz) | 0.953, 0.978 (12.91 kHz) | 0.945, 0.974 (13.35 kHz)
-//     | 0.937, 0.961 (J02, 13.35 kHz)  ->  mean 0.958, sd 0.015
-// The PWM period (40 us) is shorter than the loop period, so the loop period
-// dominates: loop rate buys transport delay one-for-one. BELT-OFF value (phase 6
-// is invalid belt-on). Torque loss at 270 rad/s and 13.3 kHz is 0.95%: no
-// angle compensation.
-static constexpr float T_DELAY_PER_LOOP    = 0.958f;   // n = 7
-static constexpr float T_DELAY_PER_LOOP_SD = 0.015f;
-static inline float tDelayAt(float f_loop_hz) {
-  return (f_loop_hz > 1.0f) ? (T_DELAY_PER_LOOP / f_loop_hz) : 0.0f;
-}
+// Phase-6 parity separation, belt off, MT6835 at 12.1-12.6 kHz:
+//     J01 84-93 us (three runs, 2026-10-13 / 10-19) | J03 95.6, 98.5 us (2026-10-24)
+// Flat when J01's loop went 12.08 -> 12.62 kHz (a per-loop delay predicts
+// -3.4 us): mostly fixed -- the chip's 10 us propagation plus the 11.6 us read.
+// The MT6816's per-loop form (0.958 x T_loop, n = 7) no longer applies.
+// BELT-OFF only: the estimate rises with drag (BELT_DRIVE §22.1). Diagnostic
+// use only (phase 6 comparison, current-loop ceiling print); torque loss from it
+// at 270 rad/s is 1.4-1.7%, so no angle compensation yet.
+static constexpr float T_DELAY_S      = 91.5e-6f;   // centre of 84-99 us
+static constexpr float T_DELAY_HALF_S = 7.5e-6f;    // half the observed range
 
 // ---------------------------------------------------------------------------
 // DRIVETRAIN -- frozen 2026-07-29 (ROBOT_DESIGN §17)
@@ -123,10 +127,20 @@ static constexpr float BELT_MM_PER_MOTOR_REV = BELT_PITCH_MM * (float)PINION_TEE
 static constexpr float R_PINION_MM           = BELT_MM_PER_MOTOR_REV / 6.28318531f;  // 3.8197
 // The encoder as a belt-travel gauge. This is what makes a swing test a LENGTH
 // measurement rather than an angle one.
-static constexpr float BELT_MM_PER_COUNT     = BELT_MM_PER_MOTOR_REV / (float)ENC_CPR;  // 1.4648 um
+static constexpr float BELT_MM_PER_COUNT     = BELT_MM_PER_MOTOR_REV / (float)ENC_CPR;  // 0.3662 um
 // One pinion tooth, at the encoder. A swing or return reading that moves by this
-// -- or a multiple of it -- is a TOOTH SKIP, not compliance. 16384/12 = 1365.33.
+// -- or a multiple of it -- is a TOOTH SKIP, not compliance. 65536/12 = 5461.33.
 static constexpr float ENC_CNT_PER_TOOTH     = (float)ENC_CPR / (float)PINION_TEETH;
+
+// COUNT THRESHOLDS ARE WRITTEN IN PHYSICAL UNITS and converted here, so a
+// resolution change (ENC_BITS) rescales them instead of silently tightening
+// them 4x (16-bit) or 128x (21-bit). Rounded to the nearest count.
+static constexpr int32_t encCountsFromMotorMrad(float mrad) {   // rotor angle, MOTOR side
+  return (int32_t)(mrad * 1e-3f / ENC_RAD_PER_COUNT + 0.5f);
+}
+static constexpr int32_t encCountsFromBeltUm(float um) {         // belt travel at the pinion
+  return (int32_t)(um * 1e-3f / BELT_MM_PER_COUNT + 0.5f);
+}
 
 // ---------------------------------------------------------------------------
 // ROTOR INERTIA -- M6a, belt off, 2026-08-08. Motor shaft, before the 9:1.

@@ -25,7 +25,7 @@ Tables below retain dated identities; legacy MT6816 ZEA is not usable MT6835 cal
 
 | Constant | Value | Quality |
 |---|---|---|
-| `zea` | **6.0542 rad elec** | 7 alignments, SE 1.57° |
+| `zea` | **5.9879 rad elec** | MT6835, 2026-10-13: 7 alignments, sd 2.04°, SE 0.97° |
 | `dir` | CW | 7/7 |
 | `R_eff` | **0.22346 Ω** | 9 pts, rms 1.84 mV, SE 0.57%; 0.46 V ladder (§8.1d) |
 | `U0` | **0.01037 V** | real uncertainty ±0.003 V (fit SE understates ~2×); see below |
@@ -33,9 +33,9 @@ Tables below retain dated identities; legacy MT6816 ZEA is not usable MT6835 cal
 | `Kt` | 0.026912 N·m/A_true | derived, 1.5·Ke. vs KV360: +1.45% |
 | `L` | **43.77 µH**, τ_e **195.87 µs** | 18-point dithered fit; incremental inductance at 0.9–3.2 A |
 | Drag, belt off | fwd `0.0749 + 9.33e-4·ω`, rev `0.0816 + 7.27e-4·ω` | fit rms 0.70 / 0.74 mA |
-| `\|I\|/Iq` | 1.245–1.313 | sanity band 1.15–1.40 |
-| INL | 1.029° mech pk-pk | 1/rev 0.369°, 2/rev 0.204° |
-| ZEA residual | +0.467° elec | parity even part |
+| `\|I\|/Iq` | 1.245–1.313 (MT6835 runs: 1.256–1.418, over 1.40 only at the lowest current) | sanity band 1.15–1.40; angle-independent |
+| INL | 0.845 / 0.868° mech pk-pk (MT6835, two runs) | 1/rev 0.070°, 2/rev 0.326° |
+| ZEA residual | 0.780 / 0.802° elec (MT6835) | even part |
 
 The `Kt`-vs-KV360 comparison cannot check `vbus_scale` (Ke derives from it); only M1 against
 an external meter does. It does exclude KV380 (7–8% out).
@@ -114,7 +114,7 @@ is not a fault.** M2 uses its own range-matched R.
 | Kt | `calKt()` = 1.5 × Ke per row (never stored). Per reported amp `calKtCmd()` = Kt / `i_scale`: J01 0.027972, J02 0.028013 | Kt ≠ Ke in SimpleFOC's amplitude-invariant convention (Ke = Kt excluded at 15σ) |
 | Legacy MT6816 **`T/T_loop`** | **0.958 ± 0.015**, n = 7, 3 assemblies | transport delay = one loop period. `T_DELAY_PER_LOOP` in `fleet_config.h`. **Belt-off only.** Torque loss at 270 rad/s 0.95%: **no angle compensation** |
 | PWM | 25 kHz, SVPWM | ceiling V_bus/√3 |
-| Loop rate | 13.5 kHz TORQUE(I) armed, 15 kHz TORQUE(V), 21 kHz OPENLOOP armed, 126 kHz disarmed | J01 MIT build: ~12.4 kHz TORQUE(I) armed (BELT_DRIVE §22.7.7) |
+| Loop rate | MT6835 (J01, 2026-10-13): harness 47.3 kHz disarmed, AUTOCALIB free spin 12.6 kHz | MT6816 (6.65 µs reads): harness 63.9 kHz disarmed, ~12.4 kHz MIT armed (BELT_DRIVE §22.7.7); Tier 0 11.5–12.2 kHz armed (N3) |
 | Telemetry print cost | ~950 µs at 921600 baud | float formatting dominates |
 | Bus-sense scale | **per board:** J01 0.008448, J02 0.008516 (M1, UT89X at the pads) | full scale 34.60 / 34.87 V |
 | Seed linearity | J02 seed vs UT89X at 12.24 / 12.25 / 22.73 V: −0.16 / −0.11 / +0.04% | |
@@ -169,7 +169,7 @@ clamp (±10% clamp-dependent); ring f_d 65.0 Hz, f_n 69.8 Hz, ζ 0.36. Detail: B
 **Handling rule.** Three untouched consecutive readings: sd 0.0029 A (cv 1.2%), 30× tighter than
 the pooled scatter. Rotating the shaft by hand redistributes grease and resets friction, so
 repeats at one position are pseudo-replicates. For ± decompositions, return the rotor to the same
-count. Let the rotor settle into a cogging detent before each M4 reading (a rotor left mid-creep
+raw position. Let the rotor settle into a cogging detent before each M4 reading (a rotor left mid-creep
 reads far low in the opposite direction).
 
 **Forward/reverse drag asymmetry, belt off:** Coulomb 0.0749 / 0.0816 A (9%), viscous 9.333e-4 /

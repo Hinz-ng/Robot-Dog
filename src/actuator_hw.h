@@ -3,7 +3,7 @@
 #include <SimpleFOC.h>
 #include "fleet_config.h"
 #include "joint_cal.h"
-#include "mt6816.h"
+#include "mt6835.h"
 // ============================================================================
 // actuator_hw.h -- the actuator's hardware objects and init order.
 // ============================================================================
@@ -29,7 +29,7 @@ BLDCDriver6PWM driver = BLDCDriver6PWM(
 // 3 mOhm shunts (R003), same as the genuine board. The absolute scale error is i_scale (M2), not this constructor.
 LowsideCurrentSense currentSense = LowsideCurrentSense(0.003f, -64.0f/7.0f, A_OP1_OUT, A_OP2_OUT, A_OP3_OUT);
 
-MT6816SPI encoder = MT6816SPI();           // ENC_BITS-bit absolute, ENC_CPR counts/rev
+MT6835SPI encoder = MT6835SPI();           // ENC_BITS-bit absolute, ENC_CPR counts/rev
 
 float vbus_filt           = VBUS_FALLBACK;
 bool  vbus_valid          = false;
@@ -110,15 +110,27 @@ static bool actuatorInitHw(const ActuatorHwCfg& cfg, Print& out) {
   motor.linkDriver(&driver);
   currentSense.linkDriver(&driver);
 
-  out.println(F("initialising MT6816 SPI encoder..."));
+  out.println(F("initialising MT6835 SPI encoder..."));
   encoder.init();                            // bit-banged: consults no pin map
   motor.linkSensor(&encoder);
-  out.print(F("MT6816 raw=")); out.print(encoder.rawCount());
+  out.print(F("MT6835 raw=")); out.print(encoder.rawCount());
   out.print(F(" / ")); out.print(ENC_CPR);
-  out.print(F("  parity_err=")); out.print(encoder.spi_err);
-  out.print(F(" no_mag=")); out.println(encoder.no_mag);
-  if (encoder.spi_err) out.println(F("!! SPI parity errors at boot -- check CSN and HVPP->VDD"));
-  if (encoder.no_mag)  out.println(F("!! No_Mag_Warning at boot -- magnet weak/far. Fix before running."));
+  // angle21 and the chip config go in the banner so every capture records the
+  // zero, direction and filter (BW) the angle was read under.
+  out.print(F("  angle21=")); out.print(encoder.angle21);
+  out.print(F(" crc_err=")); out.print(encoder.spi_err);
+  out.print(F(" status=")); out.print(encoder.status);
+  out.print(F(" (weak=")); out.print(encoder.weak_field);
+  out.print(F(" uv=")); out.print(encoder.under_volt);
+  out.print(F(" ovs=")); out.print(encoder.over_speed);
+  out.print(F(") pwrup_ms=")); out.println(encoder.pwrup_ms);
+  out.print(F("MT6835 cfg zero=")); out.print(encoder.cfg_zero);
+  out.print(F(" rot_dir=")); out.print(encoder.cfg_rot_dir);
+  out.print(F(" hyst=")); out.print(encoder.cfg_hyst);
+  out.print(F(" bw=")); out.println(encoder.cfg_bw);
+  if (!encoder.boot_ok) out.println(F("!! MT6835: no CRC-valid frame at boot -- check VDD, CSN, MISO, SCK"));
+  else if (encoder.spi_err) out.println(F("!! MT6835 CRC errors at boot -- check CSN and VDD, raise SPI_HALF_NOPS"));
+  if (encoder.no_mag)  out.println(F("!! MT6835 weak field / under-voltage at boot -- magnet weak/far or VDD low. Fix before running."));
   return driver_ok;
 }
 
@@ -188,7 +200,8 @@ static void printCfgBanner(Print& out, float driver_volt_limit, float curr_max_A
 // Alignment. Reads CAL.zea / CAL.dir directly so this header stays one-directional.
 static void runInitFOC(bool force_align, bool is_running, bool& foc_ready, float& target, Print& out) {
   if (is_running) { out.println(F("stop first (x)")); return; }
-  bool use_stored = (!force_align && CAL.zea >= 0.0f && CAL.dir != 0);
+  // calZeaUsable(): zea/dir measured AND measured through this build's chip.
+  bool use_stored = (!force_align && calZeaUsable());
   if (use_stored) {
     // Absolute sensor: ZEA is a constant, not a per-session measurement.
     motor.zero_electric_angle = CAL.zea;
@@ -196,10 +209,12 @@ static void runInitFOC(bool force_align, bool is_running, bool& foc_ready, float
     out.println(F("initFOC: STORED ZEA -- no alignment, no twitch."));
   } else {
     motor.zero_electric_angle = NOT_SET;
-    // Direction is detected unless CAL.dir has been measured.
-    motor.sensor_direction = (CAL.dir > 0) ? Direction::CW
-                           : (CAL.dir < 0) ? Direction::CCW
-                                              : Direction::UNKNOWN;
+    // Direction is detected unless CAL.dir has been measured -- through this
+    // chip: another chip's dir may count the other way.
+    const int8_t dir = calZeaChipMatches() ? CAL.dir : 0;
+    motor.sensor_direction = (dir > 0) ? Direction::CW
+                           : (dir < 0) ? Direction::CCW
+                                       : Direction::UNKNOWN;
     out.println(F("initFOC: aligning (expect a small twitch)."));
   }
   motor.enable();

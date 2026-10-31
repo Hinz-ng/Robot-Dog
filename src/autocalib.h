@@ -138,7 +138,7 @@ const float   AC_R_V[AC_R_N]  = { 0.68f, 0.40f, 0.35f, 0.30f, 0.25f,
                                   0.20f, 0.16f, 0.12f, 0.08f };   // DESCENDING
 const uint16_t AC_R_SETTLE_MS = 350;
 const uint16_t AC_R_MEAS_MS   = 250;
-const uint16_t AC_R_STILL_CNT = 20;       // allowed drift per point, counts
+const uint16_t AC_R_STILL_CNT = encCountsFromMotorMrad(7.67f);   // drift allowed per point: 7.67 mrad at the motor (80 counts at 16 bits)
 const uint8_t  AC_R_MIN_PTS   = 7;
 const float    AC_R_RMS_FAIL  = 0.012f;   // V
 const float    AC_R_RSE_FAIL  = 0.03f;    // relative SE of the slope
@@ -149,6 +149,7 @@ const float    AC_L_VBASE     = 0.20f;    // hold between steps (~0.8 A)
 const float    AC_L_VSTEP     = 0.70f;    // stepped-to (~3.4 A peak)
 const uint16_t AC_L_DECAY_MS  = 4;        // >= 9 tau_e at tau_e ~ 200 us
 const uint8_t  AC_L_MIN_PTS   = 6;        // floor for a 2-parameter fit with an rms gate
+const int32_t  AC_L_STILL_CNT = encCountsFromMotorMrad(15.34f);   // rotor drift over the train -> WARN: 15.34 mrad at the motor (160 counts at 16 bits)
 // F5 -- PHASE DITHER. acService() IS the loop, so step samples land on a rigid
 // grid (step + {0, 60, 120..} us) and only every 3rd 20 us bin would be
 // visited. After the sample that applies the step, stall r * AC_L_DITHER_US so
@@ -169,6 +170,12 @@ const float    AC_W_V[AC_W_N] = { 0.50f, 0.90f, 1.30f, 1.70f, 2.00f };
 const uint16_t AC_W_SETTLE_MS = 3000;
 const uint16_t AC_W_MEAS_MS   = 1000;     // ~15 k samples, ~17 revolutions
 const float    AC_W_VLIMIT    = 2.60f;    // raised so 2.00 V is not clamped
+// First-point sanity floor: |vel| at AC_W_V[0] as a fraction of the no-load
+// speed (U - U0)/Ke. Below half, R*Iq has eaten half the voltage: ~1 A of drag
+// at 0.5 V, against 0.12 A bare and ~0.4 A belt-on (J01). Nameplate Ke, so it
+// works on a joint with no row yet (measured Ke is within ~1.2% of it).
+const float    AC_W_FIRST_MIN_FRAC = 0.50f;
+const float    AC_KE_NOMINAL  = 60.0f / (_2PI * MOTOR_KV_NAMEPLATE) / KT_PER_KE;
 const float    AC_KE_RMS_FAIL = 0.015f;   // V
 const float    AC_KE_RSE_FAIL = 0.02f;
 const float    AC_KE_C_WARN   = 0.030f;   // |intercept| -> R or U0 is off
@@ -421,6 +428,13 @@ static void acService() {
     ac_abort = true;  ac_guard = true;
     SerialUART.println(F("\n  !! ABORT overspeed"));
   }
+  // Encoder link (mt6835.h, the run loop's and Tier 0's trip): every phase and
+  // ladder that commutates on the angle. A broken link here once commutated on a
+  // stale angle until the 6 A overcurrent abort caught it (J01, 2026-10-13).
+  if (mode != MODE_OPENLOOP && encoder.linkTripped()) {
+    ac_abort = true;  ac_guard = true;
+    SerialUART.println(F("\n  !! ABORT encoder link (4 invalid reads in a row)"));
+  }
   if (SerialUART.available()) {
     while (SerialUART.available()) (void)SerialUART.read();
     ac_abort = true;
@@ -453,6 +467,14 @@ static void acRampTarget(float to) {
 // Arduino's abs() is a macro that double-evaluates, and int32_t is not portably
 // `long`, so labs() is not safe either. Explicit helper instead.
 static inline uint32_t acAbs32(int32_t v) { return (uint32_t)((v < 0) ? -v : v); }
+
+// " (x.xx mrad)" for a rotor travel in counts: the gates are written in mrad at
+// the motor (docs), so the console states it -- the count alone changes meaning
+// with ENC_BITS.
+static void acPrintMrad(int32_t cnt) {
+  SerialUART.print(F(" (")); SerialUART.print(cnt * ENC_RAD_PER_COUNT * 1000.0f, 2);
+  SerialUART.print(F(" mrad)"));
+}
 
 // Signed count difference with the ENC_CPR wrap handled.
 static int32_t acCntDelta(uint16_t a, uint16_t b) {
@@ -506,9 +528,16 @@ static bool acNeed(uint8_t n) {
 // the price of reaching a later phase silently replaces it with a worse one.
 // acM4Breakaway() already reasons exactly this way; this generalises it.
 static bool acHaveCommutation() {
-  if (foc_ready) return true;
-  SerialUART.println(F("refused: no valid alignment -- press 'f' or 'V' (stored ZEA) or run phase 2."));
-  return false;
+  if (!foc_ready) {
+    SerialUART.println(F("refused: no valid alignment -- press 'f' or 'V' (stored ZEA) or run phase 2."));
+    return false;
+  }
+  // Commutating needs a clean link too: the same 1 s rule as 'g' and Tier 0.
+  if (!encoder.linkArmable(millis())) {
+    SerialUART.println(F("refused: encoder link not clean for 1 s (CRC or all-zero reads) -- run 1 or 'e'."));
+    return false;
+  }
+  return true;
 }
 
 // ===========================================================================
@@ -527,7 +556,11 @@ static void acP1() {
   encoder.readOverSpeed();
   ac_link_us  = (float)dt / N;
   ac_link_err = errs;
-  ac_v_link = (errs == 0 && oks == N && !nmg && !encoder.over_speed) ? AC_PASS : AC_FAIL;
+  // All-zero frames pass the CRC (mt6835.h): a dead MISO read as a perfect
+  // magnet at angle 0 and passed 'e' once (J03, 2026-10-08). This phase gates
+  // 2-6, so it fails on them too.
+  const bool all_zero = (encoder.zero_run >= N);
+  ac_v_link = (errs == 0 && oks == N && !nmg && !encoder.over_speed && !all_zero) ? AC_PASS : AC_FAIL;
 
   SerialUART.print(F("    n=")); SerialUART.print(N);
   SerialUART.print(F(" ok=")); SerialUART.print(oks);
@@ -536,8 +569,9 @@ static void acP1() {
   SerialUART.print(F(" nmg=")); SerialUART.print(nmg);
   SerialUART.print(F(" ovs=")); SerialUART.print(encoder.over_speed);
   SerialUART.print(F("   ")); SerialUART.println(acVs(ac_v_link));
-  if (nmg)  SerialUART.println(F("    !! No_Mag_Warning: magnet weak or far. The angle is garbage."));
-  if (errs) SerialUART.println(F("    !! parity errors: raise SPI_HALF_NOPS, check CSN and HVPP->3V3."));
+  if (nmg)  SerialUART.println(F("    !! weak field / VDD under-voltage: magnet weak or far, or VDD low. The angle is garbage."));
+  if (errs) SerialUART.println(F("    !! crc errors: raise SPI_HALF_NOPS, check CSN and VDD."));
+  if (all_zero) SerialUART.println(F("    !! every frame all-zero: MISO dead (or shaft at exactly angle 0 -- turn it)."));
   ac_done[1] = (ac_v_link == AC_PASS);
   if (ac_done[1]) SerialUART.println(F("    next: 2 (optional: hand-spin the shaft and press 1 again)"));
 }
@@ -649,6 +683,9 @@ static void acP3() {
   // used anywhere in it. Gating on a fresh phase 2 was forcing an alignment
   // that the measurement does not need, and phases 4-6 inherit their gates
   // from here, so the cost was paid by the whole downstream chain.
+  // Phase 1 IS required (as for 2-6): phases 3-5 on a broken link produced
+  // plausible junk and a 6 A abort (J01, 2026-10-13).
+  if (!acNeed(1)) return;
   if (!acHaveCommutation()) return;
   SerialUART.println(F("[3] R/U0  (rotor self-locks; do not touch the shaft)"));
   acEnter();
@@ -700,7 +737,7 @@ static void acP3() {
     ac_rn++;
     SerialUART.print(F("    U=")); SerialUART.print(AC_R_V[k], 3);
     SerialUART.print(F(" I=")); SerialUART.print(I, 4);
-    SerialUART.print(F(" drift=")); SerialUART.print(moved);
+    SerialUART.print(F(" drift=")); SerialUART.print(moved); acPrintMrad(moved);
     SerialUART.print(F(" n=")); SerialUART.println(n);
   }
   acExit(true);                           // keep the phase-2 alignment
@@ -768,6 +805,7 @@ static void acP3() {
 // second -- the 600 ms lock "twitch" IS the run.
 // ===========================================================================
 static void acP4() {
+  if (!acNeed(1)) return;
   if (!acNeed(3)) return;
   SerialUART.println(F("[4] L  (step train, rotor stays locked)"));
   acEnter();
@@ -844,7 +882,7 @@ static void acP4() {
   else if (ac_L < 15e-6f || ac_L > 400e-6f)        ac_v_L = AC_FAIL;
   else if (ac_L_rms > AC_L_RMS_FAIL)               ac_v_L = AC_FAIL;
   else if (tail_n < 40)                            ac_v_L = AC_WARN;   // weak I_inf
-  else if (acAbs32(moved) > 40)                    ac_v_L = AC_WARN;
+  else if (acAbs32(moved) > AC_L_STILL_CNT)        ac_v_L = AC_WARN;
   else if (ac_L_td < 0.0f || ac_L_td > 400e-6f)    ac_v_L = AC_WARN;
 
   SerialUART.print(F("    reps=")); SerialUART.print(reps);
@@ -857,7 +895,7 @@ static void acP4() {
   SerialUART.print(F(" L=")); SerialUART.print(ac_L*1e6f, 1); SerialUART.print(F("uH"));
   SerialUART.print(F(" rms=")); SerialUART.print(ac_L_rms, 3);
   SerialUART.print(F(" td=")); SerialUART.print(ac_L_td*1e6f, 0); SerialUART.print(F("us"));
-  SerialUART.print(F(" drift=")); SerialUART.print(moved);
+  SerialUART.print(F(" drift=")); SerialUART.print(moved); acPrintMrad(moved);
   SerialUART.print(F("   ")); SerialUART.println(acVs(ac_v_L));
   if (ac_v_L == AC_WARN) SerialUART.println(F("    !! rotor drifted, I_inf weak, or t_d implausible -- refit the bins offline."));
   SerialUART.println(F("    L is the INCREMENTAL inductance at 0.9-3.2 A (lower than small-signal)."));
@@ -876,6 +914,7 @@ static void acP5() {
   // or aborted call can't leave the swap armed for some later, unrelated '5'.
   bool swap = ac_p5_swap_next;
   ac_p5_swap_next = false;
+  if (!acNeed(1)) return;
   if (!acNeed(3)) return;        // DATA: the drag fit is normalised against R
   // COMMUTATION: unlike phases 3 and 4 this one runs MODE_TORQUE through the
   // FOC path, so a wrong ZEA corrupts Ke and the whole drag map. Phase 3 no
@@ -988,6 +1027,22 @@ static void acP5() {
       SerialUART.print(F(" Id=")); SerialUART.print(mId, 4);
       SerialUART.print(F(" ratio=")); SerialUART.print(mR, 3);
       SerialUART.print(F(" n=")); SerialUART.println(n);
+
+      // FIRST-POINT SANITY, per direction, before stepping up. A jammed bearing,
+      // a ZEA tens of degrees off or a blocked output all show here as a slow (or
+      // reversed) first point, at the lowest-energy step. Without it J03
+      // (2026-10-24, debris in a bearing, ZEA 78 deg elec off) ran 7.9 of
+      // ~27 rad/s at 0.5 V, then stalled at 4-6 A into its belt at 0.9 and 1.3 V.
+      if (k == 0) {
+        const float v_nl = (AC_W_V[0] - ac_U0) / AC_KE_NOMINAL;
+        if (mV * sgn < AC_W_FIRST_MIN_FRAC * v_nl) {
+          ac_abort = true;  ac_guard = true;
+          SerialUART.print(F("\n  !! ABORT first point: vel ")); SerialUART.print(mV * sgn, 1);
+          SerialUART.print(F(" rad/s < ")); SerialUART.print(AC_W_FIRST_MIN_FRAC * v_nl, 1);
+          SerialUART.println(F(" (half of no-load). Jam, wrong ZEA or blocked output:"));
+          SerialUART.println(F("     hand-turn the output both ways, then 'V'."));
+        }
+      }
     }
     if (!ac_abort) acRampTarget(0.0f);
     motor.disable(); running = false;
@@ -1083,9 +1138,8 @@ static void acP5() {
 // Forward-only data cannot separate the even terms from the odd one. The two
 // binned speeds give two independent T estimates; T must be speed-independent.
 //
-// T ~= ONE LOOP PERIOD (T/T_loop, fleet_config.h): loop rate buys transport
-// delay one-for-one, so T is reported with f_loop, and T/T_loop is the
-// transferable number.
+// On the MT6835 T is mostly a fixed time (T_DELAY_S, fleet_config.h). T/T_loop
+// is still printed with f_loop for comparison with the MT6816's per-loop data.
 // ===========================================================================
 static float acBinAngleDeg(uint8_t d, uint8_t s, uint8_t b) {
   if (ac_bin_n[d][s][b] == 0) return 0.0f;
@@ -1102,6 +1156,7 @@ static float acBinAngleDeg(uint8_t d, uint8_t s, uint8_t b) {
 }
 
 static void acP6() {
+  if (!acNeed(1)) return;
   if (!acNeed(4)) return;
   if (!acNeed(5)) return;
   SerialUART.println(F("[6] T + INL  (parity separation, no motor)"));
@@ -1149,12 +1204,11 @@ static void acP6() {
     if (fl > 1.0f) {
       SerialUART.print(F(" T_loop=")); SerialUART.print(1e6f/fl, 1);
       SerialUART.print(F(" us  T/T_loop=")); SerialUART.print(ac_T[s]*fl, 3);
-      // T/T_loop is the transferable number; T in microseconds is only true at
-      // the loop rate it was taken at. Compare against the fleet constant so a
-      // drifting assembly shows up here rather than in a README table later.
-      SerialUART.print(F(" (fleet ")); SerialUART.print(T_DELAY_PER_LOOP, 3);
-      SerialUART.print(F("+-")); SerialUART.print(T_DELAY_PER_LOOP_SD, 3);
-      SerialUART.print(F(")"));
+      // Compare against the fleet constant so a drifting assembly shows up here
+      // rather than in a README table later.
+      SerialUART.print(F(" (fleet T ")); SerialUART.print(T_DELAY_S*1e6f, 1);
+      SerialUART.print(F("+-")); SerialUART.print(T_DELAY_HALF_S*1e6f, 1);
+      SerialUART.print(F(" us)"));
     }
     SerialUART.println();
   }
@@ -1330,10 +1384,16 @@ static void acP7() {
 
   SerialUART.print(F("     "));
   if (ac_zea_mismatch) {
-    SerialUART.println(F("0.0f },  // breakaway_A  *** CARRY BLOCKED -- run M4 ***"));
+    SerialUART.print(F("0.0f, "));
   } else {
-    SerialUART.print(CAL.breakaway_A, 4);
-    SerialUART.print(F("f },                   // breakaway_A  CARRIED (M4)"));
+    SerialUART.print(CAL.breakaway_A, 4); SerialUART.print(F("f, "));
+  }
+  // zea_enc: the chip THIS run measured zea/dir through (0 if phase 2 did not run).
+  if (ac_done[2]) { SerialUART.print(F("ENC_MT")); SerialUART.print(ENC_CHIP); }
+  else            SerialUART.print('0');
+  if (ac_zea_mismatch) SerialUART.println(F(" },  // breakaway_A *** CARRY BLOCKED -- run M4 ***; zea_enc"));
+  else {
+    SerialUART.print(F(" },        // breakaway_A  CARRIED (M4); zea_enc"));
     if (CAL.breakaway_A == 0.0f) SerialUART.print(F("  <-- PENDING M4"));
     SerialUART.println();
   }
@@ -1343,7 +1403,7 @@ static void acP7() {
   if (ac_done[1]) {
     SerialUART.print(F("SPI link       ")); SerialUART.print(ac_link_us, 2);
     SerialUART.print(F(" us/read, ")); SerialUART.print(ac_link_err);
-    SerialUART.println(F(" parity errors in 4000"));
+    SerialUART.println(F(" crc errors in 4000"));
   }
   if (ac_done[6]) {
     float fl = ac_T_floop[AC_BIN_SPEEDS-1];
@@ -1353,7 +1413,9 @@ static void acP7() {
     SerialUART.print(F("  measured at f_loop=")); SerialUART.print(fl, 0);
     if (fl > 1.0f) {
       SerialUART.print(F(" -> T/T_loop=")); SerialUART.print(ac_T[AC_BIN_SPEEDS-1]*fl, 3);
-      SerialUART.println(F("  (expect ~0.95-0.98: T is ONE loop period)"));
+      SerialUART.print(F("  (fleet T ")); SerialUART.print(T_DELAY_S*1e6f, 1);
+      SerialUART.print(F("+-")); SerialUART.print(T_DELAY_HALF_S*1e6f, 1);
+      SerialUART.println(F(" us, belt off)"));
     } else SerialUART.println();
     SerialUART.print(F("  torque loss at 270 rad/s = "));
     SerialUART.print(100.0f*(1.0f - cosf((float)MOTOR_POLE_PAIRS*270.0f*ac_T[AC_BIN_SPEEDS-1])), 3);
@@ -1398,17 +1460,14 @@ static void acP7() {
     SerialUART.print(F("   for ")); SerialUART.print(AC_BW_HZ, 0);
     SerialUART.println(F(" Hz.  NOT APPLIED."));
     // Kp = L*w_bw, Ki = R*w_bw is an IDEAL-PLANT formula: it has no transport
-    // delay term, and this rig has a measured one of ~T_DELAY_PER_LOOP loop
-    // periods. A well-damped loop caps at roughly 1/(3T), and the configured
+    // delay term, and this rig has a measured one of ~T_DELAY_S. A well-damped
+    // loop caps at roughly 1/(3T), and the configured
     // gains were bench-tuned to 412 Hz at zeta = 0.60 -- already ~80% of that
     // ceiling. Raising Ki would eat phase margin the formula cannot see.
     // BENCH EVIDENCE OUTRANKS THE FORMULA. Treat this as a sanity check on
     // R and L, not as a recommendation.
     SerialUART.print(F("  delay ceiling ~1/(3T) = "));
-    float fl = ac_done[6] ? ac_T_floop[AC_BIN_SPEEDS-1] : 0.0f;
-    float Td = (fl > 1.0f) ? tDelayAt(fl) : 0.0f;
-    if (Td > 0.0f) { SerialUART.print(1.0f/(3.0f*Td), 0); SerialUART.print(F(" Hz")); }
-    else           { SerialUART.print(F("(run 6 for f_loop)")); }
+    SerialUART.print(1.0f/(3.0f*T_DELAY_S), 0); SerialUART.print(F(" Hz"));
     SerialUART.println(F("  -- not in the formula above. Do NOT paste these gains."));
   }
 
@@ -1608,7 +1667,7 @@ static void acM2Assist() {
     SerialUART.print(',');      SerialUART.println(vd_n);
     SerialUART.print(F("    I_reported=")); SerialUART.print(n ? (float)(acc / n) : 0.0f, 4);
     SerialUART.print(F(" A  drift=")); SerialUART.print(moved);
-    SerialUART.println(F(" cnt"));
+    SerialUART.print(F(" cnt")); acPrintMrad(moved); SerialUART.println();
     if (acAbs32(moved) > AC_R_STILL_CNT)
       SerialUART.println(F("    !! rotor MOVED -- point invalid, redo it"));
   }
@@ -1635,9 +1694,10 @@ const float    AC_M4_ABORT_A_rep   = 0.80f;
 // Warn, do not abort: +5 sigma on J01 belt-off (mean 0.2923, sd 0.0611). 0.40 A
 // was +1.76 sigma and fired on healthy readings.
 const float    AC_M4_WARN_A_rep    = 0.60f;
-// Pre-slide creep indicator. J01 ran 107-146 counts; 200 is ~1.4x the worst
-// observed. See the note at the check itself for why TRAVEL and not elapsed time.
-const int32_t  AC_M4_WARN_CNT  = 200;
+// Pre-slide creep indicator. J01 ran 41-56 mrad at the motor (107-146 counts);
+// 76.7 mrad (200 counts) is ~1.4x the worst observed. See the note at the check
+// itself for why TRAVEL and not elapsed time.
+const int32_t  AC_M4_WARN_CNT  = encCountsFromMotorMrad(76.7f);
 
 static void acM4Breakaway(float sgn) {
   if (!acReady()) return;
@@ -1701,13 +1761,14 @@ static void acM4Breakaway(float sgn) {
   SerialUART.print(F(" A at raw=")); SerialUART.print(c0);
   SerialUART.print(F("   ramp ")); SerialUART.print(el/1000.0f, 1);
   SerialUART.print(F(" s, travel ")); SerialUART.print(travel);
-  SerialUART.println(F(" cnt"));
+  SerialUART.print(F(" cnt")); acPrintMrad(travel); SerialUART.println();
   // TRAVEL, not elapsed time, flags a too-slow ramp: the current keeps rising
   // through the pre-slide creep, so a long creep biases the reading HIGH (scale
   // ~0.01 A per 200 counts; creep speed is not recorded, so do not subtract it).
   if (acAbs32(travel) > AC_M4_WARN_CNT) {
-    SerialUART.print(F("    !! long pre-slide creep (")); SerialUART.print(travel);
-    SerialUART.println(F(" cnt) -- biased HIGH, redo this position."));
+    SerialUART.print(F("    !! long pre-slide creep, travel ")); SerialUART.print(travel);
+    SerialUART.print(F(" cnt")); acPrintMrad(travel);
+    SerialUART.println(F(" -- biased HIGH, redo this position."));
   }
   if (i > AC_M4_WARN_A_rep) {
     SerialUART.print(F("    !! > ")); SerialUART.print(AC_M4_WARN_A_rep, 2);
@@ -1791,12 +1852,13 @@ const uint8_t  AC_SW_N            = 4;
 // to test the curvature (the drive softens with load). Plant-specific: raise
 // through B10 once the tensioned skip threshold is known.
 const float    AC_SW_I_A_rep[AC_SW_N]   = { 0.6f, 1.0f, 1.4f, 1.6f };   // REPORTED amps
-// 5 s, not 1 s. ~10 counts of creep (15 um of belt) appear over the first ~4 s
+// 5 s, not 1 s. ~15 um of belt creep (10 counts) appears over the first ~4 s
 // at 2 A and then converge -- measured 2026-09-05. Reading early reads the creep.
 const uint16_t AC_SW_SETTLE_MS    = 5000;
 const uint16_t AC_SW_TICK_MS      = 1000;   // settling heartbeat, so creep is visible
-// Repeatability tolerance, applied to the two MINUS limits (legs 2 and 4).
-const int32_t  AC_SW_RETURN_CNT   = 25;
+// Repeatability tolerance, applied to the two MINUS limits (legs 2 and 4):
+// 36.6 um of belt (100 counts at 16 bits).
+const int32_t  AC_SW_RETURN_CNT   = encCountsFromBeltUm(36.6f);
 
 // ---------------------------------------------------------------------------
 // FOUR LEGS, AND THE FIRST IS THROWN AWAY. A swing is the peak-to-peak of a

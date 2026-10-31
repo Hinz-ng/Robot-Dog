@@ -17,6 +17,48 @@ Older session-granularity entries below remain historical records, not active in
   removed unsupported 500 Hz / 80% current-loop ceiling. Historical measurement tables retained.
 - Clarified CAN recovery stages, conditional backlash and high-confidence inferred regulator feed.
 
+## 2026-10-24 (bench + firmware) — J03 through the MT6835; fixed-time control delay
+
+- **J03** (belt off): `zea`/`dir` −1 / 0 → 1.0739 / +1; ZEA residual 0.63° elec; `R_eff` −0.11%,
+  `Ke` −0.06%, drag at 100 rad/s −1.4 / +0.9% vs row; INL 0.935° mech; T 95.6 / 98.5 µs.
+- A belt-on attempt first: PLA debris jammed a bearing; phase 2 passed 78° elec off, phase 5 stalled
+  at 6 A twice (FAILURE_MODES). Debris cleared; the belt-on value was discarded.
+- `T_DELAY_PER_LOOP` 0.958 (MT6816) → `T_DELAY_S` 91.5 ± 7.5 µs; sim latency range 84–93 → 84–99 µs.
+- New gate: phase 6 ZEA residual ≤ 2° elec (CALIBRATION §21, baseline sheet).
+- **J03 accepted:** `V` 2.73° elec; Tier 0 `cal=1`, `encok=1 crc=0`, `lps` 40.4–40.7 k, one CW turn
+  −0.6984 rad. README ENC row reduced to the J01 link check.
+- **J01 encoder refitted** (magnet gap matched to J03): `E` 0 CRC errors in 1.2 M reads, full turn
+  `span=65535`; `V` 2.42° elec, so `zea` 5.9879 stands.
+
+## 2026-10-19 (firmware + bench) — encoder read at 16 bits
+
+- `ENC_BITS` 14 → 16 (`f03cc74`): 1 count 0.0220° → 0.0055° at the motor, 1.465 → 0.366 µm of belt;
+  kd flicker blip kd × 0.039 → kd × 0.0098 N·m. Count thresholds rescale (80 / 160 / 800 / 100);
+  calibrations unchanged. Last 14-bit build `b63eca3`.
+- Prep: wrap-safe estimator counter (signed overflow removed), MIT log clamp code moved into
+  `raw_x100`, drift / travel printed in mrad, `E` counts still-shaft transitions.
+- J01 acceptance passed (CALIBRATION §21, after an `ENC_BITS` change): `Ke` −0.74%, `R_eff` −0.34%;
+  kd blip 14 → 3.4–3.6 mN·m at kd 0.365; still-shaft flicker 0 in 35 s. T 84–90 → 84–93 µs, INL
+  0.85–0.87 → 0.85–0.90° (scatter, three runs). Tier 0 disarmed `lps` 40.8 k (was predicted 41–44 k).
+  One-turn gate ±0.002 → ±0.005 rad (hand alignment scatters ±0.003). Bracketed counts in older docs
+  are 14-bit. Tf_mit stays 1 ms.
+
+## 2026-10-12/13 (firmware + bench) — encoder migrated to the MT6835
+
+- **Firmware:** MT6835 driver (`mt6835.h`: 21-bit read at 14, CRC-8, read-only, timing from datasheet
+  Rev 1.3); MT6816 path deleted; rows carry `zea_enc` (a stale-chip `zea` is ignored); one encoder link
+  check for Tier 0, the harness and AUTOCALIB (trip on 4 invalid reads, arm after 1 s clean); AUTOCALIB
+  phases 3–6 need phase 1; count thresholds written in physical units; host tests (`test/host/`).
+- **J01 (MT6835, belt off):** `zea` 6.0542 → 5.9879; read 6.65 → 11.68 µs; control delay 71–76 →
+  84–90 µs; INL 1.03 → 0.85–0.87° mech; harness disarmed loop 63.9 → 47.3 k/s; `Ke` +0.26% vs row.
+- **J02 retired** (row reset to unbuilt; values at `e3905f7`). **J03 → MT6835**, `zea`/`dir` to re-measure.
+- **Found and fixed:** SPI timing copied from the MT6816 (99.65% CRC errors once inlined); `e` PASS
+  beside its own GARBAGE line; a 200 ms liveness guard blind to a 99.65% failure rate.
+- **Docs:** physical units with counts in brackets (BELT_DRIVE, SENSING, CALIBRATION, baseline sheet,
+  CONSTANTS). Retired tasks: J02 label, M1b, M2b. Deferred with conditions: fixed-time delay, angle
+  extrapolation, 16-bit stage 2, MT6835 auto-calibration.
+- Detail: SENSING §5, CALIBRATION §21, FIRMWARE §11, FAILURE_MODES §12, README §15.
+
 ## 2026-10-10 (bench) — J01 idle current; logic-supply heat closed
 
 - J01 idle 59.6 mA (3S) / 39.3 mA (6S), ST-LINK USB unplugged +4.8 mA → board is constant-power; J01 not degraded
@@ -42,7 +84,8 @@ Older session-granularity entries below remain historical records, not active in
 ## 2026-10-02 (d) — a4 PASS on its aim
 
 - a4 (§22.7.13): stop time vs linear model kp 41 +1.6%, kp 16.8 −9.8%, kp 6.6 +21% (gate ±15% missed, explained by O4).
-- O4: rotor rests in one 14/turn detent phase (~218 counts mod 1170, ±70 stick band). R29/R30 withdrawn on that basis.
+- O4: rotor rests in one 14/turn detent phase (~9.3 mrad of output mod 49.9, ±3 mrad stick band;
+  218 counts mod 1170, ±70). R29/R30 withdrawn on that basis.
 - "+" direction = CCW viewed facing the output-pulley shaft end.
 
 ## 2026-10-02 (c) — a3 PASS; D19 promoted
@@ -96,27 +139,27 @@ Older session-granularity entries below remain historical records, not active in
 
 ## 2026-09-30 — pulley recipe B adopted
 
-- Recipe A had been sliced on the 0.6 mm nozzle profile. Recipe B (0.4 profile): G 48.8 → **5.8 counts** (pass, gate
+- Recipe A had been sliced on the 0.6 mm nozzle profile. Recipe B (0.4 profile): G 71.5 → **8.5 µm** of belt (48.8 → 5.8 counts; pass, gate
   exception closed), f_d 65.0 Hz, breakaway 0.288 → **0.295 A**. A recipe is identified by the md5 of its G-code (R24).
 - R21 (backlash from −0.12 geometry) withdrawn. Clamp = 2 × M3×10 countersunk. §22.5 superseded by §22.6.
 
 ## 2026-09-28 (b) — J01 −0.12 locked; B11 written
 
 - Clamp moves stiffness (k 57.6 → 51.5 kN/m), not backlash. Idler holes fixed at (1.72, ±10.00) for every joint.
-- 3-position ladder method reversed (R17): ladders at one clamp setting, ±7-count noise.
+- 3-position ladder method reversed (R17): ladders at one clamp setting, ±10 µm (±7-count) noise.
 - M6a mode is `t`, not `c` (CALIBRATION corrected).
 
 ## 2026-09-28 — J01 pulley −0.12 recorded
 
 - drag_c 0.414 → 0.291 A at unchanged stiffness; B6b f_d 64.3 Hz. Procedures corrected to match firmware
-  (B6b in `t` mode, 4 × `k` + 4 × `K`; B6a = `w` ladder; M4 warns on travel > 200 counts and > 0.60 A).
+  (B6b in `t` mode, 4 × `k` + 4 × `K`; B6a = `w` ladder; M4 warns on travel > 76.7 mrad at the motor (200 counts) and > 0.60 A).
 - `w` banner now prints the currents from `AC_SW_I`.
 
 ## 2026-09-05 — h1 localised to the output side; ring test retired
 
 - Belt swap: h1 unchanged (−5.1%, p 0.42), h2 +490% (p 0.0002) → h1 is pulley eccentricity or output bearing; h2 is
   belt-borne (fleet screen: unexplained 2/rev → swap the belt first).
-- Swing 835 counts confirms the exact belt-path arithmetic (230.96 mm). I_skip > 2.0 A on this plant.
+- Swing 1.22 mm of belt (835 counts) confirms the exact belt-path arithmetic (230.96 mm). I_skip > 2.0 A on this plant.
 - Ring f_d = 86.9 − 0.522·A (amplitude-dependent, softening spring): no single stiffness number. f_n 59–72 Hz →
   Tier-2 impedance ceiling 20–29 Hz. `EA ≈ 4 kN` withdrawn.
 - Firmware: `K` kicks negative; captures carry `cap=N`, re-dumps print `!! RE-DUMP`.

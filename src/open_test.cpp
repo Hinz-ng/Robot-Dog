@@ -4,61 +4,35 @@
 #include "joint_cal.h"      // PER-UNIT: this assembly only, picked by -D JOINT_ID
 
 // ============================================================================
-// open_test.cpp -- BENCH HARNESS: FOC current mode + MT6816 4-wire SPI.
+// open_test.cpp -- BENCH HARNESS: FOC current mode + MT6835 encoder, 4-wire SPI
+// (bit-banged; chip facts and timing in mt6835.h).
 // Board: B-G431B-ESC1 clone (EG2124A). SimpleFOC 2.3.1, ststm32@17.6.0.
 // Not shipped to the robot (Tier 0 is src/tier0/). Keys and session workflow:
 // docs/FIRMWARE.md §11. Boots DISABLED; 20 s auto-stop; 150 rad/s overspeed
 // cutoff; torque modes arm at 0.
 //
 // ---------------------------------------------------------------------------
-// MT6816 FACTS (datasheet Rev 2.1 2022.12, section 8 + 8.6) -- all verified:
-//   * ABZ / UVW / SPI MULTIPLEX THE SAME CHIP PINS. Simultaneous use is
-//     IMPOSSIBLE. HVPP selects: HVPP=GND -> ABZ/UVW, HVPP=VDD -> SPI.
-//        chip pin 5  A/U (ABZ)  ==  MOSI (4-wire SPI)
-//        chip pin 6  B/V (ABZ)  ==  MISO (4-wire SPI)
-//        chip pin 7  Z/W (ABZ)  ==  SCK  (4-wire SPI)
-//        chip pin 1  CSN        (SPI only; has an INTERNAL PULL-UP)
-//        chip pin 2  HVPP       (mode select; internal 150k pulldown)
-//     => the existing A/B/Z wiring maps 1:1 onto MOSI/MISO/SCK. Only CSN and
-//        HVPP are new conductors.
-//   * SPI mode 3 (CPOL=1, CPHA=1). SCK idles HIGH. Transfer starts on the CSN
-//     falling edge, ends on the rising edge. Data changes on the SCK falling
-//     edge and is sampled on the rising edge.
-//   * 16-bit frame: bit0 = R/W (1=read), bits1-7 = A6..A0, bits8-15 = data.
-//     So the first byte out is (0x80 | addr); the data comes back in the LOW byte.
-//   * Angle registers:
-//        0x03 = Angle<13:6>
-//        0x04 = Angle<5:0> | No_Mag_Warning(bit1) | PC(bit0)
-//        0x05 = bit3 Over_Speed
-//     PC is EVEN parity over 0x03[7:0] + 0x04[7:1], so the 16-bit word
-//     (reg03<<8 | reg04) always has EVEN parity. That is the integrity check.
-//   * Timing: TSCK min 64 ns (15.6 MHz max), TSCKL/TSCKH min 30 ns, TL min
-//     100 ns (CSN fall -> first SCK fall), TDV max 15 ns.
-//   * TPwrUp 16 ms after VDD. Angle propagation delay 1 us typ / 3 us max.
-//   * 3-wire SPI exists but SPI_Mode is an OTP register (factory default =
-//     4-wire) and changing it needs 7.0-7.2 V on HVPP. Not attempted.
-//
-// ---------------------------------------------------------------------------
-// WIRING (XJX-135 JP2 header -> board). All four SPI pins must be on GPIOB:
+// WIRING (encoder breakout -> board). All four SPI pins must be on GPIOB:
 // the fast path writes GPIOB->BSRR and reads GPIOB->IDR directly.
 //     CSN  -> PB5     MOSI -> PB6     MISO -> PB7     SCK -> PB8 (= BOOT0)
-//     HVPP -> VDD/3V3 (selects SPI; low gives ABZ)     VDD -> 3V3, GND -> GND
-//   SCK sits on PB8 because CSN (internal pull-up) and MISO (an output) could
-//   hold BOOT0 high at reset. Keep a 10k pulldown PB8 -> GND.
+//     VDD  -> 3V3 (MISO then swings at the STM32's logic level), GND -> GND
+//     CAL_EN unconnected (a temporary jumper only, for user auto-calibration)
+//   SCK sits on PB8 (BOOT0): keep the 10k pulldown PB8 -> GND so the encoder
+//   lines cannot hold BOOT0 high at reset.
 //   The telemetry UART stays on PB4/PB3: bit-banging needs no pin map.
 // ============================================================================
 
 // BUILD GUARD: [env:A1] defines ENCODER_ABZ. This source is the SPI build; on
 // ABZ hardware it would flash, print a plausible banner and read garbage.
 #ifdef ENCODER_ABZ
-  #error "This source is the MT6816 4-wire SPI build; [env:A1] is ABZ/TIM4 hardware. \
+  #error "This source is the SPI-encoder build; [env:A1] is ABZ/TIM4 hardware. \
 It would boot, print a valid-looking banner and read garbage. Restore the ABZ \
 sources on a branch and build there -- do not build this environment."
 #endif
 
 HardwareSerial SerialUART(PB4, PB3);
 
-#include "mt6816.h"   // MT6816 SPI encoder
+#include "mt6835.h"       // MT6835 SPI encoder
 
 // ---------------------------------------------------------------------------
 
@@ -113,9 +87,10 @@ const float VEL_TF = 0.02f;
 // ---------------------------------------------------------------------------
 // ZEA is a stored constant on the absolute encoder, so a slipped magnet or a
 // wrong-joint flash is silent: press 'V' after every flash. An unfilled row
-// (zea < 0, dir == 0) falls back to a full alignment.
-const float ZEA_STORED = CAL.zea;
-const int   DIR_STORED = CAL.dir;
+// (zea < 0, dir == 0) falls back to a full alignment, and so does a row whose
+// zea/dir were measured through a different encoder chip (calZeaUsable()).
+const float ZEA_STORED = calZeaUsable() ? CAL.zea : -1.0f;
+const int   DIR_STORED = calZeaUsable() ? CAL.dir : 0;
 
 
 // ---------------------------------------------------------------------------
@@ -535,10 +510,12 @@ struct LogSample {
                           // contribution: the direct measurement of angle lag.
   int16_t  sp_x1000;      // current SETPOINT * 1000
   int16_t  raw_x100;      // RAW unsynchronised |I| * 100 -- sees PWM-rate ripple that
-                          // the synchronously sampled dq path is blind to
-  uint16_t cnt;           // raw 14-bit MT6816 angle (ground truth for velocity).
-                          // Wraps at 16383 = one motor rev: UNWRAP before
-                          // differentiating. 1 count = 0.02197 deg mech.
+                          // the synchronously sampled dq path is blind to.
+                          // MODE_MIT: bits 0-13 = |I| * 100 saturated at 163.83 A,
+                          // bits 14-15 = the IqClamp code (decode as uint16_t).
+  uint16_t cnt;           // raw ENC_BITS angle, 0..ENC_CPR-1 (ground truth for velocity).
+                          // Wraps at one motor rev: UNWRAP before differentiating.
+                          // 1 count = 360 / ENC_CPR deg mech.
 };
 LogSample logbuf[LOG_N];
 volatile uint16_t log_i = 0;
@@ -642,6 +619,10 @@ uint32_t mit_svc_cyc_max    = 0;         // longest mitService() since the last 
 MitCmd   log_mit_a = {}, log_mit_b = {};
 int16_t  log_mit_sw_i = -1, log_mit_rv_i = -1;
 int32_t  log_mit_cnt0 = 0;               // session counts at sample 0
+// MODE_MIT packs the IqClamp code (0..3) into raw_x100's top two bits.
+const uint8_t  MIT_LOG_CLAMP_SHIFT = 14;
+const uint16_t MIT_LOG_RAWI_MASK   = (1u << MIT_LOG_CLAMP_SHIFT) - 1u;   // 16383 = 163.83 A
+static_assert(IQ_CLAMP_REJECT < 4, "IqClamp must fit raw_x100's two top bits");
 int8_t   log_mit_dir  = 0;
 float    log_mit_tf_s = 0.0f, log_mit_tau_max = 0.0f;
 
@@ -800,9 +781,9 @@ static void mitDumpBody() {
   SerialUART.println(F("i,t_us,p,p_des,v,tau_law,tau_cmd,tau,sp,Iq,Id,Uq,rawI,cnt,clamp"));
   uint32_t t_acc = 0;
   int32_t  c_acc = log_mit_cnt0;
-  uint16_t raw_prev = logbuf[0].cnt & 0x3FFF;
+  uint16_t raw_prev = logbuf[0].cnt;
   for (uint16_t k = 0; k < log_i; k++) {
-    const uint16_t raw = logbuf[k].cnt & 0x3FFF;
+    const uint16_t raw = logbuf[k].cnt;
     int32_t d = (int32_t)raw - (int32_t)raw_prev;
     if      (d >  (int32_t)(ENC_CPR / 2)) d -= (int32_t)ENC_CPR;
     else if (d < -(int32_t)(ENC_CPR / 2)) d += (int32_t)ENC_CPR;
@@ -824,9 +805,10 @@ static void mitDumpBody() {
     SerialUART.print(iq, 3);                              SerialUART.print(',');
     SerialUART.print(logbuf[k].id_x1000 / 1000.0f, 3);    SerialUART.print(',');
     SerialUART.print(logbuf[k].uq_x1000 / 1000.0f, 3);    SerialUART.print(',');
-    SerialUART.print(logbuf[k].raw_x100 / 100.0f, 2);     SerialUART.print(',');
+    const uint16_t rw = (uint16_t)logbuf[k].raw_x100;     // MIT packing, see LogSample
+    SerialUART.print((rw & MIT_LOG_RAWI_MASK) / 100.0f, 2); SerialUART.print(',');
     SerialUART.print(raw);                                SerialUART.print(',');
-    SerialUART.println(logbuf[k].cnt >> 14);
+    SerialUART.println(rw >> MIT_LOG_CLAMP_SHIFT);
   }
   SerialUART.println(F("# END"));
 }
@@ -902,7 +884,8 @@ void logStats() {
     sUq  += logbuf[k].uq_x1000 / 1000.0f;
     sUd  += logbuf[k].ud_x1000 / ud_sc;
     sVel += logbuf[k].vel_x50 / vel_sc;
-    sRaw += logbuf[k].raw_x100 / 100.0f;
+    // MIT packs the clamp code into raw_x100's top bits (LogSample).
+    sRaw += (mit ? ((uint16_t)logbuf[k].raw_x100 & MIT_LOG_RAWI_MASK) : logbuf[k].raw_x100) / 100.0f;
     if (iq < iq_lo) iq_lo = iq;
     if (iq > iq_hi) iq_hi = iq;
   }
@@ -947,7 +930,7 @@ bool isCurrentMode(Mode m){ return (m == MODE_TORQUE_CURRENT || m == MODE_MIT); 
 // ENCODER SELF-TEST -- the acceptance gate for the SPI link.
 // Motor DISABLED, zero current, zero risk. Answers three questions that must all
 // pass before any current flows:
-//   1. Does the link work at all?          (parity error rate)
+//   1. Does the link work at all?          (CRC error rate)
 //   2. How long does a read actually take? (loop-rate budget)
 //   3. Is the magnet strong enough?        (No_Mag_Warning -- ABZ could not tell)
 // Run it stationary AND while hand-spinning: a link that passes at rest and
@@ -962,12 +945,18 @@ void encoderSelfTest() {
   uint32_t err0 = encoder.spi_err, ok0 = encoder.spi_ok;
   uint16_t lo = 0xFFFF, hi = 0;
   uint8_t  nmg = 0;
+  // Full-resolution still-shaft span: the chip's own noise floor, which is what
+  // decides how many of its 21 bits are worth reading (stage 2, 16 vs 21 bit).
+  // For N Gaussian samples span ~ 8 sigma. Meaningless while turning.
+  uint32_t lo21 = 0xFFFFFFFFUL, hi21 = 0;
   uint32_t t0 = micros();
   for (uint16_t k = 0; k < N; k++) {
     if (encoder.readAngleRaw()) {
       if (encoder.raw < lo) lo = encoder.raw;
       if (encoder.raw > hi) hi = encoder.raw;
       nmg |= encoder.no_mag;
+      if (encoder.angle21 < lo21) lo21 = encoder.angle21;
+      if (encoder.angle21 > hi21) hi21 = encoder.angle21;
     }
   }
   uint32_t dt = micros() - t0;
@@ -975,27 +964,30 @@ void encoderSelfTest() {
   encoder.readOverSpeed();
   SerialUART.print(F("ENC n="));        SerialUART.print(N);
   SerialUART.print(F(" ok="));          SerialUART.print(oks);
-  SerialUART.print(F(" parity_err="));  SerialUART.print(errs);
+  SerialUART.print(F(" crc_err="));  SerialUART.print(errs);
   SerialUART.print(F(" ("));            SerialUART.print(100.0f * errs / N, 3);
   SerialUART.print(F("%) us_per_read="));SerialUART.print((float)dt / N, 2);
   SerialUART.print(F(" raw="));         SerialUART.print(encoder.raw);
   SerialUART.print(F(" span="));        SerialUART.print(hi - lo);
+  SerialUART.print(F(" span21="));      SerialUART.print(hi21 >= lo21 ? hi21 - lo21 : 0);
   SerialUART.print(F(" no_mag="));      SerialUART.print(nmg);
   SerialUART.print(F(" over_speed="));  SerialUART.println(encoder.over_speed);
-  // On a STATIONARY shaft raw must not move: a nonzero span is a corrupted frame
-  // that PASSED parity.
+  // On a STATIONARY shaft raw may flicker by ENC_STILL_SPAN_MAX (truncation);
+  // more is a corrupted frame that PASSED the CRC.
   const uint16_t span = (hi > lo) ? (uint16_t)(hi - lo) : 0;
   // ALL-ZERO FRAMES: a dead MISO passed every check above (J03, 2026-10-08).
-  // zero_run counts consecutive 0x0000 frames (mt6816.h); >= N = every read.
+  // zero_run counts consecutive all-zero frames (mt6835.h); >= N = every read.
   const bool all_zero = (encoder.zero_run >= N);
-  if (errs == 0 && oks == N && span == 0 && !all_zero) {
+  // no_mag is in the verdict: 'e' once printed PASS above its own GARBAGE line
+  // (J01, MT6835 fitted under the old MT6816 build, 2026-10-12).
+  if (errs == 0 && oks == N && span <= ENC_STILL_SPAN_MAX && !all_zero && !nmg) {
     SerialUART.println(F("ENC PASS (snapshot; use E to soak a bursty fault)"));
   } else {
     SerialUART.println(F("ENC FAIL: check wiring / slow SPI_HALF_NOPS down"));
-    if (span) SerialUART.println(F("  span != 0 on a still shaft = corruption that PASSED parity"));
+    if (span > ENC_STILL_SPAN_MAX) SerialUART.println(F("  span > 1 on a still shaft = corruption that PASSED crc"));
     if (all_zero) SerialUART.println(F("  every frame 0x0000: MISO dead (or shaft at count 0 -- turn it, re-run)"));
   }
-  if (nmg) SerialUART.println(F("!! No_Mag_Warning -- magnet too weak or too far. Angle is GARBAGE."));
+  if (nmg) SerialUART.println(F("!! weak field or VDD under-voltage -- magnet too weak or too far. Angle is GARBAGE."));
 }
 
 // ---------------------------------------------------------------------------
@@ -1004,20 +996,16 @@ void encoderSelfTest() {
 // 'e' is a one-shot snapshot. This repeats until a key is pressed, so both
 // hands are free to flex a conductor while watching the console.
 //
-// TWO DETECTORS, and the second one is the point:
-//   perr   PARITY. One bit over a 16-bit word, so it catches an ODD number of
-//          flipped bits and MISSES AN EVEN NUMBER -- roughly half of all
-//          multi-bit corruptions sail through it looking perfect.
-//   span   STATIONARY-SHAFT ANGLE SPAN. With the shaft held still, `raw` must
-//          not move. Any span at all is a corrupted frame that PASSED parity.
-//          This is the detector parity cannot be, and nothing in the firmware
-//          was watching it -- SPI_JUMP_GUARD is false (mt6816.h), so spi_jump
-//          is never incremented and `jrej` never prints.
+// TWO DETECTORS:
+//   perr   CRC-8 failures. Catches every single-bit error; ~0.4% of random
+//          garbage still passes (1 in 256).
+//   span   STATIONARY-SHAFT ANGLE SPAN. With the shaft held still, `raw` may
+//          flicker by ENC_STILL_SPAN_MAX; more is a corrupted frame that PASSED
+//          the CRC. SPI_JUMP_GUARD is false (mt6835.h), so `jrej` never prints.
 //
-// ⚠ no_mag is only written on a SUCCESSFUL read (mt6816.h, after the parity
-// check). During an error burst it holds its last good value, so nmg = 0 across
-// a fault does NOT exclude a field problem. Stated because that inference has
-// already been drawn once from the session logs.
+// no_mag is only written on a frame that passes the CRC (mt6835.h): during an
+// error burst it holds its last good value, so nmg = 0 across a fault does NOT
+// exclude a field problem -- that inference was once drawn from the logs.
 // ---------------------------------------------------------------------------
 void encoderMonitor() {
   if (running) { SerialUART.println(F("stop first (x)")); return; }
@@ -1027,9 +1015,15 @@ void encoderMonitor() {
   const uint32_t e0_all = encoder.spi_err;
   uint32_t n_all = 0, win = 0, worst_err = 0;
   uint16_t worst_span = 0;
+  // TRANSITIONS: changes of raw between consecutive CRC-valid reads. On a still
+  // shaft each one is a count flicker, which the MIT law turns into a kd blip
+  // (kd x 0.0098 N.m at 16 bits, 0.039 at 14); its rate is the stage-2 measurement.
+  uint32_t trans_all = 0;
+  uint16_t raw_prev = encoder.raw;
+  const uint32_t t_soak = millis();
   while (!SerialUART.available()) {
     const uint32_t e0 = encoder.spi_err;
-    uint32_t n = 0;
+    uint32_t n = 0, trans = 0;
     uint16_t lo = 0xFFFF, hi = 0;
     uint8_t  nmg = 0;
     const uint32_t t_end = millis() + WIN_MS;
@@ -1037,12 +1031,14 @@ void encoderMonitor() {
       if (encoder.readAngleRaw()) {
         if (encoder.raw < lo) lo = encoder.raw;
         if (encoder.raw > hi) hi = encoder.raw;
+        if (encoder.raw != raw_prev) { trans++; raw_prev = encoder.raw; }
         nmg |= encoder.no_mag;
       }
       n++;
     }
+    trans_all += trans;
     const uint32_t errs = encoder.spi_err - e0;
-    // raw is only written on a SUCCESSFUL read, so a corrupt-but-parity-passing
+    // raw is only written on a SUCCESSFUL read, so a corrupt-but-CRC-passing
     // frame shows up as one outlier inside the window and the next good read
     // pulls it back -- which is exactly what this span sees.
     const uint16_t span = (uint16_t)((hi > lo) ? (hi - lo) : 0);
@@ -1053,9 +1049,10 @@ void encoderMonitor() {
     SerialUART.print(F("  n="));      SerialUART.print(n);
     SerialUART.print(F(" perr="));    SerialUART.print(errs);
     SerialUART.print(F(" span="));    SerialUART.print(span);
+    SerialUART.print(F(" trans="));   SerialUART.print(trans);
     SerialUART.print(F(" nmg="));     SerialUART.print(nmg);
     // Loud, because you are looking at the wire and not at the screen.
-    if (errs || span) SerialUART.println(F("   <<<<<< HIT"));
+    if (errs || span > ENC_STILL_SPAN_MAX) SerialUART.println(F("   <<<<<< HIT"));
     else              SerialUART.println();
   }
   while (SerialUART.available()) (void)SerialUART.read();
@@ -1063,8 +1060,12 @@ void encoderMonitor() {
   SerialUART.print(F(" reads="));       SerialUART.print(n_all);
   SerialUART.print(F(" perr_total="));  SerialUART.print(encoder.spi_err - e0_all);
   SerialUART.print(F(" worst_window=")); SerialUART.print(worst_err);
-  SerialUART.print(F(" worst_span="));  SerialUART.println(worst_span);
-  SerialUART.println(F("  span > 0 on a stationary shaft = corruption that PASSED parity."));
+  SerialUART.print(F(" worst_span="));  SerialUART.print(worst_span);
+  const float soak_s = (millis() - t_soak) * 1e-3f;
+  SerialUART.print(F(" trans_total="));  SerialUART.print(trans_all);
+  SerialUART.print(F(" trans_per_s="));
+  SerialUART.println(soak_s > 0.0f ? trans_all / soak_s : 0.0f, 3);
+  SerialUART.println(F("  span > 1 on a stationary shaft = corruption that PASSED crc."));
 }
 
 void printHelp() {
@@ -1083,6 +1084,11 @@ void startMotor() {
   if (!driver_ok) { SerialUART.println(F("refused: driver init failed")); return; }
   if (needsFOC(mode) && !foc_ready) { SerialUART.println(F("refused: run initFOC (f) first")); return; }
   if (isCurrentMode(mode) && !cs_linked) { SerialUART.println(F("refused: current sense not linked")); return; }
+  // Encoder link (mt6835.h): a mode that commutates on the angle arms only after
+  // 1 s with no invalid read -- the same rule as Tier 0.
+  if (needsFOC(mode) && !encoder.linkArmable(millis())) {
+    SerialUART.println(F("refused: encoder link not clean for 1 s (CRC or all-zero reads) -- run 'e'")); return;
+  }
   if (mode == MODE_MIT) {
     target = 0.0f;
     mitOnArm();
@@ -1602,7 +1608,7 @@ void setup() {
   SerialUART.begin(921600);
   _delay(2000);
   SimpleFOCDebug::enable(&SerialUART);
-  SerialUART.println(F("=== bench harness: MT6816 SPI, FOC current ==="));
+  SerialUART.println(F("=== bench harness: MT6835 SPI, FOC current ==="));
   printJointCal(SerialUART);
 
   // ---- HARDWARE BRING-UP, PHASE 1 -- the order lives in actuator_hw.h ----
@@ -1760,7 +1766,10 @@ void loop() {
     // velocityOpenloop() overwrites it with the COMMANDED value, which `target`
     // already caps at VEL_MAX = 20 -- so this guard cannot trip in openloop and
     // is not protection there. acService() carries the same caveat.
-    if (run_ms > OVERSPEED_GRACE_MS && fabsf(motor.shaft_velocity) > OVERSPEED_RADS)
+    // ENCODER LINK first (mt6835.h, shared with Tier 0 and acService()): on a
+    // stale angle the speed below is stale too. Only modes that commutate on it.
+    if (needsFOC(mode) && encoder.linkTripped())         stopMotor("ENCODER LINK (4 invalid reads in a row)");
+    else if (run_ms > OVERSPEED_GRACE_MS && fabsf(motor.shaft_velocity) > OVERSPEED_RADS)
                                                           stopMotor("OVERSPEED");
     else if (run_ms > AUTO_STOP_MS)                        stopMotor("auto 20s");
     else                                                   motor.move(target);
@@ -1797,8 +1806,16 @@ void loop() {
       if (log_mode == MODE_MIT) {        // slot reuse -- see mitDumpBody()
         e.vel_x50  = sat16(mit_est.v_out_rads * 1000.0f);
         e.ud_x1000 = sat16(mit_tau_law_Nm * 10000.0f);
-        e.cnt      = (uint16_t)(encoder.raw | ((uint16_t)mit_clamp << 14));
-        if (log_i == 0) log_mit_cnt0 = mit_est.cnt - mit_est.cnt_zero;
+        // The clamp code rides in raw_x100[15:14] (not in cnt: every cnt bit is
+        // angle at ENC_BITS = 16). |I| * 100 is saturated to 14 bits = 163.83 A,
+        // 100x the 1.6 A envelope. No new field: 2 B x LOG_N is 2 kB of RAM,
+        // and a static buffer growing into the stack has HardFaulted before.
+        {
+          const float i100 = sqrtf(lc.a*lc.a + lc.b*lc.b + lc.c*lc.c) * 100.0f;
+          const uint16_t ri = (i100 >= (float)MIT_LOG_RAWI_MASK) ? MIT_LOG_RAWI_MASK : (uint16_t)i100;
+          e.raw_x100 = (int16_t)(uint16_t)(ri | ((uint16_t)mit_clamp << MIT_LOG_CLAMP_SHIFT));
+        }
+        if (log_i == 0) log_mit_cnt0 = mitEstDeltaCnt(mit_est);
       }
       if (++log_i >= LOG_N) {
         log_active = false; log_ready = true; log_t1 = micros();
@@ -1856,7 +1873,7 @@ void loop() {
     // frames are being corrupted and the angle was stale for that many cycles.
     // nmg=1 means the magnet field is below the AMR saturation threshold and the
     // angle is meaningless -- the failure ABZ could never report.
-    encoder.readOverSpeed();                 // 0x05: one extra frame per print only
+    encoder.readOverSpeed();                 // cached: over-speed comes in every frame
     SerialUART.print(F(" perr=")); SerialUART.print(encoder.spi_err);
     SerialUART.print(F(" nmg="));  SerialUART.print(encoder.no_mag);
     SerialUART.print(F(" ovs="));  SerialUART.print(encoder.over_speed);
