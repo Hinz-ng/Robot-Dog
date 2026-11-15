@@ -1,10 +1,15 @@
 .pio
 
-# Raw calibration data stays local. Anchored to docs/cal/ so it no longer
-# catches docs/CALIBRATION.md (core.ignorecase makes cal* match it).
-/docs/cal/*
-!/docs/cal/README.md
-!/docs/cal/BELT_OFF_BASELINE.md
+# Public documentation is curated separately from local engineering records.
+# Keep internal guides and raw evidence at their existing paths, untracked.
+/docs/*
+!/docs/README.md
+!/docs/DESIGN.md
+!/docs/PROGRESS.md
+!/docs/TECHNICAL.md
+!/docs/assets/
+/docs/assets/*
+!/docs/assets/leg-development.png
 
 *project_context.md*
 *claude.md*
