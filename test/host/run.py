@@ -18,6 +18,22 @@ MOCK = os.path.join(HERE, "mock")
 
 # (name, source, extra -D flags)
 CASES = [
+    ("G473 commissioning J04", "test_g473_commissioning.cpp", ["-DJOINT_ID=4", "-DQUAD_G473"]),
+    ("G473 commissioning J05", "test_g473_commissioning.cpp", ["-DJOINT_ID=5", "-DQUAD_G473"]),
+    ("G473 commissioning J06", "test_g473_commissioning.cpp", ["-DJOINT_ID=6", "-DQUAD_G473"]),
+    ("G473 commissioning J07", "test_g473_commissioning.cpp", ["-DJOINT_ID=7", "-DQUAD_G473"]),
+    ("G473 commissioning J08", "test_g473_commissioning.cpp", ["-DJOINT_ID=8", "-DQUAD_G473"]),
+    ("G473 commissioning J09", "test_g473_commissioning.cpp", ["-DJOINT_ID=9", "-DQUAD_G473"]),
+    ("G473 commissioning J10", "test_g473_commissioning.cpp", ["-DJOINT_ID=10", "-DQUAD_G473"]),
+    ("G473 commissioning J11", "test_g473_commissioning.cpp", ["-DJOINT_ID=11", "-DQUAD_G473"]),
+    ("G473 commissioning J12", "test_g473_commissioning.cpp", ["-DJOINT_ID=12", "-DQUAD_G473"]),
+    ("leg kinematics + read-only validity", "test_leg_kinematics.cpp", []),
+    ("log append/pause/clear", "test_log_control.cpp", []),
+    ("leg_bench policy + session", "test_leg_bench.cpp", []),
+    ("leg_bench console grammar", "test_leg_console.cpp", []),
+    ("leg_bench runtime fake bus", "test_leg_runtime.cpp", []),
+    ("leg_t0 policy J01", "test_leg_t0_policy.cpp", ["-DJOINT_ID=1"]),
+    ("leg_t0 policy J03", "test_leg_t0_policy.cpp", ["-DJOINT_ID=3"]),
     ("mt6835 driver + link health", "test_mt6835.cpp", []),
     ("mit_law estimator wrap-safe", "test_mit_law.cpp", []),
     # joint_cal.h encoder-chip guard: (JOINT_ID, calZeaUsable expected, banner text)

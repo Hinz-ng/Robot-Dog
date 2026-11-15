@@ -6,8 +6,8 @@
 // Self-contained: no external scripts, fonts or CDNs (the phone is on the
 // ESP32's own network with no internet). Phone-first layout:
 //   header: link dot, bus/log pills, big STOP
-//   joint cards (tap one to make it the target of the quick buttons)
-//   quick buttons -> the terminal -> command input
+//   paired-leg controls in LEG builds; individual controls in a collapsed panel
+//   read-only node cards -> recording controls -> terminal -> command input
 // Every quick button just sends the same text you could type, and the
 // terminal echoes it, so nothing here is hidden behaviour.
 // ============================================================================
@@ -25,7 +25,7 @@ static const char WEB_PAGE[] PROGMEM = R"PAGE(<!doctype html>
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
 font:14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 body{display:flex;flex-direction:column;height:100dvh}
-header{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel);
+header{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 10px;background:var(--panel);
 border-bottom:1px solid var(--line)}
 .title{font-weight:700;letter-spacing:.3px}
 .dot{width:10px;height:10px;border-radius:50%;background:#555;flex:none}
@@ -34,12 +34,13 @@ border-bottom:1px solid var(--line)}
 .pill.bad{background:#3a1717;color:var(--bad)} .pill.rec{background:#3a2c10;color:var(--warn)}
 .spacer{flex:1}
 #stop{background:var(--bad);color:#fff;border:0;border-radius:10px;font-weight:800;
-font-size:16px;padding:11px 18px;letter-spacing:.5px;box-shadow:0 0 0 2px #ff9a9a33}
+font-size:14px;padding:11px 12px;white-space:nowrap;flex:none;margin-left:auto;letter-spacing:.5px;box-shadow:0 0 0 2px #ff9a9a33}
 #stop:active{transform:scale(.97)}
 #estopBar{display:none;background:#5a1414;color:#fff;padding:8px 10px;align-items:center;gap:8px;font-weight:600}
 #estopBar.show{display:flex}
 #estopBar button{margin-left:auto}
-.top{padding:8px 10px 4px;display:flex;flex-direction:column;gap:8px}
+.top{padding:8px 10px 4px;display:flex;flex-direction:column;gap:8px;max-height:58dvh;overflow-y:auto;flex-shrink:0}
+.top>*{flex-shrink:0}
 .cards{display:flex;gap:8px;overflow-x:auto}
 .card{flex:1 0 150px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
 .card.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
@@ -53,12 +54,16 @@ font-size:16px;padding:11px 18px;letter-spacing:.5px;box-shadow:0 0 0 2px #ff9a9
 .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
 .seg button{background:transparent;border:0;color:var(--dim);padding:6px 12px;font-weight:600}
 .seg button.on{background:var(--acc);color:#fff}
-.btns{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.btns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
 .btns button,.btn{background:#1f2430;color:var(--text);border:1px solid var(--line);border-radius:8px;
 padding:9px 4px;font-size:13px;font-weight:600;min-height:40px}
 .btns button:active,.btn:active{background:#2a3140}
 .btns .g{color:var(--ok)} .btns .y{color:var(--warn)} .btns .r{color:var(--bad)}
 details summary{color:var(--dim);font-size:12px;cursor:pointer;padding:2px 0}
+.sectionTitle{font-size:13px;font-weight:700;margin:4px 0 6px}
+.hint{font-size:12px;color:var(--dim);line-height:1.4;margin:5px 0}
+fieldset{border:0;padding:0;margin:6px 0} button:disabled{opacity:.4;cursor:not-allowed}
+#singlePanel{border-top:1px solid var(--line);padding-top:7px}
 .tbar{display:flex;align-items:center;gap:6px;margin:4px 10px 0;font-size:12px;color:var(--dim)}
 .tbar .btn{min-height:32px;padding:4px 12px;font-size:12px}
 #copyBox{display:none;position:fixed;inset:0;background:#000c;z-index:10;flex-direction:column;padding:12px;gap:8px}
@@ -66,7 +71,7 @@ details summary{color:var(--dim);font-size:12px;cursor:pointer;padding:2px 0}
 #copyBox textarea{flex:1;background:#0a0c10;color:var(--text);border:1px solid var(--acc);border-radius:8px;
 font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;padding:8px}
 #copyBox .hint{color:#fff;font-weight:600}
-#term{flex:1;overflow-y:auto;margin:4px 10px 0;padding:8px;background:#0a0c10;border:1px solid var(--line);
+#term{flex:1;min-height:90px;overflow-y:auto;margin:4px 10px 0;padding:8px;background:#0a0c10;border:1px solid var(--line);
 border-radius:10px;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all}
 #term .ev{color:var(--warn)} #term .err{color:var(--bad)} #term .echo{color:var(--echo)}
 #term .sys{color:var(--dim);font-style:italic}
@@ -85,41 +90,76 @@ form .btn{padding:0 14px}
   <span class="pill" id="busPill">bus ?</span>
   <span class="pill" id="logPill" style="display:none">REC</span>
   <span class="spacer"></span>
-  <button id="stop" onclick="doStop()">STOP</button>
+  <button id="stop" onclick="doStop()">STOP all</button>
 </header>
-<div id="estopBar">ESTOP latched <button class="btn" onclick="send('reset')">reset</button></div>
+<div id="estopBar">ESTOP latched <button class="btn" onclick="send('reset')">Release latch</button></div>
 
 <div class="top">
   <div class="cards" id="cards"></div>
-  <div class="tgt">target
-    <div class="seg" id="seg"></div>
-  </div>
-  <div class="btns">
-    <button class="g" onclick="tsend('arm')">arm</button>
-    <button class="r" onclick="tsend('disarm')">disarm</button>
-    <button onclick="tsend('hold')">hold</button>
-    <button class="y" onclick="tsend('clear')">clear</button>
-    <button onclick="tsend('zero')">zero</button>
-    <button onclick="send('ident')">ident</button>
-    <button onclick="send('status')">status</button>
-    <button onclick="send('mon')">mon</button>
-    <button onclick="send('log')">log</button>
-    <button onclick="send('log stop')">log stop</button>
-  </div>
-  <details><summary>more</summary>
-    <div class="btns" style="margin-top:6px">
-      <button onclick="location.href='/log.csv'">log.csv</button>
-      <button onclick="send('help')">help</button>
-      <button onclick="send('t')">self-test</button>
-      <button class="r" onclick="send('disarm all')">disarm all</button>
+  <div class="hint" id="profileHint">Connecting; checking firmware profile...</div>
+  <div id="pairControls" style="display:none">
+    <div class="sectionTitle">Paired leg &middot; J01 right + J03 left</div>
+    <div class="btns">
+      <button id="pairAngles" onclick="send('leg status')">Read both angles</button>
+      <button id="pairFoot" onclick="send('leg foot')">Foot position (read only)</button>
+      <button id="pairDisarm" class="r" onclick="send('leg disarm')">Disarm both</button>
+      <button id="pairZero" class="y" onclick="send('leg zero')">Set this pose as zero</button>
+      <button id="pairArm" class="g" onclick="send('leg arm')">Arm both at zero gains</button>
+      <button onclick="send('clear all')">Clear both faults</button>
     </div>
+    <div class="hint">Stages 1&ndash;2: keep both disarmed. Seat the reference guide before setting zero.
+      Read both angles records a reading in the terminal. Foot position needs measured reference angles.</div>
+    <details id="poweredChecks"><summary>Small powered checks &middot; both joints controlled</summary>
+      <div class="btns" style="margin-top:6px">
+        <button id="pairGains" onclick="send('leg gains 2 0.02')">Apply gains 2 / 0.02</button>
+        <button id="moveJ01" onclick="send('leg move 0.010 0 0.6')">J01 target +0.010 rad</button>
+        <button id="moveJ03" onclick="send('leg move 0 0.010 0.6')">J03 target +0.010 rad</button>
+        <button id="moveZero" onclick="send('leg move 0 0 0.6')">Both targets &rarr; 0</button>
+      </div>
+      <div class="hint">Gains: kp 2 N&middot;m/rad, kd 0.02 N&middot;m&middot;s/rad on both joints.
+        First gains after arm hold the current pose. Move buttons use 0.6 s ramps; the other target is zero.
+        Buttons do not start recording.</div>
+    </details>
+  </div>
+  <div class="sectionTitle">Readouts &amp; recording</div>
+  <div class="btns">
+    <button id="allIdent" onclick="send('ident')">Identify all joints</button>
+    <button id="allStatus" onclick="send('status')">Status of all joints</button>
+    <button onclick="send('mon')">Toggle 1 Hz status</button>
+    <button id="recordLog" class="g" onclick="send('log')">Record / resume</button>
+    <button id="pauseLog" onclick="send('log stop')">Pause recording</button>
+    <button id="downloadCsv" onclick="downloadLog()">Download CSV (disarmed)</button>
+  </div>
+  <div class="hint">Pause keeps the samples and does not disarm. Download while disarmed; resume appends until full.</div>
+  <details id="singlePanel"><summary>Individual-joint bench controls</summary>
+    <div class="hint" id="singleHint"></div>
+    <fieldset id="singleControls" disabled>
+      <div class="tgt">Command target <div class="seg" id="seg"></div></div>
+      <div class="btns" style="margin-top:6px">
+        <button class="g" onclick="singleSend('arm')">Arm selected</button>
+        <button class="r" onclick="singleSend('disarm')">Disarm selected</button>
+        <button onclick="singleSend('hold')">Hold selected</button>
+        <button class="y" onclick="singleSend('clear')">Clear selected faults</button>
+        <button onclick="singleSend('zero')">Zero selected</button>
+      </div>
+    </fieldset>
+  </details>
+  <details><summary>Log management &amp; diagnostics</summary>
+    <div class="btns" style="margin-top:6px">
+      <button id="clearLog" onclick="if(confirm('Erase the saved log? Download it first.')) send('log clear')">Clear saved CSV buffer</button>
+      <button onclick="send('help')">Command help</button>
+      <button onclick="send('t')">Protocol self-test</button>
+      <button class="r" onclick="disarmAll()">Disarm all joints</button>
+      <button onclick="send('reset')">Release ESTOP latch</button>
+    </div>
+    <div class="hint">Reset only releases the latch; it does not clear joint faults, establish zero or arm.</div>
   </details>
 </div>
 
 <div class="tbar"><span id="lineCount">0 lines</span><span class="spacer"></span>
   <button class="btn" id="copyBtn" onclick="copyAll()">copy all</button>
   <button class="btn" onclick="saveTxt()">save .txt</button>
-  <button class="btn" onclick="clearTerm()">clear</button>
+  <button class="btn" onclick="clearTerm()">Clear screen</button>
 </div>
 <div id="term"></div>
 <div id="copyBox"><div class="hint">Copy was blocked by the browser. Long-press the text, Select all, Copy.</div>
@@ -230,7 +270,49 @@ async function send(line) {
     if (!r.ok) sys('not sent (' + r.status + '): ' + line);
   } catch (e) { sys('not sent (no link): ' + line); }
 }
-function tsend(verb) { send(verb + ' ' + target); }
+async function downloadLog() {
+  try {
+    const r = await get('/log.csv', 3000);
+    if (!r.ok) { sys(await r.text()); return; }
+    const url = URL.createObjectURL(await r.blob()), a = document.createElement('a');
+    a.href = url; a.download = 'leg_log.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (e) { sys('CSV download failed; log remains on master.'); }
+}
+)PAGE"
+#ifdef M_LEG_BENCH
+R"PAGE(
+const LEG_PROFILE = true;
+)PAGE"
+#else
+R"PAGE(
+const LEG_PROFILE = false;
+)PAGE"
+#endif
+R"PAGE(
+function singleSend(verb) {
+  if (LEG_PROFILE) { sys('Individual-joint drive is disabled in the paired-leg profile.'); return; }
+  send(verb + ' ' + target);
+}
+function disarmAll() { send(LEG_PROFILE ? 'leg disarm' : 'disarm all'); }
+function selectTarget(value) {
+  if (LEG_PROFILE) return;
+  target = value; renderSeg(); renderCards();
+}
+window.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('pairControls').style.display = LEG_PROFILE ? '' : 'none';
+  document.getElementById('singleControls').disabled = LEG_PROFILE;
+  document.getElementById('profileHint').textContent = LEG_PROFILE
+    ? 'PAIRED LEG profile: commands act on J01 + J03. Cards are readouts, not selectors.'
+    : 'INDIVIDUAL BENCH profile: expand individual-joint controls to select a target.';
+  document.getElementById('singleHint').textContent = LEG_PROFILE
+    ? 'Disabled in this paired-leg build. Individual drive requires the normal master profile for separate joint bench tests.'
+    : 'These buttons act on the selected node (or all when selected). Identification and status always report all nodes.';
+  document.getElementById('in').placeholder = LEG_PROFILE ? 'command, e.g. leg status' : 'command, e.g. set 1 kp 10 kd 0.1';
+  sys(LEG_PROFILE ? 'LEG BENCH: J01 right, J03 left; leg move q1 q3 seconds uses output radians from the reference.'
+    : 'Individual bench controls are in the collapsed panel; select the intended node.');
+});
 function submitLine(e) {
   e.preventDefault();
   const i = document.getElementById('in');
@@ -248,8 +330,8 @@ document.getElementById('in').addEventListener('keydown', e => {
 async function doStop() {
   const b = document.getElementById('stop');
   b.textContent = '...';
-  try { await get('/stop', 1500); b.textContent = 'STOP'; }
-  catch (e) { b.textContent = 'STOP'; sys('STOP NOT DELIVERED -- use the button / pull the pack'); }
+  try { await get('/stop', 1500); b.textContent = 'STOP all'; }
+  catch (e) { b.textContent = 'STOP all'; sys('STOP NOT DELIVERED -- use the button / pull the pack'); }
 }
 
 function renderSeg() {
@@ -260,7 +342,7 @@ function renderSeg() {
     const b = document.createElement('button');
     b.textContent = o === 'all' ? 'all' : 'J' + String(o).padStart(2, '0');
     if (o === target) b.className = 'on';
-    b.onclick = () => { target = o; renderSeg(); renderCards(); };
+    b.onclick = () => selectTarget(o);
     seg.appendChild(b);
   }
 }
@@ -269,8 +351,8 @@ function renderCards() {
   c.innerHTML = '';
   for (const n of nodes) {
     const el = document.createElement('div');
-    el.className = 'card' + (String(n.id) === target ? ' sel' : '');
-    el.onclick = () => { target = String(n.id); renderSeg(); renderCards(); };
+    el.className = 'card' + (!LEG_PROFILE && String(n.id) === target ? ' sel' : '');
+    if (!LEG_PROFILE) el.onclick = () => selectTarget(String(n.id));
     const gone = n.age > 500;
     let chips = '';
     if (gone) chips += '<span class="chip gone">no reply</span>';
@@ -280,9 +362,10 @@ function renderCards() {
     if (n.fl !== 'none') chips += '<span class="chip flt">' + n.fl + '</span>';
     const deg = (n.p * 57.29578).toFixed(1);
     el.innerHTML =
-      '<div class="h">J' + String(n.id).padStart(2, '0') + ' ' + chips + '</div>' +
-      '<div class="r">p <b>' + n.p.toFixed(4) + ' (' + deg + '&deg;)</b></div>' +
-      '<div class="r">v <b>' + n.v.toFixed(3) + '</b> tau <b>' + n.tau.toFixed(3) + '</b></div>' +
+      '<div class="h">J' + String(n.id).padStart(2, '0') + (LEG_PROFILE ? (n.id === 1 ? ' right ' : ' left ') : ' ') + chips + '</div>' +
+      '<div class="r">p (rad) <b>' + n.p.toFixed(4) + ' (' + deg + '&deg;)</b></div>' +
+      '<div class="r">v (rad/s) <b>' + n.v.toFixed(3) + '</b></div>' +
+      '<div class="r">tau (N&middot;m) <b>' + n.tau.toFixed(3) + '</b></div>' +
       '<div class="r">miss <b>' + n.miss + '</b> rep <b>' + n.rep + '</b></div>';
     c.appendChild(el);
   }
@@ -304,8 +387,9 @@ async function poll() {
     bp.textContent = j.bus + (j.tec ? ' TEC ' + j.tec : '');
     bp.className = 'pill' + (j.bus === 'RUNNING' && !j.tec ? '' : ' bad');
     const lp = document.getElementById('logPill');
-    lp.style.display = j.log ? '' : 'none';
-    lp.className = 'pill rec'; lp.textContent = 'REC ' + j.logn;
+    lp.style.display = '';
+    lp.className = 'pill' + (j.log ? ' rec' : '');
+    lp.textContent = (j.log ? 'REC ' : 'PAUSED ') + j.logn + '/' + j.logcap;
     document.getElementById('estopBar').className = j.estop ? 'show' : '';
     nodes = j.nodes;
     const ids = nodes.map(n => n.id).join(',');

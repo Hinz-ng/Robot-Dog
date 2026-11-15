@@ -14,7 +14,14 @@ static const gpio_num_t M_PIN_CAN_RX = GPIO_NUM_4;   // <- transceiver RXD
 static const uint8_t    M_PIN_ESTOP  = 6;
 
 // ---- the joints on this bus. Node number = JOINT_ID. ----
+#if defined(M_J04_ACCEPTANCE) && defined(M_LEG_BENCH)
+#error "J04 acceptance must use the normal master, not the paired-leg profile"
+#endif
+#ifdef M_J04_ACCEPTANCE
+static const uint8_t M_NODES[]  = { 4 };
+#else
 static const uint8_t M_NODES[]  = { 1, 3 };
+#endif
 static const uint8_t M_N_NODES  = sizeof(M_NODES) / sizeof(M_NODES[0]);
 
 // ---- schedule ----
@@ -33,12 +40,21 @@ static const uint8_t  M_LOST_N          = 3;
 // MOUNT_SIGN: the open contract item "per-joint mounting sign for mirrored
 // legs" lives HERE, not in Tier 0. Leg-frame angle = MOUNT_SIGN * contract p.
 // +1 for every node until the leg is mounted and the sign is observed.
+#ifdef M_J04_ACCEPTANCE
+static const int8_t M_MOUNT_SIGN[] = { +1 };
+#else
 static const int8_t M_MOUNT_SIGN[] = { +1, +1 };
+#endif
 // Soft limits on p_des in the CONTRACT frame (rad, output, session zero).
 // Wide open until 7l and the leg geometry are known; the master refuses to
 // send a p_des outside them.
+#ifdef M_J04_ACCEPTANCE
+static const float M_PDES_MIN[] = { -6.28f };
+static const float M_PDES_MAX[] = { +6.28f };
+#else
 static const float M_PDES_MIN[] = { -6.28f, -6.28f };
 static const float M_PDES_MAX[] = { +6.28f, +6.28f };
+#endif
 static_assert(sizeof(M_MOUNT_SIGN) == M_N_NODES && sizeof(M_PDES_MIN) / sizeof(float) == M_N_NODES
               && sizeof(M_PDES_MAX) / sizeof(float) == M_N_NODES, "one entry per node");
 

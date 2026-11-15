@@ -155,6 +155,16 @@ static bool actuatorInitMotor(Print& out, bool& cs_linked) {
 // caller's bench policy, and reading it from open_test.cpp would make this
 // header depend upward on the file that includes it.
 static void printCfgBanner(Print& out, float driver_volt_limit, float curr_max_A_rep) {
+#ifdef QUAD_G473
+  out.print(F("BOARD G473_FOC MCU=STM32G473CEU6 joint=")); out.print(CAL.id);
+#ifdef G473_TIER0
+  out.println(F(" role=TIER0"));
+#else
+  out.println(F(" role=HARNESS"));
+#endif
+  if (strcmp(CAL.date, "-") == 0)
+    out.println(F("COMMISSIONING: scales provisional; alignment, motor data and UID required before T0 ARM"));
+#endif
   // "Note which config is actually flashed." A measurement is only comparable to
   // others taken under the SAME four values. On STM32 6-PWM, dead_zone is
   // converted to a timer dead-time register value at driver.init() and quantised,

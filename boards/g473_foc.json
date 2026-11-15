@@ -1,0 +1,31 @@
+{
+  "build": {
+    "core": "stm32",
+    "cpu": "cortex-m4",
+    "extra_flags": "-DSTM32G4 -DSTM32G4xx -DSTM32G473xx -DQUAD_G473 -DARDUINO_B_G431B_ESC1",
+    "f_cpu": "170000000L",
+    "framework_extra_flags": { "arduino": "-DCUSTOM_PERIPHERAL_PINS" },
+    "mcu": "stm32g473ceu6",
+    "product_line": "STM32G473xx",
+    "variants_dir": "variants",
+    "variant": "G473_FOC",
+    "arduino": { "variant_h": "variant_G473_FOC.h" }
+  },
+  "connectivity": ["can"],
+  "debug": {
+    "default_tools": ["stlink"],
+    "jlink_device": "STM32G473CE",
+    "openocd_target": "stm32g4x",
+    "svd_path": "STM32G473xx.svd"
+  },
+  "frameworks": ["arduino"],
+  "name": "Quadruped G473 FOC (ESC1-compatible wiring)",
+  "upload": {
+    "maximum_ram_size": 98304,
+    "maximum_size": 524288,
+    "protocol": "stlink",
+    "protocols": ["stlink"]
+  },
+  "url": "https://www.st.com/en/microcontrollers-microprocessors/stm32g473ce.html",
+  "vendor": "Project-local clone variant"
+}

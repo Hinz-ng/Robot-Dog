@@ -146,6 +146,10 @@ static bool t0Refuse(const __FlashStringHelper* why) {
   return false;
 }
 
+#ifdef T0_LEG_BENCH
+static T0LegReference t0_leg_reference={};
+#endif
+
 static bool t0TryArm(uint8_t version) {
   if (running)                         return t0Refuse(F("already armed -- DISARM first"));
   if (t0_fault != CAN_FAULT_NONE)      return t0Refuse(F("fault latched -- CLEAR_FAULT first"));
@@ -160,6 +164,10 @@ static bool t0TryArm(uint8_t version) {
   if (encoder.no_mag)                  return t0Refuse(F("encoder No_Mag"));
   if (!encoder.linkArmable(millis()))  return t0Refuse(F("encoder link: an invalid read (CRC or all-zero) in the last 1 s -- check the wiring; at exactly angle 0, turn the shaft"));
   if (fabsf(t0P()) > T0_P_ABS_MAX_RAD) return t0Refuse(F("|p| outside envelope -- ZERO first"));
+#ifdef T0_LEG_BENCH
+  if (!t0LegArmAllowed(T0_LEG_POLICY,t0_leg_reference,t0P(),t0_est.v_out_rads))
+    return t0Refuse(F("LEG: configure measured limits, ZERO, and stationary in-box pose required"));
+#endif
 
   // "Torque modes arm at zero": p_des = p, every gain zero -> tau = 0 until a
   // CMD arrives. Unlike the harness, p is NOT re-zeroed here -- ZERO is an
@@ -182,6 +190,9 @@ static void t0OnAdmin(const CanRxFrame& fr) {
   // Byte 1 must echo our node: an ID typo in the master cannot address us.
   if (fr.dlc != CAN_ADMIN_DLC || fr.data[1] != JOINT_ID) { t0_n_admin_bad++; return; }
   t0_n_admin++;
+#ifdef T0_LEG_BENCH
+  t0_leg_reference.onAdmin(fr.data[0],running);
+#endif
   switch (fr.data[0]) {
     case CAN_OP_IDENT:
       t0SendStatus();
@@ -214,12 +225,22 @@ static void t0OnCmd(const CanRxFrame& fr) {
   if (fr.dlc != 8) { t0_n_rej++; t0SendState(); return; }
   MitCmd c;
   canUnpackCmd(fr.data, c);
-  if (!mitCmdValid(c, T0_RANGES)) {
+  if (!mitCmdValid(c, T0_RANGES)
+#ifdef T0_LEG_BENCH
+      || !t0LegCmdAllowed(T0_LEG_POLICY,c)
+#endif
+      ) {
     // Not received, as far as the timeout is concerned: an invalid CMD does
     // not refresh it. Reject, never repair.
     t0_n_rej++;
   } else if (running) {
-    if (t0_phase == CAN_PHASE_DAMP && fabsf(c.p_des_rad - t0P()) > T0_P_RESUME_MARGIN_RAD) {
+    if (t0_phase == CAN_PHASE_DAMP &&
+#ifdef T0_LEG_BENCH
+        !t0LegMayRefresh(t0_phase)
+#else
+        fabsf(c.p_des_rad - t0P()) > T0_P_RESUME_MARGIN_RAD
+#endif
+        ) {
       // A stale target must not snap the leg: stay in DAMP, let T_OFF run out.
       t0_n_resume_refused++;
     } else {
@@ -270,7 +291,11 @@ static void t0Armed() {
   // UNIT: v is OUTPUT rad/s; the threshold is MOTOR rad/s (tier0_config.h).
   if (now - t0_run_ms > T0_OVERSPEED_GRACE_MS &&
       fabsf(v) * GEAR_RATIO > T0_OVERSPEED_MOTOR_RADS) { t0Stop(CAN_FAULT_OVERSPEED, "OVERSPEED"); return; }
-  if (fabsf(p) > T0_P_ABS_MAX_RAD)                   { t0Stop(CAN_FAULT_P_ENVELOPE, "P ENVELOPE"); return; }
+  if (fabsf(p) > T0_P_ABS_MAX_RAD
+#ifdef T0_LEG_BENCH
+      || !t0LegActualInBounds(T0_LEG_POLICY,p)
+#endif
+      ) { t0Stop(CAN_FAULT_P_ENVELOPE, "P ENVELOPE"); return; }
   if (encoder.no_mag)                                { t0Stop(CAN_FAULT_ENCODER, "ENCODER No_Mag"); return; }
   // Sense mismatch -- open_test.cpp's loop() guard, verbatim in logic: raw
   // (unsynchronised) |I| far above sqrt(3/2)|Iq| for ~20 ms means the dq
@@ -532,6 +557,14 @@ static void t0Setup() {
   canInit((uint8_t)JOINT_ID, SerialUART);
 
   t0Banner(SerialUART);
+#ifdef T0_LEG_BENCH
+  SerialUART.print(F("LEG BENCH profile: configured=")); SerialUART.print(t0LegConfigured(T0_LEG_POLICY));
+  SerialUART.print(F(" command p=[")); SerialUART.print(T0_LEG_POLICY.cmd_min,4);
+  SerialUART.print(','); SerialUART.print(T0_LEG_POLICY.cmd_max,4);
+  SerialUART.print(F("] trip p=[")); SerialUART.print(T0_LEG_POLICY.trip_min,4);
+  SerialUART.print(','); SerialUART.print(T0_LEG_POLICY.trip_max,4);
+  SerialUART.println(F("]; ZERO required after boot. Output rad."));
+#endif
 #ifdef T0_FAULT_TEST
   SerialUART.println(T0_FAULT_TEST == 1
     ? F("!! FAULT-TEST BUILD: the loop will HANG 3 s after arming (N4d). Reflash T0_Jxx after.")

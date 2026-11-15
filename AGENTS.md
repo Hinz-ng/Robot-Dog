@@ -16,6 +16,10 @@ commutation, current control, joint safety envelope, presents a frozen CAN contr
 Actuator contract: `{p_des, v_des, kp, kd, tau_ff}` -> `{p, v, tau}`. There is **no
 cascaded velocity PID** in it; `kd*(v_des - v)` is a term in a torque computation.
 
+New joints use a new motor by default. Assign project identity `motor_<joint number>`
+(J05 -> `motor_5`, J06 -> `motor_6`), unless the user reports a replacement/reuse.
+These are project labels, not manufacturer serials; preserve historical reuse records.
+
 ## Source of truth, in order
 
 1. **Bench evidence** — measurements, captures, scope traces, debugger output.
@@ -92,10 +96,24 @@ more were caught at build on 2026-10-13. Edit C string literals with a literal-t
 
 ## Response shapes
 
+Explain engineering in plain language: lead with the decision and physical effect,
+then the reason and the next action. Define necessary jargon on first use. For bench
+work, separate the concept, chosen settings, exact commands and expected observations.
+Default to fuller engineering explanations with useful detail. State the goal/physical
+idea and the deliverable, then the decisions, procedure and expected observations.
+Explain what each command/button and argument does, its units, which joints it affects,
+and the required state; never omit setup, stop/recovery or recording steps for brevity.
+For implementation reports, name and link the exact code files/modules added or changed,
+explain their responsibilities and integration, and separately list documentation changes.
+Report checks actually run, physical tests still pending, and measured facts versus
+chosen settings/assumptions. Do not make the user open a file to learn the essential
+next procedure. Use tables or numbered steps when they help; avoid repetition and fluff.
+
 - **Debugging** — top hypothesis with confidence -> the single most decisive test -> what
   each outcome would mean. One test per iteration, not a battery.
 - **Design** — constraints -> trade-off table -> recommendation -> concrete next step.
-- **Code** — scope -> code -> integration notes -> one verification step on real hardware.
+- **Code** — goal -> exact files and responsibilities -> integration -> documentation
+  changes -> actual software checks and remaining hardware verification.
 - **Tuning** — one parameter at a time, with the physical meaning and expected change.
 
 Quantitative over qualitative. No padding. Short answers for short questions. When
@@ -120,6 +138,18 @@ analysis stops changing the decision, say so and name the measurement.
   part's datasheet.
 
 ## Everything earns its place
+
+- Explain each task's purpose before its steps: what uncertainty it resolves, what
+  concrete artifact it produces, and which next decision uses it. Distinguish a
+  physical measurement from a mathematical calculation or software check.
+- Prefer the smallest useful implementation and measurement set. Reuse accepted
+  evidence; do not repeat unchanged e-stop/fault checks or expand verification just
+  for reassurance. Re-test affected behavior when code, wiring, assembly or new
+  evidence changes its assumptions. Keep unperformed checks explicit.
+- Run focused checks for the change, then stop when the decision is established.
+  Defer speculative features and dense sampling without a named consumer. Respect
+  user-requested scope (including a full ROM survey); efficiency means adaptive
+  boundary sampling, not silently narrowing that scope.
 
 A test, calibration, analysis or doc update must do at least one of:
 
@@ -171,7 +201,8 @@ order). Anything else is cut, or cut down to one line. Model: `docs/cal/BELT_OFF
 - **A warning stays** only if it prevents a failure that has really happened. Keep it to one
   line that names the failure. The full catalogue lives in `project_context.md` §7 and
   `FAILURE_MODES.md`.
-- Prefer tables and lists to prose. When you edit a section, leave it shorter than you found it.
+- Prefer tables and lists for comparable data and ordered procedures. Remove duplication;
+  add detail where it clarifies the physical concept, command meaning or complete procedure.
 
 ## Milestone discipline
 

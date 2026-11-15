@@ -2,6 +2,9 @@
 #include <Arduino.h>
 #include "can_proto.h"
 #include "master_config.h"
+#ifdef M_LEG_BENCH
+#include "leg_bench_config.h"
+#endif
 // ============================================================================
 // nodes.h -- what the master knows about each joint. (CAN-T0)
 // ============================================================================
@@ -36,6 +39,14 @@ struct Node {
 };
 
 static Node m_node[M_N_NODES];
+#ifdef M_LEG_BENCH
+static_assert(M_N_NODES==2,"leg bench requires exactly J01/J03");
+static bool m_leg_request_pending=false,m_leg_abort_pending=false;
+static bool m_leg_phone_owned=false;
+static uint32_t m_leg_phone_ms=0;
+static LegRequest m_leg_request={};
+static LegSession m_leg_public={};
+#endif
 
 // Sine generator, per node, run by the poll task: p_des = c + a*sin(2*pi*f*t).
 struct SineGen { bool on; float centre, amp, freq_hz; uint32_t t0_ms; };

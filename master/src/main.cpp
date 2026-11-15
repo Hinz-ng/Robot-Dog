@@ -28,6 +28,9 @@ void setup() {
              (int)M_PIN_CAN_TX, (int)M_PIN_CAN_RX, (unsigned long)M_CYCLE_MS);
   for (uint8_t i = 0; i < M_N_NODES; i++) con.printf(" J%02u", M_NODES[i]);
   con.println("\nBOOTS POLL-ONLY: no node is commanded until `arm` in THIS session.");
+#ifdef M_LEG_BENCH
+  con.printf("LEG BENCH configured=%u: use leg zero/arm; q1=photo right, q3=photo left, radians CCW.\n",legConfigValid(LEG_CONFIG));
+#endif
   selfTest();
 
   pinMode(M_PIN_ESTOP, INPUT_PULLUP);

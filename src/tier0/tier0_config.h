@@ -2,6 +2,9 @@
 #include <Arduino.h>
 #include "fleet_config.h"
 #include "mit_law.h"      // MitRanges
+#ifdef T0_LEG_BENCH
+#include "leg_bench_config.h"
+#endif
 // ============================================================================
 // tier0_config.h -- TIER 0's SHIPPED POLICY. (CAN-T0, 2026-10-03)
 // ============================================================================
@@ -65,7 +68,12 @@ const float T0_MIT_TF_S = 0.001f;   // Tf_mit, B12a a0 (noise 70% of budget at 1
 // stable. Raise only with a leg test (deferred item, b1).
 // |p_des| 2*pi matches the CAN packing range; |v_des| 5 rad/s (45 at the motor,
 // inside the Uq ceiling); |tau_ff| 1 N.m (the clamp chain bounds the total).
+#ifdef T0_LEG_BENCH
+// Deliberately below the detached bench envelope; not measured leg stability.
+const MitRanges T0_RANGES = { 10.0f, 0.1f, 6.2832f, 0.0f, 0.0f };
+#else
 const MitRanges T0_RANGES = { 41.0f, 0.365f, 6.2832f, 5.0f, 1.0f };
+#endif
 
 // ---- COMMAND TIMEOUT: HOLD -> DAMP -> DISABLE. Owner-approved 2026-10-03. ----
 // Checked EVERY LOOP on the local clock, never from reception, so a dead bus
@@ -93,8 +101,13 @@ const float T0_P_RESUME_MARGIN_RAD = 0.05f;
 // Overspeed, in MOTOR rad/s (the harness's unit; 150 motor = 16.7 output).
 // *** UNIT: Tier 0's speed is the OUTPUT-frame estimate; multiply by
 // GEAR_RATIO before comparing. *** Raise before the first fast swing.
+#ifdef T0_LEG_BENCH
+const float    T0_OVERSPEED_MOTOR_RADS = T0_LEG_POLICY.max_speed_output * GEAR_RATIO;
+const uint32_t T0_OVERSPEED_GRACE_MS   = 0;
+#else
 const float    T0_OVERSPEED_MOTOR_RADS = 150.0f;
 const uint32_t T0_OVERSPEED_GRACE_MS   = 300;    // ignore right after arming
+#endif
 // Sense mismatch -- copied verbatim from open_test.cpp's loop() guard. Both
 // thresholds compare against sensed |I| and are REPORTED amps by construction.
 const uint8_t  T0_GUARD_DIV        = 30;    // check every 30 loops (~2.5 ms)

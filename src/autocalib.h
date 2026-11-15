@@ -1774,7 +1774,7 @@ static void acM4Breakaway(float sgn) {
     SerialUART.print(F("    !! > ")); SerialUART.print(AC_M4_WARN_A_rep, 2);
     SerialUART.println(F(" A -- +5 sigma outlier. Investigate."));
   }
-  SerialUART.println(F("    Next: turn ~40 deg by hand (5 positions per direction), let go, wait 2 s to settle into a detent."));
+  SerialUART.println(F("    Next: finish B/b at this position, returning to the same detent and waiting 2 s before each. Then rotate ~72 deg to the next of 5 positions."));
 }
 
 // ===========================================================================

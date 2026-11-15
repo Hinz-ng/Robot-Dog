@@ -46,7 +46,11 @@ struct LogRec {
 };
 static LogRec*  m_log = nullptr;
 static uint32_t m_log_cap = 0, m_log_n = 0;
-static volatile bool m_log_on = false;
+static bool m_log_on = false; // writes and sample append serialized by m_mux
+
+static void logPause() {
+  portENTER_CRITICAL(&m_mux);m_log_on=false;portEXIT_CRITICAL(&m_mux);
+}
 
 static void logAlloc(Print& out) {
   for (uint32_t cap = M_LOG_RECORDS; cap >= 250; cap /= 2) {
@@ -72,6 +76,9 @@ static void estopBroadcast() {
 static void allSessionsOff() {
   portENTER_CRITICAL(&m_mux);
   for (uint8_t i = 0; i < M_N_NODES; i++) { m_node[i].session_armed = false; m_sine[i].on = false; }
+#ifdef M_LEG_BENCH
+  m_leg_abort_pending=true;
+#endif
   portEXIT_CRITICAL(&m_mux);
 }
 
@@ -81,6 +88,10 @@ static void sendAdmin(uint8_t id, uint8_t op) {
   if (m_ver_override >= 0) b[2] = (uint8_t)m_ver_override;
   busSend(canIdAdmin(id), b, CAN_ADMIN_DLC);
 }
+
+#ifdef M_LEG_BENCH
+#include "leg_bench_runtime.h"
+#endif
 
 // Handle one STATE reply for node i. Returns the status byte.
 static uint8_t takeState(int i, const uint8_t d[8]) {
@@ -140,17 +151,31 @@ static void pollNode(int i, uint32_t now_ms) {
       if (req == REQ_ARM && canStArmed(st)) n.session_armed = true;
       portEXIT_CRITICAL(&m_mux);
       if (req == REQ_ARM) evt(canStArmed(st) ? "J%02u ARMED" : "J%02u ARM REFUSED (see its STATUS flags / T0 console)", id);
+#ifdef M_LEG_BENCH
+      legAdminResult(i,true);
+#endif
     } else {
       portENTER_CRITICAL(&m_mux); n.last_req_done = true; n.last_req_result = 0xFF; portEXIT_CRITICAL(&m_mux);
       evt("J%02u: no reply to admin op %u", id, op);
+#ifdef M_LEG_BENCH
+      legAdminResult(i,false);
+#endif
     }
     return;                                  // one exchange per node per cycle
   }
 
   // ---- 3. the regular exchange ----
   uint8_t flags = 0;
+#ifdef M_LEG_BENCH
+  uint32_t command_sent_ms=0;
+#endif
   busDrain();
-  if (armed) {
+#ifdef M_LEG_BENCH
+  const bool command_enabled=armed && legCommandForNode(i,cmd);
+#else
+  const bool command_enabled=armed;
+#endif
+  if (command_enabled) {
     if (sg.on) cmd.p_des_rad = sg.centre + sg.amp * sinf(6.2831853f * sg.freq_hz * (now_ms - sg.t0_ms) * 1e-3f);
     const bool in_limits = cmd.p_des_rad >= M_PDES_MIN[i] && cmd.p_des_rad <= M_PDES_MAX[i];
     if (!in_limits || !canPackCmd(cmd, d)) {
@@ -160,7 +185,14 @@ static void pollNode(int i, uint32_t now_ms) {
       portEXIT_CRITICAL(&m_mux);
       return;
     }
+#ifdef M_LEG_BENCH
+    command_sent_ms=millis();
+#endif
     busSend(canIdCmd(id), d, 8);
+#ifdef M_LEG_BENCH
+    // Log exactly what the receiver decodes, not the unquantized request.
+    MitCmd decoded;canUnpackCmd(d,decoded);cmd=decoded;
+#endif
     flags |= 2;
   } else {
     uint8_t b[CAN_ADMIN_DLC];
@@ -176,6 +208,10 @@ static void pollNode(int i, uint32_t now_ms) {
     st = takeState(i, d);
     canUnpackState(d, s, st);
     flags |= 1;
+#ifdef M_LEG_BENCH
+    if(flags&2)legControlReply(i,command_sent_ms,st);
+    legService();
+#endif
   } else {
     bool lost = false;
     portENTER_CRITICAL(&m_mux);
@@ -187,16 +223,23 @@ static void pollNode(int i, uint32_t now_ms) {
       allSessionsOff();
       evt("J%02u LOST (%u missed) -> ESTOP to all", id, M_LOST_N);
     }
+#ifdef M_LEG_BENCH
+    legService();
+#endif
   }
 
+  bool log_full=false;
+  portENTER_CRITICAL(&m_mux);
   if (m_log_on && m_log && m_log_n < m_log_cap) {
     LogRec& r = m_log[m_log_n++];
     r.t_us = micros(); r.node = id; r.status = st; r.flags = flags; r.pad = 0;
     r.p_des = cmd.p_des_rad; r.v_des = cmd.v_des_rads; r.kp = cmd.kp_Nm_per_rad;
     r.kd = cmd.kd_Nms_per_rad; r.ff = cmd.tau_ff_Nm;
     r.p = s.p_rad; r.v = s.v_rads; r.tau = s.tau_Nm;
-    if (m_log_n >= m_log_cap) { m_log_on = false; evt("log full (%lu records)", (unsigned long)m_log_cap); }
+    if (m_log_n >= m_log_cap) { m_log_on = false; log_full=true; }
   }
+  portEXIT_CRITICAL(&m_mux);
+  if(log_full) evt("log full (%lu records); retained, download then clear", (unsigned long)m_log_cap);
 }
 
 static void pollTask(void*) {
@@ -217,6 +260,9 @@ static void pollTask(void*) {
       estopBroadcast();                       // every cycle while latched
     }
 
+#ifdef M_LEG_BENCH
+    legService();
+#endif
     if ((int32_t)(m_pause_until_ms - now) > 0) continue;   // N4a: total silence
 
     for (uint8_t i = 0; i < M_N_NODES; i++) pollNode(i, now);

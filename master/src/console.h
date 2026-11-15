@@ -1,4 +1,5 @@
 #pragma once
+#include "log_control.h"
 #include <Arduino.h>
 #include "can_proto.h"
 #include "can_proto_vectors.h"
@@ -6,6 +7,10 @@
 #include "nodes.h"
 #include "poll.h"
 #include "con_out.h"        // `con`: USB serial + the phone terminal
+#ifdef M_LEG_BENCH
+#include "leg_bench_console.h"
+#include "leg_kinematics_config.h"
+#endif
 // ============================================================================
 // console.h -- the operator's console, in loop() on core 1. Line-based (Enter).
 // ============================================================================
@@ -28,6 +33,14 @@ static bool    c_web_armed = false;        // the phone armed something -> its d
 static uint32_t c_mon_ms = 0;
 
 static void conHelp() {
+#ifdef M_LEG_BENCH
+  con.println(F("LEG BENCH: pair J01(right)/J03(left), q radians CCW in reference-photo view.\n"
+    "leg status | leg foot (read-only mm) | leg zero | leg arm | leg disarm\n"
+    "leg gains <kp> <kd> | leg move <q1_rad> <q3_rad> <duration_s>\n"
+    "stop | reset | clear all | status | ident | mon | log (append) | log stop | log clear | log dump | t\n"
+    "No raw set/step/sine/arm/zero commands in this profile."));
+  return;
+#endif
   con.println(F(
     "-- leg master (CAN-T0). Nodes are JOINT_IDs; 'all' where shown.\n"
     "  ident                  STATUS of every node (build, contract, git, flags)\n"
@@ -40,7 +53,7 @@ static void conHelp() {
     "  sine <n> <amp> <f>     pd = centre + amp*sin(2 pi f t);  sine <n> off\n"
     "  pause <ms>             send NOTHING for ms (timeout test N4)\n"
     "  stop                   ESTOP to all, latched.   reset  (button closed)\n"
-    "  log | log dump | log stop      t  self-test\n"
+    "  log (append) | log stop | log clear (paused/disarmed) | log dump | t self-test\n"
     "  testver <v|off>        N2: pretend our contract version is v\n"
     "  armraw <n> <ver> [echo]   N2: raw ARM frame, no master checks"));
 }
@@ -59,6 +72,7 @@ static void printIdent(const Node& n) {
 }
 
 static void printStatus() {
+  portENTER_CRITICAL(&m_mux); const bool recording=m_log_on; portEXIT_CRITICAL(&m_mux);
   const BusHealth h = busHealth();
   con.printf("bus %s TEC=%lu REC=%lu buserr=%lu arblost=%lu txfail=%lu/%lu rxmiss=%lu stray=%lu boff=%lu | "
                 "cycles=%lu max=%luus overrun=%lu%s%s\n",
@@ -66,7 +80,7 @@ static void printStatus() {
     (unsigned long)h.arblost, (unsigned long)h.txfail, (unsigned long)m_tx_fail,
     (unsigned long)h.rxmiss, (unsigned long)m_rx_stray, (unsigned long)m_busoff_n,
     (unsigned long)m_cycles, (unsigned long)m_cycle_us_max, (unsigned long)m_overruns,
-    m_estop ? "  *** ESTOP LATCHED ***" : "", m_log_on ? "  [logging]" : "");
+    m_estop ? "  *** ESTOP LATCHED ***" : "", recording ? "  [logging]" : "");
   m_cycle_us_max = 0;
   for (uint8_t i = 0; i < M_N_NODES; i++) {
     portENTER_CRITICAL(&m_mux);
@@ -163,7 +177,7 @@ static void conSet(int i, char** tok, int nt) {
 // USB only: thousands of CSV lines would flush the phone's 200-line ring.
 // On the phone, use the "log.csv" button (web_term.h streams the same CSV).
 static void logDump() {
-  m_log_on = false;
+  logPause();
   con.println("log dump -> USB serial. On the phone use the log.csv button instead.");
   Serial.printf("# CAN-T0 master log, %lu records, git %08lX%s, cycle %lu ms\n",
                 (unsigned long)m_log_n, (unsigned long)GIT_HASH, GIT_DIRTY ? "+dirty" : "", (unsigned long)M_CYCLE_MS);
@@ -185,12 +199,69 @@ static void selfTest() {
   else con.printf("can_proto self-test: %u FAILED, first at check %u\n", f, first);
 }
 
+#ifdef M_LEG_BENCH
+static void printLegFoot() {
+  portENTER_CRITICAL(&m_mux);
+  const LegSession session=m_leg_public;
+  const Node nodes[2]={m_node[0],m_node[1]};
+  const uint32_t now=millis();
+  portEXIT_CRITICAL(&m_mux);
+  if(!legConfigValid(LEG_CONFIG)){con.println("foot unavailable: leg mapping not configured");return;}
+  legkin::Observation observation={};
+  observation.referenced=session.referenced;
+  observation.session_valid=session.phase==LEG_READY||session.phase==LEG_ARMED;
+  for(int i=0;i<2;i++){
+    observation.seen[i]=nodes[i].st_ms!=0&&nodes[i].miss_run<LEG_CONFIG.missed_max;
+    observation.age_ms[i]=now-nodes[i].st_ms;
+    observation.healthy[i]=!canStFault(nodes[i].st_status)&&canStPhase(nodes[i].st_status)!=3;
+    observation.q_rad[i]=legQFromWire(LEG_CONFIG.joint[i],nodes[i].st.p_rad);
+  }
+  const auto result=legkin::readFoot(LEG_GEOMETRY,LEG_KINEMATIC_REFERENCE,observation,LEG_CONFIG.fresh_ms);
+  if(result.status!=legkin::OK){con.printf("foot unavailable: %s\n",legkin::statusText(result.status));return;}
+  con.printf("foot pin x=%+.3f z=%+.3f mm | theta1=%+.5f theta3=%+.5f rad | geometry only; clearance/tracking not certified\n",
+    result.foot.x*1000,result.foot.z*1000,result.theta[0],result.theta[1]);
+}
+#endif
+
 static void conExec(char* line) {
   char* tok[16]; int nt = 0;
   for (char* p = strtok(line, " \t;"); p && nt < 16; p = strtok(nullptr, " \t;")) tok[nt++] = p;
   if (!nt) return;
   int idx[M_N_NODES]; uint8_t k;
   const char* cmd = tok[0];
+
+#ifdef M_LEG_BENCH
+  if(!strcmp(cmd,"leg")) {
+    if(legFootQuery(tok,nt)){printLegFoot();return;}
+    LegRequest request={};bool status=false;
+    if(!legParseTokens(tok,nt,request,status)){con.println("refused: leg syntax (help)");return;}
+    if(status){
+      portENTER_CRITICAL(&m_mux);const LegSession session=m_leg_public;
+      const Node n0=m_node[0],n1=m_node[1];portEXIT_CRITICAL(&m_mux);
+      con.printf("LEG configured=%u referenced=%u phase=%s moving=%u kp=%.2f kd=%.3f | raw p1=%+.5f p3=%+.5f rad\n",
+        legConfigValid(LEG_CONFIG),session.referenced,legPhaseName(session.phase),session.moving,session.kp,session.kd,
+        n0.st.p_rad,n1.st.p_rad);
+      if(legConfigValid(LEG_CONFIG)) con.printf("q1=%+.5f q3=%+.5f rad (reference-photo CCW)\n",
+        legQFromWire(LEG_CONFIG.joint[0],n0.st.p_rad),legQFromWire(LEG_CONFIG.joint[1],n1.st.p_rad));
+      else con.println("q unavailable: measured mounting signs/windows not configured");
+      return;
+    }
+    if(request.kind==LEG_ARM){for(int i=0;i<2;i++)if(!armAllowed(i))return;}
+    if(m_estop && request.kind!=LEG_DISARM){con.println("refused: ESTOP latched; reset, clear all, then leg zero");return;}
+    request.from_phone=c_from_web;
+    if(!legQueue(request)){con.println("refused: leg request queue busy");return;}
+    if(c_from_web && request.kind==LEG_ARM)c_web_armed=true;
+    con.println("LEG request queued; inspect event/result with leg status");return;
+  }
+  if(!legRawAllowed(cmd)){con.println("refused: use leg commands for paired operation");return;}
+  if(!strcmp(cmd,"clear")) {
+    portENTER_CRITICAL(&m_mux); const bool safe=!m_node[0].session_armed&&!m_node[1].session_armed &&
+      !canStArmed(m_node[0].st_status)&&!canStArmed(m_node[1].st_status) &&
+      (m_leg_public.phase==LEG_FAULT || m_leg_public.phase==LEG_UNREFERENCED);
+    portEXIT_CRITICAL(&m_mux);
+    if(nt!=2 || strcmp(tok[1],"all") || !safe){con.println("refused: clear all only while pair stopped/unreferenced");return;}
+  }
+#endif
 
   if (!strcmp(cmd, "help") || !strcmp(cmd, "?")) conHelp();
   else if (!strcmp(cmd, "status")) printStatus();
@@ -272,8 +343,18 @@ static void conExec(char* line) {
   }
   else if (!strcmp(cmd, "log")) {
     if (nt >= 2 && !strcmp(tok[1], "dump")) logDump();
-    else if (nt >= 2 && !strcmp(tok[1], "stop")) { m_log_on = false; con.printf("log stopped at %lu\n", (unsigned long)m_log_n); }
-    else if (m_log) { m_log_n = 0; m_log_on = true; con.printf("logging (%lu records max)\n", (unsigned long)m_log_cap); }
+    else {
+      portENTER_CRITICAL(&m_mux);
+      bool armed=false;
+      for(uint8_t i=0;i<M_N_NODES;i++) armed |= m_node[i].session_armed || canStArmed(m_node[i].st_status);
+#ifdef M_LEG_BENCH
+      armed |= m_leg_request_pending || m_leg_public.phase==LEG_ARMING;
+#endif
+      const char* result=logControl(nt==1?"start":nt==2?tok[1]:"invalid",m_log!=nullptr,armed,m_log_cap,m_log_n,m_log_on);
+      const uint32_t used=m_log_n;
+      portEXIT_CRITICAL(&m_mux);
+      con.printf("%s: %lu/%lu records\n",result,(unsigned long)used,(unsigned long)m_log_cap);
+    }
   }
   else if (!strcmp(cmd, "testver") && nt >= 2) {
     m_ver_override = !strcmp(tok[1], "off") ? -1 : atoi(tok[1]);

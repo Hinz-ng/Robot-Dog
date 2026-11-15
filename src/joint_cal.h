@@ -95,7 +95,7 @@ const JointCal JOINTS[] = {
   // -- J01 -- B-SPI-01 / M-SPI-01, the reference actuator. BELT-ON row (B11),
   //    long-shaft output pulley, 2 output bearings, 2026-10-28 (BELT_DRIVE §22).
   //    -e J01 flashes this. Raw: docs/cal/J01/J01_2026-10-28_*.
-  //    The belt-off baseline is the LAST row of the table (index 13).
+  //    The belt-off baseline is at index 13 (JOINT_ID 14).
   //    ENCODER: MT6835 since 2026-10-12. zea/dir: AUTOCALIB phase 2 2026-10-13,
   //    belt off, n = 7, sd 2.04 deg elec. Only zea/dir/zea_enc were taken from
   //    that run: the belt is off, so its drag is the wrong plant for this row.
@@ -136,7 +136,17 @@ const JointCal JOINTS[] = {
   //    new joint: docs/cal/BELT_OFF_BASELINE.md.
   { "J02", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
-  // -- J03 -- board_3 (new) + motor_2 (J02's motor). Bare motor, belt off.
+  // -- J03 -- board_3 + motor_2 (J02's motor). Belt ON, short shaft, PRE-SPACER.
+  //    PROVISIONAL, reviewed 2026-11-01; source run date is unknown.
+  //    Raw: docs/cal/J03/BELT_ON/PRE_SPACER/README.md; refit_belt_on.py.
+  //    Drag: runs 4-6 AFTER reported hand-turning; equal weight per order group
+  //    (1 fwd-first, 2 rev-first). Runs 1-3 are a separate friction state, not
+  //    pooled: drag at 60 motor rad/s fell ~0.08 A in both directions.
+  //    Belt-on M4 is INCOMPLETE: 3 valid pairs; new-boot redo reverse 0.330 A,
+  //    positive 0.430/0.415 A both creep-flagged; fifth position absent.
+  //    0.0f below = UNKNOWN, not zero friction; no consumer needs a guessed mean.
+  //    Drag/M4 have no control consumer in Tier 0. No leg/dynamic acceptance.
+  //    Electrical values CARRIED below; belt-off row retained at index 14.
   //    ENCODER: MT6835 (recorded 2026-10-13). zea/dir: AUTOCALIB phase 2
   //    2026-10-24, belt off, n = 7, sd 2.31 deg elec; phase 6 ZEA residual
   //    0.634 deg elec. Only zea/dir/zea_enc were taken from that run. Same run,
@@ -154,37 +164,108 @@ const JointCal JOINTS[] = {
   //    Ke 0.017900 is 1.09% below J02's on the same motor; stored as measured
   //    (J02's 0.32% scale ambiguity points this way).
   //    M2 2026-10-09: g 0.9797 +-1.73%, PROVISIONAL; self-fit R 0.21609, c 0.33086.
-  //    M4 2026-10-10: 0.2545 A, n = 10, sd 0.078, fwd 0.243 / rev 0.266.
-  //    Raw: docs/cal/J03/.
-  { "J03", "board_3", "motor_2", "2026-10-08", "OFF",
+  //    Belt-off M4 2026-10-10 is preserved in the baseline row, not carried.
+  { "J03", "board_3", "motor_2", "2026-11-01", "10mm-9:1",
      1.0739f, +1, 0.23068f,        // zea, dir (MT6835, 2026-10-24, belt off), R_eff
      0.01919f,                     // U0
      0.017900f, 45.75e-6f,         // Ke, L   (Kt = calKt() = 0.026850)
      0.008357f, 0.9797f,           // vbus_scale (M1 2026-10-08), i_scale (M2 2026-10-09, PROVISIONAL)
-     0.0935f, 0.1058f,             // drag_c fwd, rev   (reported A, belt OFF, bare motor)
-     0.001143f, 0.000713f,         // drag_v fwd, rev
-     0.2545f, ENC_MT6835 },        // breakaway_A  (M4 2026-10-10, bare motor); zea_enc
-  // -- J04 .. J12 -- NOT BUILT. Every measurable field 0.0f = not measured;
+     0.3957f, 0.4072f,             // drag_c fwd, rev   PROVISIONAL, A_rep, runs 4-6
+     0.002741f, 0.002107f,         // drag_v fwd, rev   A_rep/(motor rad/s)
+     0.0f, ENC_MT6835 },           // breakaway_A UNKNOWN, pending valid belt-on M4
+  // -- J04 .. J12 -- G473 J04/J05 have reviewed bare-motor rows.
+  //    Unfilled measurable fields 0.0f = not measured;
   //    zea -1 / dir 0 force a full alignment; i_scale 1.0 is its inert value.
   //    New joint: docs/cal/BELT_OFF_BASELINE.md (M1, AUTOCALIB, paste, M2, M4).
+#ifdef QUAD_G473
+  // 2026-11-11 review: J04_bare_autocalib.txt, "repeat (new boot)" report.
+  // New motor, physical serial label unknown; MT6835, belt OFF. Residual 1.570 deg.
+  // M1 difference-slope from J04_M1.txt: 11.58/11.7547, 22.68/23.0362 V
+  // (UT89X/seed at 0.0085). Low check -0.0243 V; high -0.0365 V needs re-boot check.
+  // Keep full-precision M1 scale; UID recorded below.
+  // M2 rerun 2026-11-12: g=0.97023 PROVISIONAL, user accepts small meter drift.
+  // Thermal +2.56% exceeds 2% screen; accepted exception, not a passed gate.
+  // See docs/cal/J04/M2/README.md for sensitivity/uncertainty.
+  // R/L/drag retain reported-amp units; no PI or sense-gain change.
+  // M4 2026-11-14: first 5 paired positions, mean 0.3280 A_rep, SD 0.1149, n=10.
+  // P1 repeat is diagnostic only; docs/cal/J04/M4/README.md.
+  { "J04", "B-G473-01", "motor_4", "2026-11-14", "OFF",
+    3.8209f, +1, 0.23370f, 0.03146f, 0.017791f, 45.49e-6f,
+    0.00836325f, 0.97023f, 0.1153f, 0.1338f, 0.001553f, 0.000823f,
+    0.3280f, ENC_MT6835 },
+#else
   { "J04", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+#endif
+#ifdef QUAD_G473
+  // 2026-11-13 review: new motor_5, MT6835, belt OFF; second phase-5 sweep.
+  // M1 UT89X difference slope; corrected checks -0.0186 / +0.0065 V pass.
+  // Residual 0.189 deg elec, INL 1.212 deg mech pp; T 82.4 / 84.9 us diagnostic.
+  // See docs/cal/J05/AUTOCALIB/README.md; bare R/U0/L/drag remain unchanged.
+  // M2 2026-11-13: g=0.98252 PROVISIONAL; seed 11.26 V (2 dp), thermal +1.43%.
+  // Max bus readings; user reports 0.5-1 mA early / 0-0.2 mA later variation.
+  // 3.67% relative jackknife scatter only; docs/cal/J05/M2/README.md.
+  // M4 2026-11-14: first 5 paired positions, mean 0.3380 A_rep, SD 0.1047, n=10.
+  // P1 repeat excluded; reverse repeat creep-invalid. docs/cal/J05/M4/README.md.
+  // UID remains unmeasured; no PI/sense-constructor change.
+  // motor_5 is the user-assigned project identity, not a manufacturer serial.
+  { "J05", "B-G473-02", "motor_5", "2026-11-14", "OFF",
+    2.3225f, +1, 0.22234f, 0.02606f, 0.017928f, 43.69e-6f,
+    0.008401368685f, 0.98252f, 0.1433f, 0.1476f, 0.001176f, 0.001038f,
+    0.3380f, ENC_MT6835 },
+#else
   { "J05", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+#endif
+#ifdef QUAD_G473
+  { "J06", "B-G473-03", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0085f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, ENC_MT6835 },
+#else
   { "J06", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+#endif
+#ifdef QUAD_G473
+  { "J07", "B-G473-04", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0085f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, ENC_MT6835 },
+#else
   { "J07", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+#endif
+#ifdef QUAD_G473
+  { "J08", "B-G473-05", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0085f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, ENC_MT6835 },
+#else
   { "J08", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+#endif
+#ifdef QUAD_G473
+  { "J09", "B-G473-06", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0085f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, ENC_MT6835 },
+#else
   { "J09", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+#endif
+#ifdef QUAD_G473
+  { "J10", "B-G473-07", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0085f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, ENC_MT6835 },
+#else
   { "J10", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+#endif
+#ifdef QUAD_G473
+  { "J11", "B-G473-08", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0085f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, ENC_MT6835 },
+#else
   { "J11", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+#endif
+#ifdef QUAD_G473
+  { "J12", "B-G473-09", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0085f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, ENC_MT6835 },
+#else
   { "J12", "-", "-", "-", "OFF", -1.0f, 0, 0.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+#endif
 
   // -- A1 -- HISTORICAL; the hardware was rebuilt into J02. Kept at index 12 so
   //    no JOINT_ID shifts. Measured with a rubbing encoder magnet, so every
@@ -212,6 +293,19 @@ const JointCal JOINTS[] = {
      0.0750f, 0.0816f,             // drag_c fwd, rev      unchanged (reported A)
      9.33e-4f, 7.27e-4f,           // drag_v fwd, rev      unchanged (reported A)
      0.292f, ENC_MT6816 },         // breakaway_A          unchanged (reported A); zea_enc
+
+  // -- J03 belt-OFF baseline -- index 14 / JOINT_ID 15, reference only.
+  //    Original electrical/friction row; MT6835 alignment updated 2026-10-24.
+  //    M4 2026-10-10: n=10, sd 0.078 A_rep, fwd 0.243 / rev 0.266.
+  //    Not a deployable CAN node; physical J03 remains JOINT_ID 3.
+  { "J03", "board_3", "motor_2", "2026-10-08", "OFF",
+     1.0739f, +1, 0.23068f,
+     0.01919f,
+     0.017900f, 45.75e-6f,
+     0.008357f, 0.9797f,
+     0.0935f, 0.1058f,
+     0.001143f, 0.000713f,
+     0.2545f, ENC_MT6835 },
 };
 
 static constexpr uint8_t JOINT_COUNT = (uint8_t)(sizeof(JOINTS) / sizeof(JOINTS[0]));
@@ -233,7 +327,7 @@ const JointUid JOINT_UID[] = {
   { "J01", { 0x460030, 0x34354B0F, 0x30373336 } },  // B-SPI-01 -- T0_J01 boot banner, 2026-10-04 (N1)
   { "J02", { 0, 0, 0 } },  // B-ABZ-01 -- board failed after P8 (7d)
   { "J03", { 0x52003E, 0x34354B0C, 0x33383735 } },   // T0 boot 2026-10-10, board_3
-  { "J04", { 0, 0, 0 } },
+  { "J04", { 0x460024, 0x53465003, 0x20333446 } },  // B-G473-01, user Tier-0 banner 2026-11-13
   { "J05", { 0, 0, 0 } },
   { "J06", { 0, 0, 0 } },
   { "J07", { 0, 0, 0 } },
@@ -244,6 +338,7 @@ const JointUid JOINT_UID[] = {
   { "J12", { 0, 0, 0 } },
   { "A1",  { 0, 0, 0 } },  // historical, not flashable
   { "J01", { 0x460030, 0x34354B0F, 0x30373336 } },  // J01 belt-off baseline: same board (B-SPI-01) as index 0
+  { "J03", { 0x52003E, 0x34354B0C, 0x33383735 } },  // J03 belt-off baseline: same board as index 2
 };
 static_assert(sizeof(JOINT_UID) / sizeof(JOINT_UID[0]) == JOINT_COUNT,
               "JOINT_UID[] must have exactly one entry per JOINTS[] row");

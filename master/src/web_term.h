@@ -72,6 +72,9 @@ static void wtPage() {
 
 static void wtPoll() {
   wt_last_poll_ms = millis();
+#ifdef M_LEG_BENCH
+  legPhoneHeartbeat();
+#endif
   uint32_t since = wt_server.hasArg("since") ? (uint32_t)strtoul(wt_server.arg("since").c_str(), nullptr, 10) : 0;
   const uint32_t first = wlFirst();
   const uint32_t dropped = (since < first) ? first - since : 0;
@@ -91,8 +94,12 @@ static void wtPoll() {
     wtJsonStr(o, wlLine(s));
   }
   o += "],\"estop\":"; o += m_estop ? 1 : 0;
-  o += ",\"log\":"; o += m_log_on ? 1 : 0;
-  o += ",\"logn\":"; o += m_log_n;
+  portENTER_CRITICAL(&m_mux);
+  const bool recording=m_log_on; const uint32_t used=m_log_n;
+  portEXIT_CRITICAL(&m_mux);
+  o += ",\"log\":"; o += recording ? 1 : 0;
+  o += ",\"logn\":"; o += used;
+  o += ",\"logcap\":"; o += m_log_cap;
   o += ",\"bus\":";
   { const BusHealth h = busHealth(); wtJsonStr(o, h.state); o += ",\"tec\":"; o += h.tec; }
   o += ",\"nodes\":[";
@@ -119,6 +126,9 @@ static void wtPoll() {
 
 static void wtCmd() {
   wt_last_poll_ms = millis();
+#ifdef M_LEG_BENCH
+  legPhoneHeartbeat();
+#endif
   if (!wt_server.hasArg("c")) { wt_server.send(400, "text/plain", "missing c"); return; }
   String c = wt_server.arg("c");
   c.trim();
@@ -138,7 +148,16 @@ static void wtStop() {
 }
 
 static void wtLogCsv() {
-  m_log_on = false;                         // freeze the log while it is read
+  // Streaming blocks page heartbeats; only download with no drive/ARM pending.
+  portENTER_CRITICAL(&m_mux);
+  bool busy=false;
+  for(uint8_t i=0;i<M_N_NODES;i++) busy |= m_node[i].session_armed || canStArmed(m_node[i].st_status) || m_node[i].req==REQ_ARM;
+#ifdef M_LEG_BENCH
+  busy |= m_leg_request_pending || m_leg_public.phase==LEG_ARMING || m_leg_public.phase==LEG_ARMED;
+#endif
+  portEXIT_CRITICAL(&m_mux);
+  if(busy) { wt_server.send(409,"text/plain","Disarm both joints and confirm arm=0 before downloading."); return; }
+  logPause();                             // freeze the log while it is read
   wt_server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   wt_server.sendHeader("Content-Disposition", "attachment; filename=\"leg_log.csv\"");
   wt_server.send(200, "text/csv", "");
@@ -195,12 +214,24 @@ static void webTermService() {
   // Dead-man. Only armed-from-phone sessions are covered; cleared once
   // nothing is armed any more.
   if (c_web_armed) {
+#ifdef M_LEG_BENCH
+    portENTER_CRITICAL(&m_mux);
+    const bool pending_arm=m_leg_public.phase==LEG_ARMING ||
+      (m_leg_request_pending && m_leg_request.kind==LEG_ARM);
+    portEXIT_CRITICAL(&m_mux);
+    if (!wtAnyArmed() && !pending_arm) c_web_armed = false;
+#else
     if (!wtAnyArmed()) c_web_armed = false;
+#endif
     else if (millis() - wt_last_poll_ms > M_WEB_DEADMAN_MS) {
+#ifdef M_LEG_BENCH
+      m_estop=true;allSessionsOff();estopBroadcast();
+#else
       portENTER_CRITICAL(&m_mux);
       for (uint8_t i = 0; i < M_N_NODES; i++)
         if (m_node[i].session_armed) m_node[i].req = REQ_DISARM;
       portEXIT_CRITICAL(&m_mux);
+#endif
       c_web_armed = false;
       con.printf("** phone silent for > %lu ms -> DISARM all (dead-man)\n",
                  (unsigned long)M_WEB_DEADMAN_MS);
