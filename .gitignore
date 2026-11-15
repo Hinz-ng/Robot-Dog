@@ -3,10 +3,10 @@
 # Public documentation is curated separately from local engineering records.
 # Keep internal guides and raw evidence at their existing paths, untracked.
 /docs/*
-!/docs/README.md
-!/docs/DESIGN.md
-!/docs/PROGRESS.md
-!/docs/TECHNICAL.md
+!/docs/readme.md
+!/docs/design.md
+!/docs/progress.md
+!/docs/technical.md
 !/docs/assets/
 /docs/assets/*
 !/docs/assets/leg-development.png
@@ -14,3 +14,10 @@
 *project_context.md*
 *claude.md*
 .vscode/
+
+# Local assistant context and generated caches are not public deliverables.
+/AGENTS.md
+/handoff-quadruped-actuator.md
+/images/README.md
+__pycache__/
+*.py[cod]

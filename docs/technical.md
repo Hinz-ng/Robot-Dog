@@ -1,6 +1,6 @@
 # Technical Reference
 
-[Project guide](README.md) · [Design](DESIGN.md) · [Progress](PROGRESS.md)
+[Project guide](readme.md) · [Design](design.md) · [Progress](progress.md)
 
 This page outlines the software boundaries and joint interface for readers exploring the implementation. Hardware-specific calibration and powered operating procedures are maintained separately.
 
@@ -50,9 +50,11 @@ The reported torque is derived from motor current, the calibrated motor torque c
 | [`master/`](../master/) | ESP32-S3 master firmware |
 | [`can_protocol/`](../can_protocol/) | Shared command, feedback and message definitions |
 | [`platformio.ini`](../platformio.ini) | Actuator build environments and pinned dependencies |
+| [`test/host/readme.md`](../test/host/readme.md) | Software checks that run without operating hardware |
+| [`variants/G473_FOC/readme.md`](../variants/G473_FOC/readme.md) | Board-support provenance and STM32G473 implementation details |
 
 ## Configuration and validation boundaries
 
-The public snapshot and newer local work use different sensor and board configurations; see [Progress](PROGRESS.md#public-code-and-recent-development). Calibration belongs to the physical unit and sensor assembly that produced it. Mechanical rebuilds can also change friction, compliance and suitable control gains.
+The firmware contains separate STM32G431 and STM32G473 profiles and uses MT6835 sensing for forward development. Build profiles are selected per physical joint; they do not share interchangeable per-unit calibration. See [Progress](progress.md#code-and-validation-status) for the validation scope. Calibration belongs to the physical unit and sensor assembly that produced it. Mechanical rebuilds can also change friction, compliance and suitable control gains.
 
 Software builds and mathematical checks establish implementation behaviour. Bench measurements establish hardware behaviour for a stated assembly and configuration. Neither alone establishes safe loaded operation of a complete robot. These overview pages are not a commissioning or powered-test procedure.

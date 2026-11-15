@@ -38,4 +38,6 @@ Offline measured-reference converter: `python test/host/test_leg_reference.py` c
 torque conversion/clamp, independent unbuilt J05-J12 defaults and unrecorded UIDs.
 After building both G473 targets, `python tools/check_g473_build.py` checks their
 ELF/backend/memory metadata and pre-port G431 harness binary equivalence.
-See [G473 port procedure](../../docs/G473_PORT.md) for prerequisites and commands.
+The [public technical reference](../../docs/technical.md) describes the configuration
+boundaries. Detailed commissioning procedures and original bench records are maintained
+separately from the public repository.

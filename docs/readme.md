@@ -22,10 +22,10 @@ The central idea is to control how a joint responds to a load, as well as where 
 
 | Read | What it explains |
 |---|---|
-| [Design](DESIGN.md) | The actuator, leg mechanism and main design trade-offs |
-| [Progress](PROGRESS.md) | What has been demonstrated and what comes next |
-| [Technical reference](TECHNICAL.md) | The control architecture, joint interface and source-code map |
+| [Design](design.md) | The actuator, leg mechanism and main design trade-offs |
+| [Progress](progress.md) | What has been demonstrated and what comes next |
+| [Technical reference](technical.md) | The control architecture, joint interface and source-code map |
 
 The documentation presents the project at a system level. Per-unit calibration records, operating procedures and session logs remain part of the internal engineering workflow.
 
-**Status reviewed: 15 November 2026.** Recent development extends beyond the current public firmware snapshot; the [progress page](PROGRESS.md#public-code-and-recent-development) identifies that boundary.
+**Status reviewed: 15 November 2026.** The [progress page](progress.md#code-and-validation-status) distinguishes published implementation from physical validation.

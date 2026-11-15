@@ -26,4 +26,6 @@ Only these G473 environments add the alias; no installed package is patched.
 R003 shunts, existing analog gain and PCB routing, 8 MHz HSE and MT6835 wiring
 are user-authorized assumptions (2026-11-08), not measurements on this board.
 The pin tables retain their upstream G431 provenance because they represent
-that assumed wiring. See [port procedure](../../docs/G473_PORT.md).
+that assumed wiring. See the [technical reference](../../docs/technical.md) for
+configuration and validation boundaries. Detailed commissioning procedures are
+maintained separately from the public repository.

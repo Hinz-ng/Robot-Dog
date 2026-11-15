@@ -1,6 +1,6 @@
 # Development Progress
 
-[Project guide](README.md) · [Design](DESIGN.md) · [Technical reference](TECHNICAL.md)
+[Project guide](readme.md) · [Design](design.md) · [Technical reference](technical.md)
 
 **Reviewed: 15 November 2026.** The project is at the actuator and first-leg development stage. Walking, jumping and backflips are future goals.
 
@@ -21,7 +21,7 @@ First-leg work has added joint coordination, geometry calculations and staged in
 
 Additional STM32G473-based actuators have progressed through bare-motor calibration and bench checks. This is a separate hardware configuration with its own integration work; high-voltage, loaded and CAN/fault qualification remain distinct steps.
 
-The mechanical layout is also evolving. The development CAD shown in the [project guide](README.md) includes a proposed sideways hip drive. Mounting, clearance and assembly details are still being resolved.
+The mechanical layout is also evolving. The development CAD shown in the [project guide](readme.md) includes a proposed sideways hip drive. Mounting, clearance and assembly details are still being resolved.
 
 ## Next milestones
 
@@ -31,8 +31,8 @@ The mechanical layout is also evolving. The development CAD shown in the [projec
 
 These milestones describe the development sequence, without predicting completion dates.
 
-## Public code and recent development
+## Code and validation status
 
-The public default branch reviewed for this documentation was commit [`d78a55b`](https://github.com/Hinz-ng/Robot-Dog/commit/d78a55bcd1f7b4997a17d778b1f58c9b40e044a4), dated 11 October 2026. It contains an earlier STM32G431/MT6816 firmware snapshot.
+The published implementation includes MT6835 sensing, STM32G431 and STM32G473 build profiles, and first-leg coordination and geometry tools. Publishing these implementations does not establish successful operation of every supported configuration.
 
-The recent-development summary above reflects local engineering records through 14 November 2026, including MT6835 sensing, G473 bench work and first-leg development. Those updates are not all present in that public snapshot. Readers reproducing or reviewing firmware should use the configuration and history of the code revision they have checked out.
+The physical-progress summary reflects engineering records through 14 November 2026. Bench results belong to the tested unit, assembly and firmware configuration. Readers reviewing or reproducing the code should use the configuration and history of the revision they have checked out.

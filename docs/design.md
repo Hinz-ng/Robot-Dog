@@ -1,6 +1,6 @@
 # Design
 
-[Project guide](README.md) · [Progress](PROGRESS.md) · [Technical reference](TECHNICAL.md)
+[Project guide](readme.md) · [Progress](progress.md) · [Technical reference](technical.md)
 
 The project begins with the actuator because its friction, response and mechanical stiffness will shape every later movement. The aim is a joint whose behaviour can be measured and controlled well enough to support a lightweight dynamic quadruped.
 
@@ -37,4 +37,4 @@ These settings make compliant behaviour possible, but successful landing or grou
 
 Local STM32 controllers handle motor control and joint protection. An ESP32-S3 master coordinates commands and communication. Future gait or learning-based control sits above that boundary, allowing motion planning to evolve without taking over motor commutation.
 
-The next step is a repeatable, unloaded leg-positioning demonstration. [Progress](PROGRESS.md) separates the evidence already available from the work required to reach it.
+The next step is a repeatable, unloaded leg-positioning demonstration. [Progress](progress.md) separates the evidence already available from the work required to reach it.
