@@ -10,6 +10,8 @@
 !/docs/assets/
 /docs/assets/*
 !/docs/assets/leg-development.png
+!/docs/assets/belt_drive_development.jpg
+!/docs/assets/leg_assembly.jpg
 
 *project_context.md*
 *claude.md*
